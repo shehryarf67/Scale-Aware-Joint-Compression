@@ -1,0 +1,37 @@
+# Quality evaluation. Final reported numbers are produced on CPU.
+#
+# Perplexity is the primary metric: no task head, identical definition at every model size, and
+# sensitive enough to register the small gaps between a joint and a sequential arm at moderate
+# compression.
+#
+# Joint gain is computed on perplexity_retention (relative to each model's own dense baseline),
+# not on raw perplexity. Absolute perplexity falls with model size, so a gain expressed in raw
+# perplexity points would trend with scale for reasons that have nothing to do with compression.
+
+evaluation:
+  device: cpu
+  batch_size: 4
+  sequence_length: 512
+  # null = non-overlapping windows. A sliding window with a smaller stride gives a lower, more
+  # favourable perplexity; whichever is chosen must be identical across every arm, and it is
+  # recorded in each result.
+  stride: null
+  max_samples: 512
+  metrics:
+    - perplexity
+    - agreement
+    - generation
+  compare_to_dense: true
+  # Top-1 agreement against the dense model. More sensitive than perplexity at mild compression,
+  # where the two arms are closest.
+  agreement_samples: 128
+  generation_prompts: 16
+  generation_max_new_tokens: 64
+
+data:
+  dataset: wikitext
+  subset: wikitext-2-raw-v1
+  eval_split: validation
+  text_column: text
+  sequence_length: 512
+  max_eval_samples: 512

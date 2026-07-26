@@ -1,0 +1,26 @@
+# Pythia-160M -- smallest point in the scale sweep.
+#
+# Fast enough to use as the pilot model: a full five-arm run fits in a single session, which
+# makes it the right place to shake out a pipeline change before spending time at 1B.
+
+model:
+  name: pythia-160m
+  size_label: 160M
+  hf_id: EleutherAI/pythia-160m
+  # Pin a revision before collecting results. `main` is a moving target and a silently updated
+  # checkpoint would change results without changing the config.
+  revision: null
+  device: auto
+  dtype: float32
+  trust_remote_code: false
+  eval_mode: true
+  local_files_only: false
+  attn_implementation: null
+
+runtime:
+  # 512-token windows and small batches keep the pilot inside modest memory.
+  output_dir: outputs
+
+data:
+  sequence_length: 512
+  batch_size: 8

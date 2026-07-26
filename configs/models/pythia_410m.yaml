@@ -1,0 +1,20 @@
+# Pythia-410M -- second point in the scale sweep.
+
+model:
+  name: pythia-410m
+  size_label: 410M
+  hf_id: EleutherAI/pythia-410m
+  revision: null
+  device: auto
+  dtype: float32
+  trust_remote_code: false
+  eval_mode: true
+  local_files_only: false
+  attn_implementation: null
+
+runtime:
+  output_dir: outputs
+
+data:
+  sequence_length: 512
+  batch_size: 4

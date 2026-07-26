@@ -1,0 +1,40 @@
+# Qwen2.5-0.5B -- external validation only, NOT a scale sweep point.
+#
+# Different family, tokeniser, and training corpus from Pythia. Absolute perplexity is therefore
+# not comparable with any Pythia number; only retention ratios and the sign of the joint gain
+# transfer. See docs/methodology.md.
+#
+# Architectural differences that affect compression:
+#   * separate q/k/v projections with grouped-query attention, where Pythia fuses QKV
+#   * gated MLP (gate_proj / up_proj / down_proj) rather than a two-matrix FFN
+#   * TIED input and output embeddings -- so lm_head must stay in the exclude list, or pruning
+#     the head also prunes the input embedding and the arm stops matching Pythia's
+
+model:
+  name: qwen2.5-0.5b
+  size_label: 0.5B
+  hf_id: Qwen/Qwen2.5-0.5B
+  revision: null
+  device: auto
+  dtype: float32
+  trust_remote_code: false
+  eval_mode: true
+  local_files_only: false
+  attn_implementation: null
+
+runtime:
+  output_dir: outputs
+
+data:
+  sequence_length: 512
+  batch_size: 4
+
+compression:
+  pruning:
+    exclude_patterns:
+      - embed_tokens
+      - lm_head
+  quantisation:
+    exclude_patterns:
+      - embed_tokens
+      - lm_head

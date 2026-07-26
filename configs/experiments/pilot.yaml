@@ -1,0 +1,68 @@
+# Pilot: one model, one arm, small budgets. Use this to validate a pipeline change end to end
+# before committing to the full sweep.
+#
+# Everything is scaled down: 200 optimiser steps instead of 500, 128 evaluation samples instead
+# of 512, 10 measured benchmark runs instead of 30. The numbers it produces are NOT results --
+# the evaluation sample count alone makes them too noisy to compare arms with. Its job is to
+# prove the pipeline runs, writes a well-formed record, and produces a plausible artefact size.
+
+include:
+  - ../models/pythia_160m.yaml
+  - ../compression/sequential.yaml
+  - ../evaluation/quality.yaml
+  - ../evaluation/cpu_benchmark.yaml
+
+experiment:
+  id: pilot
+  name: Pilot run
+  description: >-
+    Smoke test of the full pipeline on pythia-160m with the sequential arm at a reduced budget.
+    Switch the included compression config to try another arm.
+  tags:
+    - pilot
+    - smoke-test
+
+runtime:
+  seed: 1234
+  deterministic: true
+  num_threads: null
+  output_dir: outputs
+  log_level: INFO
+  log_to_file: true
+
+data:
+  sequence_length: 512
+  batch_size: 4
+  max_eval_samples: 128
+  calibration_samples: 32
+
+compression:
+  budget_label: pilot
+  pruning:
+    sparsity: 0.5
+    # 0.8 x the 200-step budget, matching compression.joint.freeze_masks_after_ratio, so both arms
+    # reach the target sparsity at the same step and get the same tail of recovery after it.
+    schedule_end_step: 160
+  quantisation:
+    bits: 8
+    calibration_samples: 32
+  recovery:
+    max_steps: 200
+  joint:
+    # Kept equal to recovery.max_steps above: the pilot exists to validate the pipeline, and a
+    # budget mismatch here would make its numbers misleading rather than merely noisy.
+    joint_max_steps: 200
+    quantisation_warmup_steps: 20
+
+evaluation:
+  max_samples: 128
+  metrics:
+    - perplexity
+  agreement_samples: 32
+
+benchmark:
+  num_threads: 4
+  warmup_runs: 3
+  measured_runs: 10
+  batch_size: 1
+  sequence_length: 128

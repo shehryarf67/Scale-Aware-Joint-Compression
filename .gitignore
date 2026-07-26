@@ -1,0 +1,173 @@
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ---------------------------------------------------------------------------
+# Virtual environments
+# ---------------------------------------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+.conda/
+conda-env/
+*.pyvenv
+
+# ---------------------------------------------------------------------------
+# Tooling caches
+# ---------------------------------------------------------------------------
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.cache/
+
+# ---------------------------------------------------------------------------
+# Notebooks
+# ---------------------------------------------------------------------------
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+*-checkpoint.ipynb
+
+# ---------------------------------------------------------------------------
+# Hugging Face / dataset caches
+# ---------------------------------------------------------------------------
+.cache/huggingface/
+huggingface/
+hf_cache/
+.huggingface/
+transformers_cache/
+datasets_cache/
+*.lock
+
+# ---------------------------------------------------------------------------
+# Model checkpoints and other large binaries
+# ---------------------------------------------------------------------------
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.gguf
+*.tflite
+*.h5
+*.msgpack
+*.npz
+*.npy
+*.pkl
+*.pickle
+*.joblib
+
+# ---------------------------------------------------------------------------
+# Data (directory structure is tracked, contents are not)
+# ---------------------------------------------------------------------------
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+data/calibration/*
+!data/calibration/.gitkeep
+
+# ---------------------------------------------------------------------------
+# Run artefacts (directory structure is tracked, contents are not)
+# ---------------------------------------------------------------------------
+outputs/checkpoints/*
+!outputs/checkpoints/.gitkeep
+outputs/logs/*
+!outputs/logs/.gitkeep
+outputs/metrics/*
+!outputs/metrics/.gitkeep
+outputs/benchmarks/*
+!outputs/benchmarks/.gitkeep
+outputs/figures/*
+!outputs/figures/.gitkeep
+outputs/tables/*
+!outputs/tables/.gitkeep
+
+# ---------------------------------------------------------------------------
+# Results: raw and processed artefacts are large; curated summaries are tracked
+# ---------------------------------------------------------------------------
+results/raw/*
+!results/raw/.gitkeep
+results/processed/*
+!results/processed/.gitkeep
+results/summaries/*
+!results/summaries/.gitkeep
+!results/summaries/*.md
+
+# Large tabular exports anywhere in the tree
+*.parquet
+*.feather
+*.arrow
+
+# ---------------------------------------------------------------------------
+# Environment files and secrets
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.secret
+secrets.yaml
+secrets.yml
+credentials.json
+*.pem
+*.key
+.netrc
+.huggingface-token
+wandb/
+
+# ---------------------------------------------------------------------------
+# Editors and IDEs
+# ---------------------------------------------------------------------------
+.idea/
+.vscode/
+!.vscode/extensions.json
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+.spyproject/
+.ropeproject/
+
+# ---------------------------------------------------------------------------
+# OS metadata
+# ---------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+desktop.ini

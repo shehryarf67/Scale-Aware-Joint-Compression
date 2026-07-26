@@ -1,0 +1,64 @@
+# Pruning-only arm: dense -> prune -> recovery.
+#
+# Isolates the effect of sparsity alone. Combined with quantisation.yaml this file also supplies
+# the pruning half of the sequential and joint arms, so its settings must not be changed for one
+# arm only.
+
+compression:
+  method: pruning
+  budget_label: moderate
+
+  pruning:
+    enabled: true
+    # 'magnitude' is the baseline criterion. Alternatives to try later: 'wanda' (magnitude x
+    # input activation norm) and 'sparsegpt'. Whichever is used must be used for both the
+    # sequential and joint arms.
+    method: magnitude
+    sparsity: 0.5
+    initial_sparsity: 0.0
+    # 'unstructured' gives the best quality at a given sparsity but no CPU speedup, because
+    # dense GEMM kernels cannot skip scattered zeros. '2:4' is the pattern with kernel support.
+    # Running both is how the "does theoretical sparsity produce real CPU latency gains?"
+    # question gets answered.
+    granularity: unstructured
+    schedule: cubic
+    schedule_start_step: 0
+    # Ends at 80% of the 500-step budget, leaving 100 steps of recovery at the final sparsity.
+    # The joint arm inherits this window, and its freeze_masks_after_ratio of 0.8 lands on the same
+    # step -- if the two arms reached their target sparsity at different points, one would get more
+    # recovery at full sparsity than the other and the comparison would measure the schedule.
+    schedule_end_step: 400
+    schedule_frequency: 50
+    # Per-layer ranking by default: global ranking gives better quality but leaves layers at
+    # very different sparsities, which changes what a latency measurement means.
+    global_ranking: false
+    target_modules:
+      - Linear
+    exclude_patterns:
+      - embed_in
+      - embed_out
+      - lm_head
+      - wte
+      - wpe
+
+  # Disabled, but its parameters are deliberately left alone: sequential.yaml and joint.yaml include
+  # this file alongside quantisation.yaml, and overriding a value here would silently reach into
+  # those arms. CompressionConfig.effective_bits reports 32 for this arm regardless.
+  quantisation:
+    enabled: false
+
+  recovery:
+    enabled: true
+    epochs: 1
+    # Prefer max_steps over epochs: matching this number against the joint arm is what keeps
+    # any measured joint gain from being an extra-training artefact.
+    max_steps: 500
+    learning_rate: 5.0e-5
+    weight_decay: 0.0
+    warmup_ratio: 0.03
+    batch_size: 4
+    gradient_accumulation_steps: 1
+    max_grad_norm: 1.0
+    device: auto
+    log_every_steps: 20
+    eval_every_steps: 100

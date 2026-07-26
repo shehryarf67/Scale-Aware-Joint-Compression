@@ -1,0 +1,94 @@
+# External validation on Qwen2.5-0.5B.
+#
+# Tests whether a joint-gain trend found within Pythia is a property of transformer compression or
+# of Pythia specifically. Not a fifth sweep point.
+#
+# What is held identical to the main sweep: arms, budgets, seeds, evaluation corpus and window,
+# calibration sample count, optimisation budget, and the entire benchmark configuration. If any of
+# those changed, a difference in outcome could not be attributed to the model family.
+#
+# What cannot be compared: absolute perplexity. Qwen2.5 has a different tokeniser, vocabulary, and
+# training corpus, so its perplexity is on a different scale from Pythia's. Only retention ratios
+# and the sign and rough magnitude of the joint gain transfer. See docs/methodology.md.
+
+include:
+  - ../models/qwen2_5_0_5b.yaml
+  - ../compression/sequential.yaml
+  - ../evaluation/quality.yaml
+  - ../evaluation/cpu_benchmark.yaml
+
+experiment:
+  id: qwen_validation
+  name: Qwen2.5-0.5B external validation
+  description: >-
+    The same five arms, budgets, and seeds as the main sweep, applied to a different model family.
+    Compared against the Pythia trend interpolated at 0.5B parameters -- which falls between
+    pythia-410m and pythia-1b.
+  tags:
+    - validation
+    - external
+    - qwen
+
+runtime:
+  seed: 1234
+  deterministic: true
+  output_dir: outputs
+  log_level: INFO
+
+sweep:
+  models:
+    - qwen2.5-0.5b
+  methods:
+    - dense
+    - pruning
+    - quantisation
+    - sequential
+    - joint
+  budgets:
+    - moderate
+    - aggressive
+  seeds:
+    - 1234
+    - 2345
+    - 3456
+
+  # Identical to main_scale_sweep.yaml. Keep the two in step: a budget that differs between the
+  # sweep and the validation makes the transfer check meaningless.
+  budget_overrides:
+    moderate:
+      compression:
+        budget_label: moderate
+        pruning:
+          sparsity: 0.5
+        quantisation:
+          bits: 8
+    aggressive:
+      compression:
+        budget_label: aggressive
+        pruning:
+          sparsity: 0.7
+        quantisation:
+          bits: 4
+
+  skip_existing: true
+  continue_on_error: false
+
+# Tied embeddings: lm_head shares weights with model.embed_tokens, so excluding one without the
+# other would compress the input embedding as a side effect. Both are excluded here and in
+# ../models/qwen2_5_0_5b.yaml.
+compression:
+  pruning:
+    exclude_patterns:
+      - embed_tokens
+      - lm_head
+  quantisation:
+    exclude_patterns:
+      - embed_tokens
+      - lm_head
+
+benchmark:
+  num_threads: 4
+  warmup_runs: 5
+  measured_runs: 30
+  batch_size: 1
+  sequence_length: 128

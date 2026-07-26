@@ -1,0 +1,32 @@
+# Pythia-1B -- third point in the scale sweep.
+#
+# The smallest size at which a three-point trend can be fitted, so this run is not optional.
+# ~4 GB in FP32 before optimiser state; joint training will need gradient accumulation on
+# consumer GPUs.
+
+model:
+  name: pythia-1b
+  size_label: 1B
+  hf_id: EleutherAI/pythia-1b
+  revision: null
+  device: auto
+  dtype: float32
+  trust_remote_code: false
+  eval_mode: true
+  local_files_only: false
+  attn_implementation: null
+
+runtime:
+  output_dir: outputs
+
+data:
+  sequence_length: 512
+  batch_size: 2
+
+compression:
+  recovery:
+    batch_size: 1
+    gradient_accumulation_steps: 4
+  joint:
+    batch_size: 1
+    gradient_accumulation_steps: 4

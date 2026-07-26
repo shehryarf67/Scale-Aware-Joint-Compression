@@ -1,0 +1,43 @@
+# Pythia-1.4B -- optional fourth point in the scale sweep.
+#
+# Run only if hardware permits. Joint training at this size needs roughly 1.4B parameters plus
+# gradients plus AdamW state; in FP32 that is ~22 GB before activations, so plan on bf16
+# recovery on GPU with FP32 master weights, or skip this point.
+#
+# The dense baseline and every deployment measurement still run on CPU in FP32, as for every
+# other model. Only the training stages change precision.
+
+model:
+  name: pythia-1.4b
+  size_label: 1.4B
+  hf_id: EleutherAI/pythia-1.4b
+  revision: null
+  device: auto
+  dtype: float32
+  trust_remote_code: false
+  eval_mode: true
+  local_files_only: false
+  attn_implementation: null
+
+runtime:
+  output_dir: outputs
+
+data:
+  sequence_length: 512
+  batch_size: 1
+
+compression:
+  recovery:
+    batch_size: 1
+    gradient_accumulation_steps: 8
+  joint:
+    batch_size: 1
+    gradient_accumulation_steps: 8
+
+evaluation:
+  # Smaller evaluation batches: two 1.4B models resident on CPU for the agreement metric is
+  # already close to the memory ceiling on a 32 GB machine.
+  batch_size: 1
+
+benchmark:
+  batch_size: 1

@@ -1,0 +1,94 @@
+# Main scale sweep: the experiment that answers the research question.
+#
+#   independent variable : model scale (160M -> 410M -> 1B -> optionally 1.4B)
+#   dependent variables  : quality retention, checkpoint size, CPU latency, throughput, memory
+#   controlled           : dataset, tokenisation window, calibration set, sparsity target,
+#                          bit width, optimisation budget, benchmark thread count / batch size /
+#                          sequence length, seed set
+#
+# Grid: 4 models x 5 arms x 2 budgets x 3 seeds = 120 runs. Prune it down while iterating -- drop
+# to one seed with --override sweep.seeds='[1234]', or one budget, and use `sajc sweep --plan-only`
+# to see the expansion before committing compute.
+#
+# pythia-1.4b is included but is the optional point. Remove it from sweep.models if joint training
+# does not fit; three points still support a trend, and a missing fourth point is better than one
+# run under different memory settings.
+
+include:
+  - ../models/pythia_160m.yaml
+  - ../compression/sequential.yaml
+  - ../evaluation/quality.yaml
+  - ../evaluation/cpu_benchmark.yaml
+
+experiment:
+  id: main_scale_sweep
+  name: Main Pythia scale sweep
+  description: >-
+    All five compression arms across the Pythia suite at two compression budgets and three seeds.
+    Joint gain is computed per (model, budget, seed) from the matched sequential and joint runs.
+  tags:
+    - main
+    - scale-sweep
+    - pythia
+
+runtime:
+  seed: 1234
+  deterministic: true
+  output_dir: outputs
+  log_level: INFO
+
+sweep:
+  models:
+    - pythia-160m
+    - pythia-410m
+    - pythia-1b
+    - pythia-1.4b
+  # Dense first: every other arm needs that model's dense perplexity as its retention reference.
+  methods:
+    - dense
+    - pruning
+    - quantisation
+    - sequential
+    - joint
+  budgets:
+    - moderate
+    - aggressive
+  # Three seeds per cell. The spread across them is the error bar, and a joint gain smaller than
+  # that spread is not a finding.
+  seeds:
+    - 1234
+    - 2345
+    - 3456
+
+  budget_overrides:
+    # 50% sparsity, 8-bit: the regime where a well-tuned sequential pipeline loses little, so any
+    # joint gain here is small and needs the seed repeats to be credible.
+    moderate:
+      compression:
+        budget_label: moderate
+        pruning:
+          sparsity: 0.5
+        quantisation:
+          bits: 8
+    # 70% sparsity, 4-bit: quality degrades enough that the two arms should separate. Also where
+    # the "at which budgets does joint optimisation become useful?" question is answered.
+    aggressive:
+      compression:
+        budget_label: aggressive
+        pruning:
+          sparsity: 0.7
+        quantisation:
+          bits: 4
+
+  # Resumable: an interrupted sweep re-runs only the cells with no record yet.
+  skip_existing: true
+  # Fail fast while the pipeline is new. Flip to true for long unattended runs, but then check
+  # find_comparison_pairs() afterwards -- a failed joint run silently removes a whole comparison.
+  continue_on_error: false
+
+benchmark:
+  num_threads: 4
+  warmup_runs: 5
+  measured_runs: 30
+  batch_size: 1
+  sequence_length: 128

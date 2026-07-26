@@ -1,0 +1,63 @@
+# Joint arm: dense -> fake-quantisation prep -> gradual pruning during optimisation
+#            -> joint fine-tuning -> conversion.
+#
+# The arm under test. Composed from the same pruning.yaml and quantisation.yaml as the sequential
+# arm, so the two differ only in the settings below and in the order of their stages -- not in
+# their sparsity target, bit width, calibration set, or optimisation budget.
+#
+# FAIRNESS: the joint arm gets one training run covering both perturbations while the sequential
+# arm gets one covering only pruning. If the joint run is simply longer, a measured joint gain is
+# confounded with extra training. joint_max_steps below is set equal to the sequential arm's
+# recovery max_steps for exactly that reason, and match_sequential_budget makes the requirement
+# explicit in the run record.
+
+include:
+  - ./pruning.yaml
+  - ./quantisation.yaml
+
+compression:
+  method: joint
+  budget_label: moderate
+
+  # Sparsity, bit width, and the sparsity ramp all come from pruning.yaml and quantisation.yaml,
+  # unchanged. Nothing is restated here, so this arm cannot drift away from the sequential arm on
+  # any of them -- which is the only way the two remain comparable.
+  #
+  # The inherited schedule is gradual (cubic), and that matters: the ramp is what lets the optimiser
+  # trade the two perturbations off against each other. A one-shot prune would make this arm a
+  # differently-ordered sequential run.
+  pruning:
+    enabled: true
+
+  quantisation:
+    enabled: true
+
+  recovery:
+    # The joint arm's optimisation happens inside the joint stage below, so the separate
+    # recovery pass is off. Its budget is accounted for under compression.joint.
+    enabled: false
+    epochs: 0
+    max_steps: null
+
+  joint:
+    fake_quantisation: true
+    # Gradients must flow through the rounding operation, or the weights never learn to sit on
+    # favourable grid points and the arm degenerates to sequential-with-extra-steps.
+    straight_through_estimator: true
+    mask_update_interval: 50
+    # Masks stop changing at 80% of training, so the last fifth is pure recovery at the final
+    # sparsity. Without this the final mask update lands with too few steps left to recover from.
+    # 0.8 x 500 = step 400, which is exactly where the inherited sparsity ramp ends, so the mask is
+    # frozen at the target rather than short of it.
+    freeze_masks_after_ratio: 0.8
+    # A few dense steps before fake quantisation switches on; the combined perturbation is
+    # largest at the start.
+    quantisation_warmup_steps: 50
+    joint_epochs: 1
+    # Equal to sequential.yaml's compression.recovery.max_steps. Keep the two in step.
+    joint_max_steps: 500
+    learning_rate: 5.0e-5
+    batch_size: 4
+    gradient_accumulation_steps: 1
+    device: auto
+    match_sequential_budget: true

@@ -1,0 +1,46 @@
+# Quantisation-only arm: dense -> calibrate -> quantise -> convert.
+#
+# Post-training quantisation with no recovery, which is how it is normally deployed. Isolates the
+# effect of reduced precision alone.
+
+compression:
+  method: quantisation
+  budget_label: moderate
+
+  # Disabled, but its parameters are deliberately left alone. Setting sparsity: 0.0 here would
+  # propagate into sequential.yaml and joint.yaml, which include this file *after* pruning.yaml --
+  # both arms would then be configured to prune nothing while still reporting themselves as pruning
+  # arms. CompressionConfig.effective_sparsity reports 0.0 for this arm regardless.
+  pruning:
+    enabled: false
+
+  quantisation:
+    enabled: true
+    # 8-bit is the moderate budget and the only width with first-class CPU kernel support.
+    # 4-bit is the aggressive budget; see sequential.yaml / joint.yaml budget overrides.
+    bits: 8
+    scheme: symmetric
+    # Per-channel scales cost one extra float per output channel and consistently beat
+    # per-tensor at the same bit width, so the comparison is run per-channel throughout.
+    granularity: per_channel
+    group_size: 128
+    # 'x86' is the modern CPU backend; 'fbgemm' is its predecessor and 'qnnpack' targets ARM.
+    # The backend affects measured latency, so it is recorded in every run record.
+    backend: x86
+    observer: min_max
+    calibration_samples: 128
+    # Weight-only quantisation. Activation quantisation would change the latency picture
+    # substantially and is a separate study; keeping it off holds the variable fixed.
+    quantise_activations: false
+    activation_bits: 8
+    exclude_patterns:
+      - embed_in
+      - embed_out
+      - lm_head
+      - wte
+      - wpe
+
+  recovery:
+    enabled: false
+    epochs: 0
+    max_steps: null

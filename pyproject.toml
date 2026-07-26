@@ -1,0 +1,223 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# ---------------------------------------------------------------------------
+# Package metadata
+# ---------------------------------------------------------------------------
+[project]
+name = "scale-aware-compression"
+version = "0.1.0"
+description = "Does model scale change whether joint pruning-aware quantisation beats sequential pruning then quantisation in decoder-only language models?"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Scale-Aware Joint Compression contributors" }]
+keywords = [
+    "language-models",
+    "model-compression",
+    "pruning",
+    "quantisation",
+    "quantization",
+    "pythia",
+    "cpu-inference",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+
+# Runtime dependencies are kept in step with requirements.txt.
+# torch is deliberately unconstrained beyond a minimum: pick the platform wheel
+# (CPU or a specific CUDA build) before installing this package.
+dependencies = [
+    "torch>=2.2",
+    "transformers>=4.40",
+    "datasets>=2.19",
+    "accelerate>=0.30",
+    "evaluate>=0.4",
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "scipy>=1.12",
+    "scikit-learn>=1.4",
+    "psutil>=5.9",
+    "pyyaml>=6.0",
+    "tqdm>=4.66",
+    "matplotlib>=3.8",
+    "safetensors>=0.4",
+    "sentencepiece>=0.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "pre-commit>=3.7",
+    "ipykernel>=6.29",
+    "jupyter>=1.0",
+    "types-PyYAML>=6.0",
+    "types-psutil>=5.9",
+]
+
+[project.scripts]
+sajc = "scale_aware_compression.cli:main"
+
+[project.urls]
+Documentation = "https://github.com/OWNER/scale-aware-joint-compression/tree/main/docs"
+Repository = "https://github.com/OWNER/scale-aware-joint-compression"
+
+# ---------------------------------------------------------------------------
+# setuptools: src layout, editable installs via `pip install -e .`
+# ---------------------------------------------------------------------------
+[tool.setuptools]
+package-dir = { "" = "src" }
+zip-safe = false
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["scale_aware_compression*"]
+
+[tool.setuptools.package-data]
+scale_aware_compression = ["py.typed"]
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+# Lets the test suite run straight from a clone, without an editable install.
+pythonpath = ["src"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--showlocals",
+]
+markers = [
+    "slow: takes more than a second; excluded from the default fast suite",
+    "requires_model: needs model weights on disk or a network download",
+    "requires_torch: needs a working torch installation",
+]
+filterwarnings = ["error::DeprecationWarning:scale_aware_compression.*"]
+
+# ---------------------------------------------------------------------------
+# coverage
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["scale_aware_compression"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
+
+# ---------------------------------------------------------------------------
+# ruff: linter and black-compatible formatter
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "scripts", "tests"]
+extend-exclude = ["notebooks", ".venv", "outputs", "results", "data"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+    "RET", # flake8-return
+    "PTH", # flake8-use-pathlib
+    "TID", # flake8-tidy-imports
+    "D",   # pydocstyle
+]
+ignore = [
+    "D105", # magic methods do not need a docstring
+    "D107", # __init__ documented on the class instead
+    "D203", # incompatible with D211 (black-compatible choice)
+    "D213", # incompatible with D212 (black-compatible choice)
+    "E501", # line length is enforced by the formatter
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.isort]
+known-first-party = ["scale_aware_compression"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "parents"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D100", "D101", "D102", "D103", "D104"]
+"scripts/*" = ["D100"]
+
+[tool.ruff.format]
+# Matches black's defaults so `black` and `ruff format` agree.
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+skip-magic-trailing-comma = false
+docstring-code-format = true
+
+# Kept so that contributors who run black directly produce identical output.
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+extend-exclude = "notebooks|outputs|results|data"
+
+# ---------------------------------------------------------------------------
+# mypy
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+files = ["src", "scripts", "tests"]
+strict = true
+warn_unused_configs = true
+warn_unreachable = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+show_error_codes = true
+pretty = true
+plugins = []
+
+# Third-party packages without bundled type information.
+[[tool.mypy.overrides]]
+module = [
+    "torch.*",
+    "transformers.*",
+    "datasets.*",
+    "accelerate.*",
+    "evaluate.*",
+    "matplotlib.*",
+    "pandas.*",
+    "scipy.*",
+    "sklearn.*",
+    "safetensors.*",
+    "sentencepiece.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false

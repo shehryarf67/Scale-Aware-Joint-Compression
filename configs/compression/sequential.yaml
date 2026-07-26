@@ -1,0 +1,34 @@
+# Sequential arm: dense -> prune -> recovery -> quantise -> convert.
+#
+# The baseline the joint arm is measured against, and standard practice in the literature.
+#
+# Composed from pruning.yaml and quantisation.yaml by include, rather than by copying their
+# settings. That is deliberate: if the pruning sparsity or the quantisation bit width were
+# duplicated here they could drift out of step with the single-method arms, and the sequential
+# arm would stop being their composition.
+
+include:
+  - ./pruning.yaml
+  - ./quantisation.yaml
+
+compression:
+  method: sequential
+  budget_label: moderate
+
+  # Both stages are on. Sparsity comes from pruning.yaml and the bit width from
+  # quantisation.yaml -- neither is restated here, so this arm cannot drift away from the
+  # single-method arms it is the composition of.
+  pruning:
+    enabled: true
+
+  quantisation:
+    # Observers see the *already-pruned* weight distribution, whose dynamic range is narrower
+    # than the dense one. That is the whole ordering effect this arm embodies.
+    enabled: true
+
+  recovery:
+    # Re-enabled after quantisation.yaml turned it off. This step count is the number the joint
+    # arm must match; see compression.joint.match_sequential_budget in joint.yaml.
+    enabled: true
+    epochs: 1
+    max_steps: 500

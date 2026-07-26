@@ -1,0 +1,51 @@
+# Run `pre-commit install` once (or `make install-dev`), then hooks run on commit.
+# Run against everything with `pre-commit run --all-files`.
+
+default_language_version:
+  python: python3.11
+
+exclude: '^(outputs|results|data)/'
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '\.md$'
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-toml
+      - id: check-json
+        exclude: '\.ipynb$'
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: debug-statements
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: [--maxkb=512]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.5.7
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.1
+    hooks:
+      - id: mypy
+        files: ^(src|scripts)/
+        additional_dependencies:
+          - types-PyYAML>=6.0
+          - types-psutil>=5.9
+
+  # Notebooks are committed without outputs so diffs stay reviewable.
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.7.1
+    hooks:
+      - id: nbstripout
+        files: '\.ipynb$'
