@@ -71,10 +71,11 @@ jobs:
         run: ruff format --check .
 
       - name: Fast test suite
-        # Markers are declared in pyproject.toml. Deselecting them here keeps CI to the
-        # offline, CPU-only, no-training tests; the excluded ones need weights on disk,
-        # a real accelerator, or minutes of compute.
-        run: pytest -m "not slow and not requires_model and not requires_torch"
+        # Markers are declared in pyproject.toml. `requires_torch` tests DO run here -- torch is
+        # installed above, and they cover the real compression and evaluation paths against a
+        # tiny randomly initialised model. Only `requires_model` (needs downloaded weights) and
+        # `slow` are excluded.
+        run: pytest -m "not slow and not requires_model"
 
       - name: Confirm the fast suite needs neither torch nor the network
         # The library keeps torch and transformers imports lazy on purpose, and the tests

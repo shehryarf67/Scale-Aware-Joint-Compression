@@ -452,15 +452,10 @@ class TestMaskUpdateCadence:
 
 
 class TestNoImportTimeSideEffects:
-    def test_importing_compression_does_not_import_torch(self):
-        import sys
-
-        sys.modules.pop("torch", None)
-        import scale_aware_compression.compression  # noqa: F401
-
-        assert "torch" not in sys.modules, (
-            "importing the compression subpackage must not import torch: heavy imports are lazy so "
-            "config validation and the test suite stay fast"
+    def test_importing_compression_does_not_import_torch(self, imported_after):
+        assert imported_after("scale_aware_compression.compression", ["torch"]) == [], (
+            "importing the compression subpackage must not import torch: heavy imports are lazy "
+            "so config validation and the test suite stay fast"
         )
 
     def test_stage_methods_take_no_action_at_definition_time(self):

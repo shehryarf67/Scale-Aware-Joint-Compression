@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from scale_aware_compression.config import EvaluationConfig
+from scale_aware_compression.evaluation.common import EvaluationError, check_evaluation_device
 from scale_aware_compression.logging_utils import get_logger
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -126,29 +127,128 @@ def compute_perplexity(
     config: EvaluationConfig,
     *,
     dataset_fingerprint: str | None = None,
+    progress_every: int = 20,
 ) -> PerplexityResult:
     """Evaluate perplexity over a data loader.
 
+    NLL is summed over every predicted token and exponentiated once at the end. Averaging
+    per-batch perplexities instead would over-weight short batches and give a different, wrong
+    answer.
+
     Args:
-        model: The model to evaluate, on CPU for a reported number.
-        dataloader: Fixed-length evaluation batches.
+        model: The model to evaluate. On CPU for a number that will be reported.
+        dataloader: Fixed-length evaluation batches, unshuffled.
         config: Evaluation section of an experiment config.
-        dataset_fingerprint: Fingerprint of the evaluation stream, stored in the result.
+        dataset_fingerprint: Fingerprint of the evaluation stream, stored in the result so two
+            perplexities can be checked for having been measured on the same data.
+        progress_every: Log progress every N batches.
 
     Returns:
         The perplexity result.
 
     Raises:
-        NotImplementedError: Always, in the current scaffold.
+        EvaluationError: If the loader is empty, or the model produces no usable logits.
+        NotImplementedError: If ``config.stride`` is set. Sliding-window perplexity needs
+            overlapping windows built at chunking time, which the current data pipeline does not
+            produce; a stride silently ignored here would make results incomparable with
+            published numbers that use one.
     """
-    # TODO(evaluation): under torch.inference_mode(), for each batch compute the shifted
-    # cross-entropy with reduction='sum' and accumulate NLL and the token count
-    # (batch_size * (sequence_length - 1) per batch, since the first token has no target).
-    # Then call perplexity_from_nll() once. Do not average per-batch perplexities.
-    # Warn if config.device is not CPU: a reported quality number must come from CPU.
-    # When config.stride is set, use a sliding window with only the non-overlapping suffix
-    # contributing to the loss, and document the stride in the result -- perplexities computed
-    # at different strides are not comparable.
-    raise NotImplementedError(
-        "compute_perplexity is not implemented yet; see the TODO in evaluation/perplexity.py"
+    import torch
+    import torch.nn.functional as functional
+
+    if config.stride is not None:
+        raise NotImplementedError(
+            f"evaluation.stride={config.stride} is not supported yet. Only non-overlapping "
+            "windows (stride: null) are implemented. Sliding-window perplexity requires "
+            "overlapping windows from data/preprocessing.py; implement it there rather than "
+            "approximating it here, since strided and non-strided perplexities are not "
+            "comparable."
+        )
+
+    check_evaluation_device(config)
+
+    device = _model_device(model)
+    was_training = model.training
+    model.eval()
+
+    total_nll = 0.0
+    total_tokens = 0
+    num_sequences = 0
+    sequence_length = 0
+    num_batches = 0
+
+    try:
+        with torch.inference_mode():
+            for index, batch in enumerate(dataloader):
+                input_ids = batch["input_ids"].to(device)
+                if input_ids.ndim != 2 or input_ids.shape[1] < 2:
+                    raise EvaluationError(
+                        f"Evaluation batches must be (batch, sequence>=2); got "
+                        f"{tuple(input_ids.shape)}. A window of one token has no target to "
+                        "predict."
+                    )
+
+                outputs = model(
+                    input_ids=input_ids, attention_mask=batch["attention_mask"].to(device)
+                )
+                logits = getattr(outputs, "logits", None)
+                if logits is None:
+                    raise EvaluationError(
+                        f"{type(model).__name__} returned no `logits`; perplexity needs a causal "
+                        "language-modelling head."
+                    )
+
+                # The final position predicts nothing inside this window, and the first token has
+                # no predecessor, so a window of L tokens contributes L-1 predictions.
+                shift_logits = logits[:, :-1, :].float()
+                shift_labels = input_ids[:, 1:]
+                batch_nll = functional.cross_entropy(
+                    shift_logits.reshape(-1, shift_logits.size(-1)),
+                    shift_labels.reshape(-1),
+                    reduction="sum",
+                )
+
+                total_nll += float(batch_nll.item())
+                total_tokens += int(shift_labels.numel())
+                num_sequences += int(input_ids.shape[0])
+                sequence_length = int(input_ids.shape[1])
+                num_batches += 1
+
+                if progress_every and index and index % progress_every == 0:
+                    running = perplexity_from_nll(total_nll, total_tokens)
+                    LOGGER.debug("  batch %d: running perplexity %.3f", index, running)
+    finally:
+        if was_training:
+            model.train()
+
+    if num_batches == 0:
+        raise EvaluationError("Evaluation loader produced no batches")
+
+    result = PerplexityResult(
+        perplexity=perplexity_from_nll(total_nll, total_tokens),
+        total_nll=total_nll,
+        total_tokens=total_tokens,
+        num_sequences=num_sequences,
+        sequence_length=sequence_length,
+        device=str(device),
+        dataset_fingerprint=dataset_fingerprint,
     )
+    LOGGER.info(
+        "Perplexity %.4f over %d tokens (%d sequences of %d) on %s",
+        result.perplexity,
+        result.total_tokens,
+        result.num_sequences,
+        result.sequence_length,
+        result.device,
+    )
+    return result
+
+
+def _model_device(model: nn.Module) -> Any:
+    """Return the device a model's parameters live on, defaulting to CPU."""
+    import torch
+
+    try:
+        return next(model.parameters()).device
+    except StopIteration:  # pragma: no cover - a model with no parameters
+        return torch.device("cpu")

@@ -169,13 +169,16 @@ EPSILON: Final[float] = 1e-12
 # Bump RESULT_SCHEMA_VERSION whenever RESULT_CSV_COLUMNS changes, so that CSV files
 # written by different revisions of the code are never silently concatenated.
 # ---------------------------------------------------------------------------
-RESULT_SCHEMA_VERSION: Final[str] = "1"
+RESULT_SCHEMA_VERSION: Final[str] = "2"
+"""Bumped to 2 when ``status`` was added: a failed run is now recorded rather than dropped, and
+a reader must be able to filter those out."""
 
 RESULT_CSV_COLUMNS: Final[tuple[str, ...]] = (
     "experiment_id",
     "timestamp",
     "git_commit",
     "schema_version",
+    "status",
     "model_name",
     "model_size_label",
     "parameter_count",

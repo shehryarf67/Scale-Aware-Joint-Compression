@@ -189,15 +189,12 @@ class TestLoaderValidation:
         with pytest.raises(UnknownModelError):
             load_model(ModelConfig(name="also-not-real"))
 
-    def test_importing_the_loader_does_not_import_transformers(self):
-        import sys
-
-        sys.modules.pop("transformers", None)
-        import scale_aware_compression.models.loader  # noqa: F401
-
-        assert "transformers" not in sys.modules, (
-            "importing the loader must not import transformers; heavy imports are lazy so that "
-            "`sajc info` and the test suite stay fast and offline"
+    def test_importing_the_loader_does_not_import_transformers(self, imported_after):
+        assert (
+            imported_after("scale_aware_compression.models.loader", ["transformers", "torch"]) == []
+        ), (
+            "importing the loader must not import transformers or torch; heavy imports are lazy "
+            "so that `sajc info` and the test suite stay fast and offline"
         )
 
     def test_trust_remote_code_defaults_to_false(self):

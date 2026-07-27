@@ -218,10 +218,23 @@ class TestContinuousIntegration:
         assert "HF_HUB_OFFLINE" in workflow_text
         assert "TRANSFORMERS_OFFLINE" in workflow_text
 
-    def test_deselects_slow_gpu_and_network_tests(self, workflow_text: str):
+    def test_deselects_slow_and_model_dependent_tests(self, workflow_text: str):
         assert "not slow" in workflow_text
         assert "not requires_model" in workflow_text
-        assert "not requires_torch" in workflow_text
+
+    def test_main_job_actually_runs_the_torch_tests(self, workflow_text: str):
+        """Torch tests cover the real compression and evaluation paths.
+
+        The minimal-environment step still excludes them -- that step exists to prove the
+        library works without torch -- but the main job must not, or the coverage is theatre.
+        """
+        main_step = workflow_text.split("Confirm the fast suite")[0]
+        assert 'pytest -m "not slow and not requires_model"' in main_step
+        assert "not requires_torch" not in main_step
+
+    def test_minimal_environment_step_excludes_torch_tests(self, workflow_text: str):
+        minimal_step = workflow_text.split("Confirm the fast suite")[-1]
+        assert "not requires_torch" in minimal_step
 
     def test_installs_the_cpu_torch_wheel(self, workflow_text: str):
         """The default index would pull a multi-gigabyte CUDA build CI has no use for."""

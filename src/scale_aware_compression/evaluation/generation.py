@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from scale_aware_compression.config import EvaluationConfig
+from scale_aware_compression.evaluation.common import EvaluationError
 from scale_aware_compression.logging_utils import get_logger
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -139,23 +140,105 @@ def generate_samples(
 ) -> GenerationReport:
     """Generate greedy completions for a fixed prompt set.
 
+    Greedy and unsampled, so two arms' outputs differ only because the models differ.
+
     Args:
         model: The model to sample from.
         tokenizer: Matching tokeniser.
         config: Evaluation section of an experiment config.
-        prompts: Prompts to use. Defaults to :data:`DEFAULT_PROMPTS`.
+        prompts: Prompts to use. Defaults to :data:`DEFAULT_PROMPTS`, truncated to
+            ``config.generation_prompts``.
 
     Returns:
         The generation report.
 
     Raises:
-        NotImplementedError: Always, in the current scaffold.
+        EvaluationError: If generation fails or the model has no ``generate`` method.
     """
-    # TODO(evaluation): call model.generate(do_sample=False, num_beams=1,
-    # max_new_tokens=config.generation_max_new_tokens) under torch.inference_mode(). Greedy and
-    # unsampled, so two arms' outputs differ only because the models differ.
-    # Compute repetition_rate and distinct_token_ratio on the *generated* ids only, excluding
-    # the prompt, and log a warning when looks_degenerate is true.
-    raise NotImplementedError(
-        "generate_samples is not implemented yet; see the TODO in evaluation/generation.py"
+    import torch
+
+    selected = list(prompts) if prompts is not None else list(DEFAULT_PROMPTS)
+    selected = selected[: max(1, config.generation_prompts)]
+    if not hasattr(model, "generate"):
+        raise EvaluationError(
+            f"{type(model).__name__} has no generate(); cannot produce generation diagnostics."
+        )
+
+    device = next(model.parameters()).device
+    was_training = model.training
+    model.eval()
+
+    pad_token_id = tokenizer.pad_token_id
+    if pad_token_id is None:
+        pad_token_id = tokenizer.eos_token_id
+
+    samples: list[GenerationSample] = []
+    try:
+        with torch.inference_mode():
+            for prompt in selected:
+                encoded = tokenizer(prompt, return_tensors="pt")
+                input_ids = encoded["input_ids"].to(device)
+                prompt_length = int(input_ids.shape[1])
+                try:
+                    generated = model.generate(
+                        input_ids=input_ids,
+                        attention_mask=encoded.get("attention_mask", torch.ones_like(input_ids)).to(
+                            device
+                        ),
+                        do_sample=False,
+                        num_beams=1,
+                        # min == max: every arm decodes exactly the same number of tokens, so an
+                        # early EOS cannot shorten one arm's sample and flatter its repetition
+                        # statistics.
+                        min_new_tokens=config.generation_max_new_tokens,
+                        max_new_tokens=config.generation_max_new_tokens,
+                        pad_token_id=pad_token_id,
+                    )
+                except Exception as error:
+                    raise EvaluationError(
+                        f"Generation failed for prompt {prompt!r}: {error}"
+                    ) from error
+
+                new_ids = generated[0, prompt_length:].tolist()
+                samples.append(
+                    GenerationSample(
+                        prompt=prompt,
+                        completion=tokenizer.decode(new_ids, skip_special_tokens=True),
+                        num_new_tokens=len(new_ids),
+                        # Diagnostics on the generated ids only: including the prompt would
+                        # dilute the repetition signal with text the model did not produce.
+                        repetition_rate=repetition_rate(new_ids),
+                        distinct_token_ratio=distinct_token_ratio(new_ids),
+                    )
+                )
+    finally:
+        if was_training:
+            model.train()
+
+    report = GenerationReport(
+        samples=samples,
+        mean_repetition_rate=_mean(sample.repetition_rate for sample in samples),
+        mean_distinct_token_ratio=_mean(sample.distinct_token_ratio for sample in samples),
+        device=str(device),
     )
+    if report.looks_degenerate:
+        LOGGER.warning(
+            "Generations look degenerate (distinct-token ratio %.2f, repetition %.2f). Any "
+            "quality number from this model should be treated as suspect.",
+            report.mean_distinct_token_ratio,
+            report.mean_repetition_rate,
+        )
+    else:
+        LOGGER.info(
+            "Generated %d sample(s): repetition %.2f, distinct-token ratio %.2f",
+            len(samples),
+            report.mean_repetition_rate,
+            report.mean_distinct_token_ratio,
+        )
+    return report
+
+
+def _mean(values: Any) -> float:
+    """Arithmetic mean of an iterable, returning 0.0 when empty."""
+    collected = list(values)
+    return sum(collected) / len(collected) if collected else 0.0

@@ -247,6 +247,11 @@ class CpuBenchmarkRunner:
         return result
 
 
+BENCHMARK_INPUT_SEED = 20240101
+"""Seed for the synthetic benchmark input. Fixed so every arm and every run is timed on exactly
+the same token tensor."""
+
+
 def build_forward_callable(
     model: nn.Module,
     tokenizer: PreTrainedTokenizerBase,
@@ -254,9 +259,17 @@ def build_forward_callable(
 ) -> BenchmarkCallable:
     """Build the callable that :class:`CpuBenchmarkRunner` times for a real model.
 
+    The input tensor is allocated once, here, so neither tokenisation nor allocation lands
+    inside the timed region.
+
+    Token *values* are synthetic and random. Latency depends on tensor shapes and on which
+    kernels run, not on what the tokens mean, so real text would add a tokeniser dependency and
+    a source of variation between arms without making the measurement more realistic. The shape
+    is what has to be held fixed, and it is.
+
     Args:
         model: A model already moved to CPU and in eval mode.
-        tokenizer: Tokeniser used to size the synthetic input.
+        tokenizer: Tokeniser, used only for its vocabulary size and pad token.
         config: Benchmark section of the experiment config.
 
     Returns:
@@ -264,17 +277,87 @@ def build_forward_callable(
         ``config.generated_tokens`` is positive.
 
     Raises:
-        NotImplementedError: Always, in the current scaffold.
+        BenchmarkError: If the model cannot be prepared for benchmarking.
     """
-    # TODO(benchmarking): build a fixed synthetic input_ids tensor of shape
-    # (batch_size, sequence_length) once, outside the returned closure, so tokenisation and
-    # allocation are not timed. Wrap the call in torch.inference_mode(). For
-    # generated_tokens > 0 use model.generate(do_sample=False, min_new_tokens=
-    # max_new_tokens=generated_tokens) so every run decodes exactly the same number of
-    # tokens -- an early EOS would silently shorten later runs and skew the median.
-    raise NotImplementedError(
-        "build_forward_callable is not implemented yet; see the TODO in benchmarking/cpu.py"
+    import torch
+
+    if config.device is not Device.CPU:
+        raise BenchmarkError(
+            f"benchmark.device={config.device.value!r}; deployment measurements are CPU-only."
+        )
+
+    try:
+        model.eval()
+        model.to("cpu")
+    except Exception as error:
+        raise BenchmarkError(
+            f"Could not move the model to CPU for benchmarking: {error}"
+        ) from error
+
+    vocabulary_size = int(
+        getattr(getattr(model, "config", None), "vocab_size", None)
+        or getattr(tokenizer, "vocab_size", 0)
+        or 0
     )
+    if vocabulary_size < 2:
+        raise BenchmarkError(
+            "Could not determine a usable vocabulary size for the synthetic benchmark input"
+        )
+
+    generator = torch.Generator().manual_seed(BENCHMARK_INPUT_SEED)
+    input_ids = torch.randint(
+        low=0,
+        high=vocabulary_size,
+        size=(config.batch_size, config.sequence_length),
+        generator=generator,
+        dtype=torch.long,
+    )
+    attention_mask = torch.ones_like(input_ids)
+
+    if config.generated_tokens > 0:
+        if not hasattr(model, "generate"):
+            raise BenchmarkError(
+                f"benchmark.generated_tokens={config.generated_tokens} but "
+                f"{type(model).__name__} has no generate()."
+            )
+        pad_token_id = getattr(tokenizer, "pad_token_id", None) or getattr(
+            tokenizer, "eos_token_id", None
+        )
+        generated_tokens = config.generated_tokens
+
+        def run_generate() -> Any:
+            with torch.inference_mode():
+                # min == max so every repetition decodes exactly the same number of tokens. An
+                # early EOS would shorten later runs and pull the median down for no real reason.
+                return model.generate(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    do_sample=False,
+                    num_beams=1,
+                    min_new_tokens=generated_tokens,
+                    max_new_tokens=generated_tokens,
+                    pad_token_id=pad_token_id,
+                    use_cache=True,
+                )
+
+        LOGGER.debug(
+            "Benchmark workload: decode %d tokens from a %dx%d prompt",
+            generated_tokens,
+            config.batch_size,
+            config.sequence_length,
+        )
+        return run_generate
+
+    def run_forward() -> Any:
+        with torch.inference_mode():
+            return model(input_ids=input_ids, attention_mask=attention_mask)
+
+    LOGGER.debug(
+        "Benchmark workload: single forward pass over %dx%d",
+        config.batch_size,
+        config.sequence_length,
+    )
+    return run_forward
 
 
 def benchmark_model(

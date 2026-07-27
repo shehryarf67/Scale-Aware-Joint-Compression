@@ -283,10 +283,25 @@ class TestRunnerProtocol:
         assert all(sample >= 0 for sample in samples)
 
 
-class TestModelBenchmarkIsPlaceholder:
-    def test_build_forward_callable_raises(self):
-        with pytest.raises(NotImplementedError, match="benchmarking/cpu.py"):
-            build_forward_callable(object(), object(), BenchmarkConfig())  # type: ignore[arg-type]
+class TestBuildForwardCallableValidation:
+    """Validation only; the working paths are exercised in test_evaluation.py."""
+
+    def test_rejects_a_non_cpu_device(self):
+        config = BenchmarkConfig.__new__(BenchmarkConfig)
+        object.__setattr__(config, "device", Device.CUDA)
+        with pytest.raises(BenchmarkError, match="CPU-only"):
+            build_forward_callable(object(), object(), config)  # type: ignore[arg-type]
+
+    def test_reports_an_unusable_vocabulary_size(self):
+        class NoVocabulary:
+            config = None
+
+            def eval(self) -> None: ...
+
+            def to(self, _: object) -> None: ...
+
+        with pytest.raises(BenchmarkError, match="vocabulary size"):
+            build_forward_callable(NoVocabulary(), object(), BenchmarkConfig())  # type: ignore[arg-type]
 
 
 class TestCheckpointMeasurement:
@@ -359,21 +374,17 @@ class TestCheckpointMeasurement:
 
 
 class TestNoImportTimeSideEffects:
-    def test_importing_benchmarking_does_not_import_torch(self):
-        import sys
-
-        sys.modules.pop("torch", None)
-        import scale_aware_compression.benchmarking  # noqa: F401
-
-        assert "torch" not in sys.modules, (
-            "importing the benchmarking subpackage must not import torch, and must not pin threads "
-            "or start timing anything"
+    def test_importing_benchmarking_does_not_import_torch(self, imported_after):
+        assert imported_after("scale_aware_compression.benchmarking", ["torch"]) == [], (
+            "importing the benchmarking subpackage must not import torch, and must not pin "
+            "threads or start timing anything"
         )
 
-    def test_importing_benchmarking_does_not_set_thread_environment(self, monkeypatch):
-        import importlib
-        import os
-
-        monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
-        importlib.reload(importlib.import_module("scale_aware_compression.benchmarking.cpu"))
-        assert "OMP_NUM_THREADS" not in os.environ
+    def test_importing_benchmarking_does_not_set_thread_environment(self, environment_after_import):
+        observed = environment_after_import(
+            "scale_aware_compression.benchmarking.cpu",
+            ["OMP_NUM_THREADS", "MKL_NUM_THREADS"],
+        )
+        assert observed == {"OMP_NUM_THREADS": None, "MKL_NUM_THREADS": None}, (
+            "thread counts must be pinned only inside CpuBenchmarkRunner.run, never at import"
+        )

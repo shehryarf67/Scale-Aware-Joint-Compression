@@ -14,11 +14,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from scale_aware_compression.config import EvaluationConfig, ExperimentConfig
-from scale_aware_compression.constants import Device
-from scale_aware_compression.evaluation.agreement import AgreementResult
-from scale_aware_compression.evaluation.generation import GenerationReport
-from scale_aware_compression.evaluation.perplexity import PerplexityResult
+from scale_aware_compression.config import ExperimentConfig
+from scale_aware_compression.constants import CompressionMethod, Device
+from scale_aware_compression.evaluation.agreement import AgreementResult, compute_agreement
+from scale_aware_compression.evaluation.common import check_evaluation_device
+from scale_aware_compression.evaluation.generation import GenerationReport, generate_samples
+from scale_aware_compression.evaluation.perplexity import PerplexityResult, compute_perplexity
 from scale_aware_compression.logging_utils import get_logger
 from scale_aware_compression.metrics.joint_gain import (
     perplexity_increase_percentage,
@@ -128,6 +129,8 @@ def evaluate_model(
     *,
     dense_reference: PerplexityResult | None = None,
     dense_model: nn.Module | None = None,
+    dataloader: Any = None,
+    dataset_summary: Any = None,
 ) -> QualityReport:
     """Run the configured quality evaluation on CPU.
 
@@ -136,38 +139,67 @@ def evaluate_model(
         tokenizer: Matching tokeniser.
         config: The full experiment config.
         dense_reference: Dense-baseline perplexity, needed for retention. Loaded from the dense
-            run's record rather than recomputed.
-        dense_model: The dense model, needed only for agreement.
+            run's record rather than recomputed, so both arms are normalised against exactly the
+            same number. Ignored for the dense arm, which is its own reference.
+        dense_model: The dense model, needed only for agreement. When absent, the agreement
+            metric is skipped rather than failing the run.
+        dataloader: Pre-built evaluation loader. Built from ``config.data`` when omitted.
+        dataset_summary: Summary matching ``dataloader``, used for the fingerprint.
 
     Returns:
         The assembled quality report.
 
     Raises:
-        NotImplementedError: Always, in the current scaffold.
+        EvaluationError: If a requested metric cannot be computed.
     """
-    # TODO(evaluation): build the evaluation loader via data.loaders
-    # .build_evaluation_dataloader(), then run the metrics named in config.evaluation.metrics:
-    #   'perplexity' -> compute_perplexity()
-    #   'agreement'  -> compute_agreement(), requires dense_model
-    #   'generation' -> generate_samples()
-    # Fill `retention` via compute_retention() when dense_reference is given, and warn loudly
-    # when it is not: without it there is no primary score and the row cannot contribute to a
-    # joint-gain comparison.
-    # Assert config.evaluation.device is CPU for a reported number.
-    raise NotImplementedError(
-        "evaluate_model is not implemented yet; see the TODO in evaluation/quality.py"
-    )
+    from scale_aware_compression.data.loaders import build_evaluation_dataloader
 
+    check_evaluation_device(config.evaluation)
+    metrics = [metric.lower() for metric in config.evaluation.metrics]
+    report = QualityReport(device=config.evaluation.device.value)
 
-def check_evaluation_device(config: EvaluationConfig) -> None:
-    """Warn when a reported quality number would be produced off CPU.
-
-    Args:
-        config: Evaluation section of an experiment config.
-    """
-    if config.device is not Device.CPU:
-        LOGGER.warning(
-            "evaluation.device=%s. Exploratory evaluation on GPU is fine, but any number "
-            "reported in the write-up must be produced on CPU.",
-            config.device.value,
+    needs_loader = any(metric in {"perplexity", "agreement"} for metric in metrics)
+    if needs_loader and dataloader is None:
+        dataloader, dataset_summary = build_evaluation_dataloader(
+            config.data,
+            tokenizer,
+            batch_size=config.evaluation.batch_size,
+            max_samples=config.evaluation.max_samples,
         )
+    fingerprint = getattr(dataset_summary, "fingerprint", None)
+
+    if "perplexity" in metrics:
+        report.perplexity = compute_perplexity(
+            model, dataloader, config.evaluation, dataset_fingerprint=fingerprint
+        )
+
+    if "agreement" in metrics:
+        if dense_model is None:
+            # Expected for the dense arm, which has nothing to compare against. Info, not a
+            # warning: warning on every dense run would train the reader to ignore warnings.
+            LOGGER.info("Skipping agreement: no dense reference model was supplied")
+        else:
+            report.agreement = compute_agreement(dense_model, model, dataloader, config.evaluation)
+
+    if "generation" in metrics:
+        report.generation = generate_samples(model, tokenizer, config.evaluation)
+
+    # Retention. The dense arm is its own reference, which makes its retention exactly 100% and
+    # keeps the column populated for every row rather than only the compressed ones.
+    is_dense = config.compression.method is CompressionMethod.DENSE
+    reference = dense_reference
+    if reference is None and is_dense:
+        reference = report.perplexity
+
+    if report.perplexity is not None and reference is not None:
+        report.retention = compute_retention(report.perplexity, reference)
+    elif report.perplexity is not None and not is_dense:
+        LOGGER.warning(
+            "No dense reference for %s/%s, so this run has no quality retention and cannot "
+            "contribute to a joint-gain comparison. Run the dense baseline for this model first.",
+            config.model.name,
+            config.compression.method.value,
+        )
+
+    LOGGER.info("Quality: %s", report.summary_line())
+    return report

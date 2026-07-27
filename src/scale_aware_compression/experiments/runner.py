@@ -25,6 +25,7 @@ from __future__ import annotations
 import csv
 import json
 import subprocess
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,7 +39,7 @@ from scale_aware_compression.constants import (
     CompressionMethod,
 )
 from scale_aware_compression.hardware import get_hardware_info, get_software_versions
-from scale_aware_compression.logging_utils import get_logger
+from scale_aware_compression.logging_utils import get_logger, log_stage
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from scale_aware_compression.benchmarking.cpu import BenchmarkResult
@@ -102,6 +103,21 @@ def get_git_commit(*, short: bool = False) -> str | None:
     return commit
 
 
+def _measured_zeros(model: Any) -> int:
+    """Count exactly-zero parameters, returning 0 if the model cannot be scanned.
+
+    Used to turn a parameter count into a *non-zero* count for the theoretical size estimate.
+    Best-effort: a failure here should not lose an otherwise complete run.
+    """
+    from scale_aware_compression.metrics.compression import count_zero_parameters
+
+    try:
+        return count_zero_parameters(model)
+    except Exception as error:  # pragma: no cover - defensive
+        LOGGER.debug("Could not count zero parameters: %s", error)
+        return 0
+
+
 def make_experiment_id(
     *,
     model_name: str,
@@ -161,9 +177,19 @@ class ExperimentRecord:
     quality: dict[str, Any] = field(default_factory=dict)
     deployment: dict[str, Any] = field(default_factory=dict)
     compression: dict[str, Any] = field(default_factory=dict)
+    checkpoint: dict[str, Any] = field(default_factory=dict)
     hardware: dict[str, Any] = field(default_factory=dict)
     software: dict[str, Any] = field(default_factory=dict)
     config: dict[str, Any] = field(default_factory=dict)
+    model_details: dict[str, Any] = field(default_factory=dict)
+    seed_details: dict[str, Any] = field(default_factory=dict)
+    checkpoint_path: Path | None = None
+    duration_seconds: float = 0.0
+    status: str = "unknown"
+    """``success``, ``failure``, ``running``, or ``unknown``.
+
+    A failed run is still written, with its reason in ``notes``. A sweep with silently missing
+    cells is harder to diagnose than one with recorded failures."""
     notes: str = ""
 
     @classmethod
@@ -239,9 +265,15 @@ class ExperimentRecord:
             "sparsity": self.sparsity,
             "quantisation_bits": self.quantisation_bits,
             "seed": self.seed,
+            "status": self.status,
+            "duration_seconds": self.duration_seconds,
             "quality": self.quality,
             "deployment": self.deployment,
             "compression": self.compression,
+            "checkpoint": self.checkpoint,
+            "checkpoint_path": self.checkpoint_path.as_posix() if self.checkpoint_path else None,
+            "model": self.model_details,
+            "seeding": self.seed_details,
             "hardware": self.hardware,
             "software": self.software,
             "config": self.config,
@@ -263,12 +295,14 @@ class ExperimentRecord:
         deployment = self.deployment
         compression = self.compression
         statistics = compression.get("statistics", {}) if isinstance(compression, dict) else {}
+        checkpoint = self.checkpoint
 
         row: dict[str, Any] = {
             "experiment_id": self.experiment_id,
             "timestamp": self.timestamp,
             "git_commit": self.git_commit,
             "schema_version": self.schema_version,
+            "status": self.status,
             "model_name": self.model_name,
             "model_size_label": self.model_size_label,
             "parameter_count": self.parameter_count,
@@ -286,7 +320,8 @@ class ExperimentRecord:
             "latency_std_ms": deployment.get("latency_std_ms"),
             "throughput_tokens_per_s": deployment.get("throughput_tokens_per_s"),
             "peak_memory_mb": deployment.get("peak_memory_mb"),
-            "checkpoint_size_mb": statistics.get("checkpoint_size_mb"),
+            "checkpoint_size_mb": checkpoint.get("checkpoint_size_mb")
+            or statistics.get("checkpoint_size_mb"),
             "compression_ratio": statistics.get("compression_ratio"),
             "benchmark_num_threads": deployment.get("num_threads"),
             "benchmark_batch_size": deployment.get("batch_size"),
@@ -444,9 +479,11 @@ class ExperimentRunner:
     """Runs one experiment end to end and records it.
 
     Stage order is fixed: load, compress (on GPU if configured), evaluate quality on CPU,
-    benchmark on CPU, record. Every arm goes through the same sequence.
+    benchmark on CPU, record. Every arm goes through the same sequence, so no arm can
+    accidentally acquire an advantage from a different order of operations.
 
-    Status: placeholder.
+    The dense arm is fully implemented. Compressed arms run as far as their compressor allows
+    and will raise ``NotImplementedError`` from the compression stage until those are written.
     """
 
     config: ExperimentConfig
@@ -458,34 +495,215 @@ class ExperimentRunner:
             self.tracker = ExperimentTracker(self.config.runtime.output_dir / "metrics")
 
     def run(self) -> ExperimentRecord:
-        """Execute the configured experiment.
+        """Execute the configured experiment and write its record.
 
         Returns:
             The completed record.
 
         Raises:
-            NotImplementedError: Always, in the current scaffold.
+            ExperimentError: If a stage fails.
+            NotImplementedError: From the compression stage, for arms not yet implemented.
         """
-        # TODO(experiments): implement in this order.
-        #   1. set_global_seed(config.runtime.seed, deterministic=config.runtime.deterministic)
-        #   2. record = ExperimentRecord.from_config(config)
-        #   3. loaded = models.loader.load_model_and_tokenizer(config.model);
-        #      record.parameter_count = loaded.parameter_count
-        #   4. compressor = compression.get_compressor(config)
-        #      - None for the dense arm: evaluate the loaded model directly
-        #      - otherwise compressor.run(model, tokenizer) and record.add_compression()
-        #   5. compressor.save() into <output_dir>/<id>/checkpoint, then
-        #      benchmarking.checkpoint_size.measure_checkpoint() for the deployment size
-        #   6. move the model to CPU, then evaluation.quality.evaluate_model() with the dense
-        #      run's perplexity as dense_reference -- loaded from its record, not recomputed,
-        #      so the baseline is identical across arms
-        #   7. benchmarking.cpu.benchmark_model() on CPU and record.add_benchmark()
-        #   8. self.tracker.save(record)
-        # Fail loudly if step 6 has no dense reference: the row would carry no primary score
-        # and could not contribute to a joint-gain comparison.
-        raise NotImplementedError(
-            "ExperimentRunner.run is not implemented yet; see the TODO in experiments/runner.py"
+        from scale_aware_compression.benchmarking.cpu import benchmark_model
+        from scale_aware_compression.compression import get_compressor
+        from scale_aware_compression.evaluation.quality import evaluate_model
+        from scale_aware_compression.models.loader import load_model_and_tokenizer
+        from scale_aware_compression.seed import set_global_seed
+
+        assert self.tracker is not None  # set in __post_init__
+        config = self.config
+        started = time.perf_counter()
+
+        LOGGER.info("=" * 78)
+        LOGGER.info("%s", config.describe())
+        LOGGER.info("=" * 78)
+
+        # 1. Seed everything before anything stochastic happens.
+        seed_record = set_global_seed(
+            config.runtime.seed, deterministic=config.runtime.deterministic
         )
+
+        # 2. Start the record. Hardware and software metadata are captured here.
+        record = ExperimentRecord.from_config(config)
+        record.seed_details = seed_record
+        record.status = "running"
+
+        try:
+            # 3. Load.
+            with log_stage(LOGGER, "load model"):
+                loaded = load_model_and_tokenizer(config.model)
+                record.parameter_count = loaded.parameter_count
+                record.model_size_label = record.model_size_label or loaded.spec.size_label
+                record.model_details = loaded.describe()
+
+            # 4. Compress. `None` means the dense arm, which is the model as loaded.
+            compressor = get_compressor(config)
+            model = loaded.model
+            if compressor is not None:
+                with log_stage(LOGGER, f"compress ({compressor.name})"):
+                    compression_result = compressor.run(model, loaded.tokenizer)
+                    model = compression_result.model
+                    record.add_compression(compression_result)
+
+            # 5. Deployment artefact size.
+            with log_stage(LOGGER, "measure checkpoint"):
+                self._measure_artefact(record, compressor, model, loaded)
+
+            # 6. Quality, on CPU.
+            with log_stage(LOGGER, "evaluate quality (CPU)"):
+                model.to("cpu")
+                report = evaluate_model(
+                    model,
+                    loaded.tokenizer,
+                    config,
+                    dense_reference=self._load_dense_reference(),
+                )
+                record.add_quality(report)
+
+            # 7. Deployment measurements, on CPU.
+            with log_stage(LOGGER, "benchmark (CPU)"):
+                benchmark = benchmark_model(
+                    model,
+                    loaded.tokenizer,
+                    config.benchmark,
+                    label=f"{config.model.name}/{config.compression.method.value}",
+                )
+                record.add_benchmark(benchmark)
+
+        except NotImplementedError:
+            # An unimplemented arm is a known gap, not a failed experiment. Let it through
+            # unrecorded so a placeholder never lands in outputs/ looking like a real result.
+            raise
+        except Exception as error:
+            # A failed run stays in the log with its reason, rather than vanishing. A sweep with
+            # silently missing cells is worse than one with recorded failures.
+            record.status = "failure"
+            record.notes = f"{type(error).__name__}: {error}"
+            record.duration_seconds = time.perf_counter() - started
+            LOGGER.exception("Run %s failed; recording the failure", record.experiment_id)
+            self.tracker.save(record)
+            raise ExperimentError(f"Run {record.experiment_id} failed: {error}") from error
+
+        record.status = "success"
+        record.duration_seconds = time.perf_counter() - started
+
+        # 8. Persist.
+        self.tracker.save(record)
+        LOGGER.info("Completed %s in %.1fs", record.experiment_id, record.duration_seconds)
+        return record
+
+    def _measure_artefact(
+        self,
+        record: ExperimentRecord,
+        compressor: Any,
+        model: Any,
+        loaded: Any,
+    ) -> None:
+        """Measure the size of the artefact that would actually be deployed.
+
+        For a compressed arm that means saving the converted model and measuring what lands on
+        disk. For the dense arm it means measuring the cached Hugging Face snapshot: re-saving a
+        byte-identical copy of a multi-gigabyte checkpoint just to weigh it would waste disk for
+        no extra information.
+
+        Args:
+            record: Record to update in place.
+            compressor: The arm's compressor, or ``None`` for dense.
+            model: The converted model.
+            loaded: The :class:`LoadedModel` bundle.
+        """
+        from scale_aware_compression.benchmarking.checkpoint_size import measure_checkpoint
+
+        target: Path | None = None
+        if compressor is not None:
+            target = self.config.run_output_dir / "checkpoint"
+            compressor.save(model, target)
+        else:
+            target = self._cached_snapshot_path(loaded)
+
+        if target is None:
+            LOGGER.warning(
+                "Could not locate an on-disk artefact for %s; checkpoint size will be absent "
+                "from this record.",
+                record.experiment_id,
+            )
+            return
+
+        nonzero = max(record.parameter_count - _measured_zeros(model), 0) or None
+        report = measure_checkpoint(
+            target,
+            nonzero_parameters=nonzero,
+            bits=self.config.compression.effective_bits,
+        )
+        record.checkpoint = report.to_dict()
+        record.checkpoint_path = target
+
+    def _cached_snapshot_path(self, loaded: Any) -> Path | None:
+        """Locate the cached Hub snapshot for the dense arm, without downloading."""
+        try:
+            from huggingface_hub import snapshot_download
+
+            return Path(
+                snapshot_download(
+                    repo_id=loaded.spec.hf_id,
+                    revision=loaded.revision,
+                    local_files_only=True,
+                )
+            )
+        except Exception as error:  # pragma: no cover - depends on the local cache
+            LOGGER.debug("Could not resolve the cached snapshot: %s", error)
+            return None
+
+    def _load_dense_reference(self) -> Any:
+        """Load this model's dense-baseline perplexity from its recorded run.
+
+        Loaded rather than recomputed, so every arm is normalised against exactly the same
+        number. A dense run evaluated with a different window or sample count would otherwise
+        produce a subtly different reference for each arm.
+
+        Returns:
+            The dense :class:`PerplexityResult`, or ``None`` when this *is* the dense arm or no
+            dense record exists yet.
+        """
+        from scale_aware_compression.evaluation.perplexity import PerplexityResult
+
+        config = self.config
+        if config.compression.method is CompressionMethod.DENSE:
+            return None
+
+        assert self.tracker is not None
+        for candidate in self.tracker.load_all():
+            if candidate.get("compression_method") != CompressionMethod.DENSE.value:
+                continue
+            if candidate.get("model_name") != config.model.name:
+                continue
+            if candidate.get("seed") != config.runtime.seed:
+                continue
+            payload = candidate.get("quality", {}).get("perplexity")
+            if not payload:
+                continue
+            LOGGER.info(
+                "Using dense reference from %s (perplexity %.4f)",
+                candidate.get("experiment_id"),
+                payload["perplexity"],
+            )
+            return PerplexityResult(
+                perplexity=float(payload["perplexity"]),
+                total_nll=float(payload.get("total_nll", 0.0)),
+                total_tokens=int(payload.get("total_tokens", 0)),
+                num_sequences=int(payload.get("num_sequences", 0)),
+                sequence_length=int(payload.get("sequence_length", 0)),
+                device=str(payload.get("evaluation_device", "cpu")),
+                dataset_fingerprint=payload.get("dataset_fingerprint"),
+            )
+
+        LOGGER.warning(
+            "No dense baseline recorded for model=%s seed=%d. This run will have no quality "
+            "retention. Run scripts/run_dense_baseline.py for this model first.",
+            config.model.name,
+            config.runtime.seed,
+        )
+        return None
 
     def dry_run(self) -> dict[str, Any]:
         """Validate the configuration and report what would happen, without running it.

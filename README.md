@@ -307,13 +307,15 @@ and CPU benchmarking harness are in place. The compression algorithms are not.
 | CPU benchmarking harness and statistics   | done                         |
 | Experiment records (JSON + CSV)           | done                         |
 | Method definition and validity analysis   | done                         |
-| Data loading and calibration sampling     | placeholder                  |
+| **Data loading, chunking, calibration**   | **done**                     |
+| **Perplexity, agreement, generation**     | **done**                     |
+| **CPU benchmark workload (forward/decode)** | **done**                   |
+| **Dense baseline, end to end**            | **done**                     |
 | Pruning                                   | placeholder                  |
 | Quantisation                              | placeholder                  |
 | Sequential pipeline                       | placeholder (stages defined) |
 | Joint pruning-aware quantisation          | placeholder (stages defined) |
-| Training / recovery loop                  | placeholder                  |
-| Quality evaluation                        | placeholder                  |
+| Layerwise reconstruction + activations    | not started                  |
 | Figures and tables                        | placeholder                  |
 
 Placeholder modules raise `NotImplementedError` with a pointer to what needs writing, rather than

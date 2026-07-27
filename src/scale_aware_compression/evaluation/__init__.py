@@ -14,6 +14,7 @@ from scale_aware_compression.evaluation.agreement import (
     kl_divergence,
     top_k_agreement_rate,
 )
+from scale_aware_compression.evaluation.common import EvaluationError, check_evaluation_device
 from scale_aware_compression.evaluation.generation import (
     DEFAULT_PROMPTS,
     GenerationReport,
@@ -31,7 +32,6 @@ from scale_aware_compression.evaluation.perplexity import (
 from scale_aware_compression.evaluation.quality import (
     PRIMARY_QUALITY_METRIC,
     QualityReport,
-    check_evaluation_device,
     compute_retention,
     evaluate_model,
 )
@@ -40,6 +40,7 @@ __all__ = [
     "DEFAULT_PROMPTS",
     "PRIMARY_QUALITY_METRIC",
     "AgreementResult",
+    "EvaluationError",
     "GenerationReport",
     "GenerationSample",
     "PerplexityResult",
