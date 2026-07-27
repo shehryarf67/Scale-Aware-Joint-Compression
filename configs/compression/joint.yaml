@@ -41,9 +41,15 @@ compression:
 
   joint:
     fake_quantisation: true
-    # Gradients must flow through the rounding operation, or the weights never learn to sit on
-    # favourable grid points and the arm degenerates to sequential-with-extra-steps.
+    # Gradients must flow through the rounding operation. Without a straight-through estimator the
+    # rounding has zero gradient almost everywhere, so quantisation-aware training cannot adapt the
+    # weights at all and this arm reduces to extra fine-tuning under a frozen perturbation.
     straight_through_estimator: true
+    # Mask scoring is a documented choice, not a property of the method -- see
+    # docs/method_definition.md. Planned default: rank by absolute FP32 shadow-weight magnitude with
+    # fake quantisation active throughout. Ranking by fake-quantised magnitude is the alternative;
+    # both are defensible and they differ mainly for weights near a grid boundary. Whichever is
+    # implemented must be used consistently across every run and recorded in the run record.
     mask_update_interval: 50
     # Masks stop changing at 80% of training, so the last fifth is pure recovery at the final
     # sparsity. Without this the final mask update lands with too few steps left to recover from.

@@ -7,9 +7,10 @@ Isolates the effect of sparsity, as a reference for the sequential and joint arm
 on GPU; the deployment measurements are CPU-only.
 
 Check two things in the resulting record: that measured sparsity matches the target, and whether the
-sparsity produced any latency improvement. For unstructured sparsity it usually does not, because
-dense CPU GEMM kernels do not skip scattered zeros — try ``--override
-compression.pruning.granularity=2:4`` for the pattern that has kernel support.
+sparsity produced any latency improvement. Expect none from unstructured sparsity — a dense CPU GEMM
+kernel performs the same multiply-accumulates whether or not the operands are zero. Try ``--override
+compression.pruning.granularity=2:4`` for the pattern most likely to admit a sparsity-exploiting
+kernel, but confirm the installed backend actually provides one before reading a speedup either way.
 
 Examples:
     python scripts/run_pruning.py --config configs/experiments/pilot.yaml --dry-run

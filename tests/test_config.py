@@ -332,10 +332,27 @@ class TestShippedConfigs:
 
     def test_experiment_configs_parse(self, configs_dir: Path):
         files = self._yaml_files(configs_dir / "experiments")
-        assert len(files) == 3
+        assert {path.name for path in files} == {
+            "pilot.yaml",
+            "main_scale_sweep.yaml",
+            "extended_scale_sweep.yaml",
+            "qwen_validation.yaml",
+        }
         for path in files:
             config = load_config(path)
             assert config.experiment.id
+
+    def test_every_shipped_yaml_config_loads(self, configs_dir: Path):
+        """Every YAML anywhere under configs/ must parse and validate.
+
+        Catches a config that was edited but never loaded -- including one reachable only as an
+        include target.
+        """
+        paths = sorted(configs_dir.rglob("*.yaml"))
+        assert len(paths) >= 14, f"expected the full config set, found {len(paths)}"
+        for path in paths:
+            config = ExperimentConfig.from_mapping(load_document(path))
+            assert config.benchmark.device is Device.CPU, f"{path.name} is not CPU-only"
 
     def test_compression_configs_declare_their_own_method(self, configs_dir: Path):
         expected = {
@@ -415,3 +432,166 @@ class TestShippedConfigs:
         assert sweep.sweep.budget_overrides == validation.sweep.budget_overrides
         assert sweep.sweep.seeds == validation.sweep.seeds
         assert sweep.sweep.methods == validation.sweep.methods
+
+
+class TestSweepScope:
+    """The main sweep is three models; 1.4B is confined to the extended sweep."""
+
+    ALL_ARMS = [
+        CompressionMethod.DENSE,
+        CompressionMethod.PRUNING,
+        CompressionMethod.QUANTISATION,
+        CompressionMethod.SEQUENTIAL,
+        CompressionMethod.JOINT,
+    ]
+
+    def _sweep(self, configs_dir: Path, name: str):
+        return load_config(configs_dir / "experiments" / name).sweep
+
+    def test_main_sweep_excludes_pythia_1_4b(self, configs_dir: Path):
+        """1.4B may need different training settings, which would confound the scale trend."""
+        models = self._sweep(configs_dir, "main_scale_sweep.yaml").models
+        assert "pythia-1.4b" not in models
+        assert models == ["pythia-160m", "pythia-410m", "pythia-1b"]
+
+    def test_extended_sweep_includes_pythia_1_4b(self, configs_dir: Path):
+        models = self._sweep(configs_dir, "extended_scale_sweep.yaml").models
+        assert "pythia-1.4b" in models
+        assert models == ["pythia-160m", "pythia-410m", "pythia-1b", "pythia-1.4b"]
+
+    def test_extended_sweep_only_adds_the_optional_model(self, configs_dir: Path):
+        """The extended sweep adds exactly one model and reorders nothing.
+
+        A model present in the extended sweep but absent from the main one would join the trend
+        without a validated pipeline behind it.
+        """
+        main = self._sweep(configs_dir, "main_scale_sweep.yaml").models
+        extended = self._sweep(configs_dir, "extended_scale_sweep.yaml").models
+        assert set(extended) - set(main) == {"pythia-1.4b"}
+        assert extended[: len(main)] == main
+
+    def test_extended_sweep_inherits_the_main_budgets_and_seeds(self, configs_dir: Path):
+        """Relaxed settings would stop the 1.4B point being a comparable scale point."""
+        main = self._sweep(configs_dir, "main_scale_sweep.yaml")
+        extended = self._sweep(configs_dir, "extended_scale_sweep.yaml")
+        assert extended.budgets == main.budgets
+        assert extended.seeds == main.seeds
+        assert extended.methods == main.methods
+        assert extended.budget_overrides == main.budget_overrides
+
+    def test_extended_sweep_does_not_relax_the_evaluation_or_benchmark_protocol(
+        self, configs_dir: Path
+    ):
+        main = load_config(configs_dir / "experiments" / "main_scale_sweep.yaml")
+        extended = load_config(configs_dir / "experiments" / "extended_scale_sweep.yaml")
+        assert extended.data.sequence_length == main.data.sequence_length
+        assert extended.evaluation.max_samples == main.evaluation.max_samples
+        assert extended.benchmark.num_threads == main.benchmark.num_threads
+        assert extended.benchmark.measured_runs == main.benchmark.measured_runs
+        assert extended.benchmark.sequence_length == main.benchmark.sequence_length
+
+    @pytest.mark.parametrize("name", ["main_scale_sweep.yaml", "extended_scale_sweep.yaml"])
+    def test_sweep_keeps_all_five_arms(self, configs_dir: Path, name: str):
+        assert self._sweep(configs_dir, name).methods == self.ALL_ARMS
+
+    @pytest.mark.parametrize("name", ["main_scale_sweep.yaml", "extended_scale_sweep.yaml"])
+    def test_sweep_keeps_both_budgets(self, configs_dir: Path, name: str):
+        assert self._sweep(configs_dir, name).budgets == ["moderate", "aggressive"]
+
+    @pytest.mark.parametrize("name", ["main_scale_sweep.yaml", "extended_scale_sweep.yaml"])
+    def test_sweep_runs_dense_first(self, configs_dir: Path, name: str):
+        """Every other arm needs its model's dense perplexity as the retention reference."""
+        assert self._sweep(configs_dir, name).methods[0] is CompressionMethod.DENSE
+
+    @pytest.mark.parametrize("name", ["main_scale_sweep.yaml", "extended_scale_sweep.yaml"])
+    def test_sweep_is_resumable(self, configs_dir: Path, name: str):
+        assert self._sweep(configs_dir, name).skip_existing is True
+
+    def test_sweep_budgets_hold_sparsity_and_bits_as_planned(self, configs_dir: Path):
+        overrides = self._sweep(configs_dir, "main_scale_sweep.yaml").budget_overrides
+        assert overrides["moderate"]["compression"]["pruning"]["sparsity"] == 0.5
+        assert overrides["moderate"]["compression"]["quantisation"]["bits"] == 8
+        assert overrides["aggressive"]["compression"]["pruning"]["sparsity"] == 0.7
+        assert overrides["aggressive"]["compression"]["quantisation"]["bits"] == 4
+
+
+class TestPilotScope:
+    """The pilot validates the pipeline and must not be able to launch the study."""
+
+    @pytest.fixture
+    def pilot(self, configs_dir: Path) -> ExperimentConfig:
+        return load_config(configs_dir / "experiments" / "pilot.yaml")
+
+    def test_uses_one_model(self, pilot: ExperimentConfig):
+        assert pilot.model.name == "pythia-160m"
+        # No sweep grid: this config describes exactly one run, so `sajc sweep` against it cannot
+        # expand into the full study.
+        assert pilot.sweep.models == []
+
+    def test_uses_one_seed(self, pilot: ExperimentConfig):
+        assert pilot.sweep.seeds == []
+        assert isinstance(pilot.runtime.seed, int)
+
+    def test_uses_one_budget(self, pilot: ExperimentConfig):
+        assert pilot.compression.budget_label == "pilot"
+        assert pilot.sweep.budgets == ["moderate"]
+        assert pilot.sweep.budget_overrides == {}
+
+    def test_expands_to_a_single_run(self, pilot: ExperimentConfig):
+        """The strongest form of "must not launch the full study"."""
+        from scale_aware_compression.experiments.scale_sweep import build_sweep_plan
+
+        assert build_sweep_plan(pilot).num_runs == 1
+
+    def test_uses_the_moderate_int8_budget(self, pilot: ExperimentConfig):
+        """INT8, not 4-bit: a pilot should validate the pipeline, not discover a missing backend."""
+        assert pilot.compression.effective_sparsity == 0.5
+        assert pilot.compression.quantisation.bits == 8
+
+    def test_evaluation_and_calibration_samples_are_small(self, pilot: ExperimentConfig):
+        assert pilot.evaluation.max_samples is not None
+        assert pilot.evaluation.max_samples <= 128
+        assert pilot.data.max_eval_samples is not None
+        assert pilot.data.max_eval_samples <= 128
+        assert pilot.data.calibration_samples <= 32
+        assert pilot.compression.quantisation.calibration_samples <= 32
+
+    def test_sequence_length_is_short(self, pilot: ExperimentConfig):
+        assert pilot.data.sequence_length <= 256
+        assert pilot.evaluation.sequence_length <= 256
+        assert pilot.benchmark.sequence_length <= 128
+
+    def test_optimisation_budget_is_short(self, pilot: ExperimentConfig):
+        assert pilot.compression.recovery.max_steps is not None
+        assert pilot.compression.recovery.max_steps <= 100
+        assert pilot.compression.joint.joint_max_steps is not None
+        assert pilot.compression.joint.joint_max_steps <= 100
+
+    def test_measured_runs_still_allow_median_std_and_p95(self, pilot: ExperimentConfig):
+        """Minimal, but the reported statistics must all remain computable."""
+        from scale_aware_compression.benchmarking.latency import summarise_latencies
+
+        runs = pilot.benchmark.measured_runs
+        assert runs >= 3, "need at least 3 samples for a p95 that interpolates between values"
+        assert runs <= 12, "the pilot must stay minimal"
+
+        samples = [0.01 * (index + 1) for index in range(runs)]
+        statistics = summarise_latencies(samples)
+        assert statistics.median_ms > 0
+        assert statistics.std_ms > 0
+        assert statistics.p95_ms >= statistics.median_ms
+
+    def test_benchmark_is_still_cpu_only(self, pilot: ExperimentConfig):
+        assert pilot.benchmark.device is Device.CPU
+        assert pilot.evaluation.device is Device.CPU
+
+    def test_compares_sequential_against_joint_at_a_matched_budget(self, pilot: ExperimentConfig):
+        """The pilot exercises the comparison the study is about, budget-matching check included."""
+        assert pilot.compression.method is CompressionMethod.SEQUENTIAL
+        assert pilot.compression.joint.match_sequential_budget is True
+        assert pilot.compression.joint.joint_max_steps == pilot.compression.recovery.max_steps
+
+    def test_is_labelled_as_a_pipeline_validation_run(self, pilot: ExperimentConfig):
+        """A future reader must not mistake pilot output for a result."""
+        assert "not-a-result" in pilot.experiment.tags
+        assert "pipeline-validation" in pilot.experiment.tags

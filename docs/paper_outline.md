@@ -51,7 +51,8 @@ as the numbers.
 ## 2. Background and related work
 
 - **Pruning.** Magnitude pruning; gradual schedules (Zhu & Gupta); semi-structured N:M sparsity and
-  why it is the pattern with kernel support; Wanda and SparseGPT as stronger criteria.
+  the state of kernel support for it, GPU versus CPU; Wanda and SparseGPT as stronger criteria that
+  this study deliberately does not use (see Limitations).
 - **Quantisation.** Post-training quantisation; symmetric versus asymmetric, per-tensor versus
   per-channel; quantisation-aware training and the straight-through estimator; weight-only 4-bit
   methods.
@@ -92,7 +93,13 @@ the ones that are easy to get wrong —
 
 ### 3.4 Experimental grid
 
-4 models x 5 arms x 2 budgets x 3 seeds. WikiText-2, 512-token non-overlapping windows.
+**3 Pythia sizes** (160M, 410M, 1B) × 5 arms × 2 budgets × 3 seeds. WikiText-2, 512-token
+non-overlapping windows.
+
+State plainly that the 1.4B point is optional and reported separately unless it was run under settings
+identical to the main sweep — and if it was excluded, say why in this section rather than burying it in
+Limitations. Full definitions of the two arms are in `docs/method_definition.md`; cite it, do not
+paraphrase it, so the paper and the code cannot disagree about what was run.
 
 ---
 
@@ -167,15 +174,30 @@ the candidate causes rather than choosing one.
 
 ## 7. Limitations
 
-State these plainly and early enough that a reader does not have to find them.
+State these plainly and early enough that a reader does not have to find them. Draw from
+[validity_threats.md](validity_threats.md), which is the fuller treatment; this section is the subset a
+reader needs in the paper itself.
 
-- Three or four scale points establish a direction, not a scaling law. No extrapolation beyond 1.4B.
+- Three scale points (four if the extended sweep ran under comparable settings) establish a direction,
+  not a scaling law. No extrapolation beyond ~1.4B.
+- Scale in Pythia is not a perfectly isolated variable: depth, width, head counts, and the
+  tokens-per-parameter ratio all change along the suite.
+- One specific sequential implementation versus one specific joint implementation. Not a claim about
+  pruning or quantisation in general.
 - One evaluation corpus. Quality findings are WikiText-2 findings.
 - Perplexity and agreement, not downstream task accuracy.
-- CPU latency findings are specific to the framework, backend, and thread count used.
+- CPU latency findings are specific to the framework, backend, thread count, and machine used. Sparsity
+  yields no speedup without a kernel that exploits it, so a null latency result is a finding about the
+  runtime as much as about the method.
+- If the moderate and aggressive budgets ran on different backends, their latency and size numbers are
+  not comparable with each other — say so rather than plotting them as one curve.
 - Standard pruning and quantisation baselines; a stronger base method could change the gap in either
   direction.
 - Matched optimiser steps is not the same as matched optimisation difficulty.
+- Three seeds give a weak variance estimate. Report gains smaller than the seed spread as
+  inconclusive, not as small positive effects.
+- The pre-registered analysis is the trend across scale, not the maximum over cells; any cell-level
+  claim is exploratory.
 - One external validation model, at one scale.
 
 ---
@@ -190,10 +212,12 @@ Two or three sentences: the question, the measured answer, and the recommendatio
 
 - **A. Full results tables** — every arm, model, budget, and seed, unaveraged.
 - **B. Configurations** — the shipped YAML, with the include structure explained.
-- **C. Hardware and software** — the benchmark machine and frozen environment.
+- **C. Hardware and software** — the benchmark machine, backend, and frozen environment.
 - **D. Reproduction instructions** — from [reproducibility.md](reproducibility.md).
 - **E. Generation samples** — completions at each budget, showing where degeneracy sets in.
 - **F. Schedule details** — sparsity ramp, mask update cadence, freeze point, LR schedule.
+- **G. Method definition** — the module selection, mask scoring rule, and matched-budget requirements,
+  from [method_definition.md](method_definition.md).
 
 ---
 

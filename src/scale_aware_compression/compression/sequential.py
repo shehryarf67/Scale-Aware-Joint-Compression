@@ -9,11 +9,14 @@ practice in the literature. Its stages are explicit and asserted::
         -> quantisation
         -> conversion
 
-The ordering matters. Pruning first and quantising second means the quantisation observers see
-an already-sparse weight distribution, whose dynamic range is narrower than the dense one, so
-the quantisation grid is fitted to the pruned model. What it cannot do is the converse: the
-pruning decision is made with no knowledge of where the quantisation grid points will land.
-Closing that gap is exactly what the joint arm attempts, so the comparison between the two
+The ordering matters, and it is worth being precise about how. Pruning first and quantising second
+means quantisation is calibrated on the altered post-pruning distribution, including the increased
+mass at zero and the remaining non-zero weights. Whether that distribution is *easier* to quantise
+is an empirical question and not assumed here: magnitude pruning removes the smallest-magnitude
+weights, so the surviving values are not necessarily confined to a narrower range than the dense
+ones, and the observed min/max may be unchanged. What the ordering definitely cannot do is the
+converse -- the pruning decision is made with no knowledge of where the quantisation grid points
+will land. Closing that gap is what the joint arm attempts, so the comparison between the two
 isolates one design choice.
 
 Status: placeholder. Stages delegate to :class:`Pruner` and :class:`Quantiser`, which are
@@ -61,9 +64,9 @@ class SequentialCompressor(Compressor):
     def prepare(self, model: nn.Module) -> nn.Module:
         """Prepare pruning only.
 
-        Quantisation preparation is deferred to :meth:`convert`, because inserting observers
-        before pruning would calibrate them against the dense weight distribution and defeat
-        the point of the ordering.
+        Quantisation preparation is deferred to :meth:`convert`. Inserting observers before pruning
+        would calibrate them against the dense weight distribution, which is a different pipeline
+        from the one this arm is defined to be.
 
         Args:
             model: The dense model.
@@ -132,9 +135,10 @@ class SequentialCompressor(Compressor):
         #   2. self.quantiser.calibrate(model) -- same calibration set as every other arm
         #   3. self.quantiser.apply(model)     -- fake quantisation
         #   4. self.quantiser.convert(model)   -- real low precision
-        # then fold the pruning masks in. Order matters at the end too: folding masks after
-        # conversion can round a pruned zero onto a non-zero grid point when the scheme is
-        # asymmetric, which silently lowers the realised sparsity.
+        # then fold the pruning masks in. Order matters at the end too: with an asymmetric scheme
+        # zero need not be an exact grid point, so quantising after folding can map a pruned zero
+        # onto a non-zero value and silently lower the realised sparsity. Verify measured sparsity
+        # after conversion either way rather than assuming the order was sufficient.
         started = time.perf_counter()
         prepared = self.quantiser.prepare(model)
         calibrated = self.quantiser.calibrate(prepared)

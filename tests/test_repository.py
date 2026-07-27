@@ -1,0 +1,262 @@
+"""Repository-level checks: documentation, packaging metadata, CI, and the CPU-only policy.
+
+These guard facts that live outside Python modules and would otherwise go stale silently — a
+documented protocol that was deleted, a placeholder URL that shipped, a CI workflow that stopped
+running the checks it claims to.
+
+Nothing here downloads a model, imports torch, or needs CUDA.
+"""
+
+from __future__ import annotations
+
+import tomllib
+from pathlib import Path
+
+import pytest
+import yaml
+
+from scale_aware_compression.config import ExperimentConfig, load_document
+from scale_aware_compression.constants import Device
+
+REQUIRED_DOCS = (
+    "research_question.md",
+    "method_definition.md",
+    "methodology.md",
+    "experiment_protocol.md",
+    "benchmarking_protocol.md",
+    "validity_threats.md",
+    "reproducibility.md",
+    "paper_outline.md",
+)
+
+
+@pytest.fixture(scope="module")
+def pyproject(project_root: Path) -> dict:
+    return tomllib.loads((project_root / "pyproject.toml").read_text(encoding="utf-8"))
+
+
+@pytest.fixture(scope="module")
+def workflow_path(project_root: Path) -> Path:
+    path = project_root / ".github" / "workflows" / "ci.yml"
+    assert path.is_file(), "CI workflow is missing"
+    return path
+
+
+@pytest.fixture(scope="module")
+def workflow_text(workflow_path: Path) -> str:
+    return workflow_path.read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def workflow(workflow_text: str) -> dict:
+    return yaml.safe_load(workflow_text)
+
+
+class TestDocumentation:
+    @pytest.mark.parametrize("name", REQUIRED_DOCS)
+    def test_document_exists_and_is_not_empty(self, project_root: Path, name: str):
+        path = project_root / "docs" / name
+        assert path.is_file(), f"docs/{name} is missing"
+        assert len(path.read_text(encoding="utf-8").strip()) > 500, f"docs/{name} looks like a stub"
+
+    @pytest.mark.parametrize("name", REQUIRED_DOCS)
+    def test_document_starts_with_a_heading(self, project_root: Path, name: str):
+        first = (project_root / "docs" / name).read_text(encoding="utf-8").lstrip().splitlines()[0]
+        assert first.startswith("# "), f"docs/{name} does not start with a top-level heading"
+
+    def test_method_definition_covers_the_required_sections(self, project_root: Path):
+        text = (project_root / "docs" / "method_definition.md").read_text(encoding="utf-8")
+        for heading in (
+            "## Scope",
+            "## Compressible Modules",
+            "## Pruning Method",
+            "## Quantisation Method",
+            "## Sequential Pipeline",
+            "## Joint Pipeline",
+            "## Mask Scoring",
+            "## Matched Compression Budget",
+            "## Matched Optimisation Budget",
+            "## Deployment Backend",
+            "## Current Status",
+        ):
+            assert heading in text, f"method_definition.md is missing {heading!r}"
+
+    def test_validity_threats_covers_the_required_sections(self, project_root: Path):
+        text = (project_root / "docs" / "validity_threats.md").read_text(encoding="utf-8")
+        for heading in (
+            "## Construct Validity",
+            "## Internal Validity",
+            "## External Validity",
+            "## Scale as an Independent Variable",
+            "## Sparsity and Hardware Speed",
+            "## Dataset and Evaluation Limits",
+            "## Statistical Limits",
+            "## Backend Limits",
+        ):
+            assert heading in text, f"validity_threats.md is missing {heading!r}"
+
+    def test_method_definition_marks_the_algorithms_as_placeholders(self, project_root: Path):
+        """Until the algorithms exist, the document must say so."""
+        text = (project_root / "docs" / "method_definition.md").read_text(encoding="utf-8")
+        assert "placeholder" in text.lower()
+
+    def test_promotion_checklist_is_documented(self, project_root: Path):
+        text = (project_root / "docs" / "reproducibility.md").read_text(encoding="utf-8")
+        assert "## Promotion checklist" in text
+        for item in (
+            "Resolved configuration saved",
+            "Git commit recorded",
+            "Hardware metadata recorded",
+            "Matched sequential and joint budgets",
+            "No benchmark anomaly",
+            "Consistent backend and output format",
+        ):
+            assert item in text, f"promotion checklist is missing {item!r}"
+
+    def test_outputs_versus_results_is_documented(self, project_root: Path):
+        for name in ("README.md", "docs/reproducibility.md"):
+            text = (project_root / name).read_text(encoding="utf-8")
+            assert "outputs/" in text and "results/" in text
+            assert "promotion" in text.lower() or "Promotion" in text, (
+                f"{name} does not explain promotion from outputs/ to results/"
+            )
+
+    def test_four_bit_backend_risk_is_flagged_everywhere_it_matters(self, project_root: Path):
+        """A reader must not reach the aggressive budget without meeting the caveat."""
+        targets = (
+            "README.md",
+            "docs/benchmarking_protocol.md",
+            "docs/experiment_protocol.md",
+            "docs/method_definition.md",
+            "configs/compression/quantisation.yaml",
+            "configs/experiments/main_scale_sweep.yaml",
+        )
+        for name in targets:
+            text = (project_root / name).read_text(encoding="utf-8")
+            lowered = text.lower()
+            assert "4-bit" in lowered, f"{name} does not mention the 4-bit risk"
+            assert "int8" in lowered, f"{name} does not mention INT8"
+            assert "backend" in lowered, f"{name} does not mention the backend"
+
+    def test_int8_fallback_plan_is_documented(self, project_root: Path):
+        for name in (
+            "README.md",
+            "docs/benchmarking_protocol.md",
+            "docs/method_definition.md",
+            "configs/experiments/main_scale_sweep.yaml",
+        ):
+            text = (project_root / name).read_text(encoding="utf-8").lower()
+            assert "fallback" in text, f"{name} does not document the INT8 fallback"
+
+
+class TestPackagingMetadata:
+    def test_project_urls_do_not_contain_the_owner_placeholder(self, pyproject: dict):
+        urls = pyproject["project"]["urls"]
+        for label, url in urls.items():
+            assert "OWNER" not in url, f"project.urls.{label} still contains the OWNER placeholder"
+
+    def test_project_urls_point_at_the_repository(self, pyproject: dict):
+        urls = pyproject["project"]["urls"]
+        expected_base = "https://github.com/shehryarf67/Scale-Aware-Joint-Compression"
+        assert urls["Repository"] == expected_base
+        assert urls["Documentation"] == f"{expected_base}/tree/main/docs"
+        assert urls["Issues"] == f"{expected_base}/issues"
+
+    def test_no_placeholder_urls_anywhere_in_the_repository(self, project_root: Path):
+        offenders: list[str] = []
+        for path in sorted(project_root.rglob("*")):
+            if not path.is_file() or path.suffix not in {".py", ".toml", ".md", ".yaml", ".yml"}:
+                continue
+            if any(part.startswith((".venv", ".git")) for part in path.parts):
+                continue
+            if path.name == "test_repository.py":  # this file names the placeholder on purpose
+                continue
+            if "github.com/OWNER" in path.read_text(encoding="utf-8"):
+                offenders.append(str(path.relative_to(project_root)))
+        assert not offenders, f"placeholder OWNER URLs remain in: {offenders}"
+
+    def test_requires_python_311_or_newer(self, pyproject: dict):
+        assert pyproject["project"]["requires-python"] == ">=3.11"
+
+    def test_declares_the_test_markers_ci_deselects(self, pyproject: dict):
+        """Every marker CI deselects must be declared here.
+
+        CI runs `-m "not slow and not requires_model and not requires_torch"`, and with
+        `--strict-markers` an undeclared marker would fail the whole run.
+        """
+        declared = {
+            entry.split(":", 1)[0]
+            for entry in pyproject["tool"]["pytest"]["ini_options"]["markers"]
+        }
+        assert {"slow", "requires_model", "requires_torch"} <= declared
+
+
+class TestContinuousIntegration:
+    def test_runs_on_push_and_pull_request_to_main(self, workflow: dict):
+        # PyYAML parses the bare key `on` as the boolean True, so accept either spelling.
+        triggers = workflow.get("on", workflow.get(True))
+        assert triggers is not None, "workflow declares no triggers"
+        assert triggers["push"]["branches"] == ["main"]
+        assert triggers["pull_request"]["branches"] == ["main"]
+
+    def test_uses_python_311(self, workflow_text: str):
+        assert '"3.11"' in workflow_text
+
+    def test_runs_lint_format_and_tests(self, workflow_text: str):
+        assert "ruff check ." in workflow_text
+        assert "ruff format --check ." in workflow_text
+        assert "pytest" in workflow_text
+
+    def test_installs_the_project_and_dev_dependencies(self, workflow_text: str):
+        assert "pip install -e . -r requirements-dev.txt" in workflow_text
+
+    def test_uses_pip_caching(self, workflow_text: str):
+        assert "cache: pip" in workflow_text
+
+    def test_blocks_hugging_face_downloads(self, workflow_text: str):
+        """Offline env vars turn an accidental download into a loud failure."""
+        assert "HF_HUB_OFFLINE" in workflow_text
+        assert "TRANSFORMERS_OFFLINE" in workflow_text
+
+    def test_deselects_slow_gpu_and_network_tests(self, workflow_text: str):
+        assert "not slow" in workflow_text
+        assert "not requires_model" in workflow_text
+        assert "not requires_torch" in workflow_text
+
+    def test_installs_the_cpu_torch_wheel(self, workflow_text: str):
+        """The default index would pull a multi-gigabyte CUDA build CI has no use for."""
+        assert "download.pytorch.org/whl/cpu" in workflow_text
+
+
+class TestCpuOnlyPolicyAcrossConfigs:
+    def test_every_config_keeps_the_benchmark_on_cpu(self, configs_dir: Path):
+        for path in sorted(configs_dir.rglob("*.yaml")):
+            config = ExperimentConfig.from_mapping(load_document(path))
+            assert config.benchmark.device is Device.CPU, f"{path.name} benchmarks off CPU"
+
+    def test_every_experiment_config_evaluates_on_cpu(self, configs_dir: Path):
+        for path in sorted((configs_dir / "experiments").glob("*.yaml")):
+            config = ExperimentConfig.from_mapping(load_document(path))
+            assert config.evaluation.device is Device.CPU, f"{path.name} evaluates off CPU"
+
+    def test_benchmark_config_pins_a_thread_count(self, configs_dir: Path):
+        for path in sorted(configs_dir.rglob("*.yaml")):
+            config = ExperimentConfig.from_mapping(load_document(path))
+            assert config.benchmark.num_threads >= 1
+
+
+class TestNoRunArtefactsCommitted:
+    """`outputs/` and `results/` hold nothing but .gitkeep in a clean checkout."""
+
+    @pytest.mark.parametrize("directory", ["outputs", "results"])
+    def test_directory_contains_only_gitkeep(self, project_root: Path, directory: str):
+        root = project_root / directory
+        assert root.is_dir()
+        unexpected = [
+            str(path.relative_to(project_root))
+            for path in root.rglob("*")
+            if path.is_file() and path.name != ".gitkeep"
+        ]
+        assert not unexpected, (
+            f"{directory}/ contains run artefacts, which should never be committed: {unexpected}"
+        )

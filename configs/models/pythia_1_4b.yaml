@@ -11,6 +11,11 @@ model:
   name: pythia-1.4b
   size_label: 1.4B
   hf_id: EleutherAI/pythia-1.4b
+  # REVISION POLICY (see docs/reproducibility.md#model-revisions)
+  #   pilot / exploratory runs : null is acceptable
+  #   final paper results      : MUST be a 40-character commit SHA
+  # Look the SHA up with the snippet in docs/reproducibility.md and paste it here. Do not copy a
+  # SHA from documentation and do not guess one; a branch name or tag is not a pin.
   revision: null
   device: auto
   dtype: float32

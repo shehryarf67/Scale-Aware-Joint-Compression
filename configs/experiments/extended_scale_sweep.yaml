@@ -1,0 +1,82 @@
+# Extended scale sweep: the main sweep plus the OPTIONAL, HARDWARE-DEPENDENT 1.4B point.
+#
+# ============================================================================================
+# READ THIS BEFORE RUNNING
+# ============================================================================================
+#
+# 1. RUN ONLY AFTER THE MAIN SWEEP SUCCEEDS.
+#    This config exists to add a fourth scale point to a trend that already has three. Running it
+#    first wastes the most expensive compute in the study on a pipeline that has not been validated
+#    at smaller sizes. Order: pilot.yaml -> main_scale_sweep.yaml -> this.
+#
+# 2. THE 1.4B POINT COUNTS AS A FOURTH SCALE POINT ONLY UNDER COMPARABLE SETTINGS.
+#    "Comparable" means all of the following are identical to the main sweep:
+#      * training precision (FP32 master weights; no bf16/fp16 substitution)
+#      * sequence length
+#      * effective batch size (batch_size x gradient_accumulation_steps)
+#      * optimiser steps and learning-rate schedule
+#      * calibration data and sample count
+#      * evaluation corpus, window, and sample count
+#      * benchmark thread count, batch size, and sequence length
+#      * quantisation backend and output artefact format
+#      * no memory-saving technique that the smaller runs did not also use -- gradient
+#        checkpointing, CPU offload, ZeRO-style sharding, 8-bit optimisers, LoRA, or frozen layers
+#
+# 3. IF ANY OF THOSE HAD TO CHANGE, DO NOT MIX THE RESULT INTO THE MAIN SCALE TREND.
+#    A 1.4B point trained in bf16, or at half the effective batch size, or with gradient
+#    checkpointing, differs from the 1B point in more than scale. Plotting it on the same trend line
+#    would attribute a training-settings difference to model scale, which is the exact confound this
+#    study is built to avoid. In that case report it separately and label it as such: "1.4B, reduced
+#    training settings, not part of the scale trend". A three-point trend with an honest footnote is
+#    worth more than a four-point trend with a hidden confound.
+#
+# 4. THE SETTINGS BELOW ARE INHERITED, NOT RELAXED.
+#    This file deliberately does not lower the sequence length, shrink the evaluation set, or reduce
+#    the optimisation budget for the larger model. If 1.4B does not fit under these settings on your
+#    hardware, the correct outcome is to skip the point -- not to weaken it. Note that
+#    ../models/pythia_1_4b.yaml carries its own batch-size and gradient-accumulation values that
+#    preserve the effective batch size; check them against the main sweep before trusting the result.
+#
+# ============================================================================================
+#
+# Grid: models x arms x budgets x seeds, as listed under `sweep:`. Run
+# `sajc sweep --config configs/experiments/extended_scale_sweep.yaml --plan-only` for the exact
+# expansion. With skip_existing left on, cells already recorded by the main sweep are not re-run, so
+# in practice this config adds only the 1.4B cells.
+#
+# BACKEND RISK: the same 4-bit caveat as the main sweep applies, and more sharply -- a 1.4B model is
+# where a missing 4-bit CPU kernel is most tempting to work around with a different runtime. Do not.
+# See docs/method_definition.md and docs/benchmarking_protocol.md.
+
+include:
+  - ./main_scale_sweep.yaml
+
+experiment:
+  id: extended_scale_sweep
+  name: Extended Pythia scale sweep (optional 1.4B point)
+  description: >-
+    The main sweep extended with pythia-1.4b. Optional and hardware-dependent. Valid as a fourth
+    scale point only if it runs under settings identical to the main sweep; otherwise its results
+    must be reported separately and excluded from the scale trend.
+  tags:
+    - extended
+    - scale-sweep
+    - pythia
+    - optional
+    - hardware-dependent
+
+sweep:
+  # Identical to the main sweep plus the 1.4B point. Keep this list in step with
+  # main_scale_sweep.yaml: a model present here but absent there would quietly become part of the
+  # trend without a validated pipeline behind it.
+  models:
+    - pythia-160m
+    - pythia-410m
+    - pythia-1b
+    # OPTIONAL, HARDWARE-DEPENDENT. ~1.41B parameters; in FP32 that is roughly 5.6 GB of weights
+    # plus gradients plus AdamW state before activations, so joint training needs well over 20 GB of
+    # accelerator memory at these settings. Remove this line if it does not fit -- see point 4 above.
+    - pythia-1.4b
+
+  # Cells already recorded by the main sweep are skipped, so this run adds the 1.4B cells only.
+  skip_existing: true

@@ -71,8 +71,9 @@ dev = [
 sajc = "scale_aware_compression.cli:main"
 
 [project.urls]
-Documentation = "https://github.com/OWNER/scale-aware-joint-compression/tree/main/docs"
-Repository = "https://github.com/OWNER/scale-aware-joint-compression"
+Documentation = "https://github.com/shehryarf67/Scale-Aware-Joint-Compression/tree/main/docs"
+Repository = "https://github.com/shehryarf67/Scale-Aware-Joint-Compression"
+Issues = "https://github.com/shehryarf67/Scale-Aware-Joint-Compression/issues"
 
 # ---------------------------------------------------------------------------
 # setuptools: src layout, editable installs via `pip install -e .`
@@ -133,7 +134,9 @@ exclude_lines = [
 line-length = 100
 target-version = "py311"
 src = ["src", "scripts", "tests"]
-extend-exclude = ["notebooks", ".venv", "outputs", "results", "data"]
+# `.venv*` rather than `.venv`, so a throwaway environment (.venv-check, .venv311, ...)
+# does not get linted when `ruff check .` is run from the repository root.
+extend-exclude = ["notebooks", ".venv*", "outputs", "results", "data"]
 
 [tool.ruff.lint]
 select = [

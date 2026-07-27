@@ -1,18 +1,28 @@
 # Main scale sweep: the experiment that answers the research question.
 #
-#   independent variable : model scale (160M -> 410M -> 1B -> optionally 1.4B)
+#   independent variable : model scale (160M -> 410M -> 1B)
 #   dependent variables  : quality retention, checkpoint size, CPU latency, throughput, memory
 #   controlled           : dataset, tokenisation window, calibration set, sparsity target,
 #                          bit width, optimisation budget, benchmark thread count / batch size /
 #                          sequence length, seed set
 #
-# Grid: 4 models x 5 arms x 2 budgets x 3 seeds = 120 runs. Prune it down while iterating -- drop
-# to one seed with --override sweep.seeds='[1234]', or one budget, and use `sajc sweep --plan-only`
-# to see the expansion before committing compute.
+# Grid: models x arms x budgets x seeds, as listed under `sweep:` below. Run
+# `sajc sweep --config configs/experiments/main_scale_sweep.yaml --plan-only` to see the exact
+# expansion before committing compute -- the plan is the authority on the run count, not a comment.
+# Prune it while iterating: --override sweep.seeds='[1234]' or --override sweep.budgets='[moderate]'.
 #
-# pythia-1.4b is included but is the optional point. Remove it from sweep.models if joint training
-# does not fit; three points still support a trend, and a missing fourth point is better than one
-# run under different memory settings.
+# Three scale points, deliberately. pythia-1.4b is NOT in the default sweep: joint training at that
+# size may need different batch sizes, gradient accumulation, or reduced precision, and a fourth
+# point measured under different training settings is worse than no fourth point at all. It lives in
+# extended_scale_sweep.yaml, to be run only after this sweep succeeds and only if it can be run with
+# comparable settings.
+#
+# BACKEND RISK -- read before running the aggressive budget. PyTorch's native CPU quantisation
+# support is strongest for INT8; 4-bit weight-only CPU deployment generally needs a separate
+# backend. If a single 4-bit CPU path cannot be implemented for BOTH the sequential and joint arms,
+# use the documented INT8 fallback for the aggressive budget (70% sparsity, INT8) rather than
+# comparing arms across two different runtimes or artefact formats. See docs/method_definition.md
+# and docs/benchmarking_protocol.md. This decision must be made before the main experiments start.
 
 include:
   - ../models/pythia_160m.yaml
@@ -24,8 +34,9 @@ experiment:
   id: main_scale_sweep
   name: Main Pythia scale sweep
   description: >-
-    All five compression arms across the Pythia suite at two compression budgets and three seeds.
-    Joint gain is computed per (model, budget, seed) from the matched sequential and joint runs.
+    All five compression arms across three Pythia sizes (160M, 410M, 1B) at two compression budgets
+    and three seeds. Joint gain is computed per (model, budget, seed) from the matched sequential and
+    joint runs. The optional 1.4B point lives in extended_scale_sweep.yaml.
   tags:
     - main
     - scale-sweep
@@ -38,11 +49,12 @@ runtime:
   log_level: INFO
 
 sweep:
+  # Three scale points spanning roughly one order of magnitude. Enough to establish the direction of
+  # a trend; not enough to fit a scaling law, and the write-up must not claim one.
   models:
     - pythia-160m
     - pythia-410m
     - pythia-1b
-    - pythia-1.4b
   # Dense first: every other arm needs that model's dense perplexity as its retention reference.
   methods:
     - dense
@@ -72,6 +84,14 @@ sweep:
           bits: 8
     # 70% sparsity, 4-bit: quality degrades enough that the two arms should separate. Also where
     # the "at which budgets does joint optimisation become useful?" question is answered.
+    #
+    # 4-bit is the RISK in this study's plan. It is kept here because the configuration system
+    # supports it and because it is the more interesting budget, but before running:
+    #   * confirm a single 4-bit CPU path exists for both the sequential and joint arms
+    #   * confirm both arms emit the same artefact format and run on the same backend
+    # If either fails, switch this budget to the INT8 fallback below. Latency and size numbers
+    # produced by two different runtimes are not comparable, so a mixed-backend aggressive budget
+    # would invalidate the deployment half of the study.
     aggressive:
       compression:
         budget_label: aggressive
@@ -79,6 +99,35 @@ sweep:
           sparsity: 0.7
         quantisation:
           bits: 4
+
+    # ---------------------------------------------------------------------------------------------
+    # DOCUMENTED FALLBACK -- intentionally commented out, not merely disabled.
+    #
+    # Use it if a single 4-bit CPU backend cannot be implemented for BOTH arms. Replace the
+    # `aggressive` block above with the two lines below; it holds sparsity as the aggressive variable
+    # and keeps the bit width on the well-supported INT8 path, so every row in the study shares one
+    # runtime and one artefact format.
+    #
+    #     aggressive:
+    #       compression:
+    #         budget_label: aggressive
+    #         pruning:
+    #           sparsity: 0.7          # unchanged: sparsity stays the aggressive variable
+    #         quantisation:
+    #           bits: 8                # was 4
+    #
+    #   moderate            : 50% sparsity, INT8
+    #   aggressive fallback : 70% sparsity, INT8
+    #
+    # Two consequences to state explicitly in the write-up if the fallback is used:
+    #   1. precision becomes a constant rather than a second compression axis, so the study varies
+    #      only sparsity across budgets;
+    #   2. the compression-ratio range narrows from ~8x-27x to ~8x-13x.
+    #
+    # It is left commented rather than added as an extra budget on purpose: SweepConfig rejects a
+    # budget_overrides entry that is not listed under `budgets`, which catches typos in budget names,
+    # and adding a third live budget would silently grow the sweep by half.
+    # ---------------------------------------------------------------------------------------------
 
   # Resumable: an interrupted sweep re-runs only the cells with no record yet.
   skip_existing: true

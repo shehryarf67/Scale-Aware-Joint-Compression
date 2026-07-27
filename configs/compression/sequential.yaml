@@ -22,8 +22,11 @@ compression:
     enabled: true
 
   quantisation:
-    # Observers see the *already-pruned* weight distribution, whose dynamic range is narrower
-    # than the dense one. That is the whole ordering effect this arm embodies.
+    # Observers see the *already-pruned* weight distribution: quantisation is calibrated on the
+    # altered post-pruning distribution, including the increased mass at zero and the remaining
+    # non-zero weights. Whether that helps is an empirical question, not an assumption -- magnitude
+    # pruning removes the smallest weights, so the observed min/max may be unchanged. What the
+    # ordering cannot do is let the pruning decision see the quantisation grid.
     enabled: true
 
   recovery:

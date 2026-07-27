@@ -101,16 +101,20 @@ is never compared with Pythia's. See
 
 ### 4. Does theoretical sparsity produce real CPU latency improvements?
 
-A model reported at 70% sparsity and 4-bit weights implies roughly a 13x size reduction and a 3.3x
-speedup. On a dense CPU GEMM kernel, unstructured zeros deliver none of the speedup: the
-multiply-accumulates still happen, they just multiply by zero.
+A model reported at 70% sparsity and 4-bit weights implies roughly a 13x size reduction and, if the
+sparsity were fully exploited, a 3.3x speedup. On a dense GEMM kernel it should be expected to
+deliver none of that speedup: the multiply-accumulates still happen, they just multiply by zero.
+Realising a gain from sparsity requires a kernel that exploits the pattern, which is a property of
+the runtime rather than of the compression method.
 
 **How it is answered:** every arm is benchmarked on CPU with a pinned thread count, and the measured
 latency is reported next to the theoretical bound `1 / (1 - sparsity)`. The ratio between them is
 `sparsity_realisation` in
 [efficiency.py](../src/scale_aware_compression/metrics/efficiency.py). Running both unstructured and
-2:4 semi-structured sparsity — the latter having actual CPU kernel support — isolates how much of any
-gap is the pattern rather than the framework.
+2:4 semi-structured sparsity — the latter being the pattern most likely to admit such a kernel —
+separates the effect of the pattern from that of the runtime. Whether the installed CPU backend
+provides a 2:4 kernel at all must be verified and recorded, not assumed: CPU support for
+semi-structured sparsity is considerably less established than the GPU equivalent.
 
 This question is why the deployment measurements are CPU-only. A GPU latency number would not answer
 it, and neither would a theoretical FLOP count.
@@ -138,8 +142,10 @@ implementation and engineering cost separately from any accuracy-per-step advant
 
 ## Related documents
 
+- [method_definition.md](method_definition.md) — exactly what the two arms are
 - [methodology.md](methodology.md) — variables, controls, and fair-comparison requirements
 - [experiment_protocol.md](experiment_protocol.md) — the run tables
 - [benchmarking_protocol.md](benchmarking_protocol.md) — CPU measurement rules
+- [validity_threats.md](validity_threats.md) — what could still make these results wrong
 - [reproducibility.md](reproducibility.md) — seeds, pins, and record contents
 - [paper_outline.md](paper_outline.md) — how the results become a write-up

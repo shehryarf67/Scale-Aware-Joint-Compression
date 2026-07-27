@@ -16,16 +16,40 @@ compression:
 
   quantisation:
     enabled: true
-    # 8-bit is the moderate budget and the only width with first-class CPU kernel support.
-    # 4-bit is the aggressive budget; see sequential.yaml / joint.yaml budget overrides.
+    # ---------------------------------------------------------------------------------------------
+    # BIT WIDTH AND BACKEND RISK
+    #
+    # INT8 is the moderate budget and the width with the strongest native PyTorch CPU support.
+    # 4-bit is the aggressive budget in main_scale_sweep.yaml, and it is the main technical risk in
+    # this study's plan:
+    #
+    #   * PyTorch's native CPU quantisation path targets INT8; there is no equally mature built-in
+    #     4-bit weight-only CPU kernel, so 4-bit deployment generally needs a separate backend
+    #     (a packed-weight custom linear module, or an external runtime).
+    #   * Latency, size, and memory numbers are NOT comparable across backends or artefact formats.
+    #     If the moderate rows are measured on one runtime and the aggressive rows on another, the
+    #     difference between them measures the runtime, not the compression.
+    #   * The same 4-bit path must be available to BOTH the sequential and joint arms. A 4-bit joint
+    #     artefact compared against an INT8 sequential artefact is not a joint-gain measurement.
+    #
+    # The final backend decision must be made BEFORE the main experiments start, not after seeing
+    # results. If a single 4-bit CPU path cannot be implemented for both arms, use the documented
+    # INT8 fallback (moderate: 50% sparsity + INT8; aggressive: 70% sparsity + INT8) -- see the
+    # commented block in configs/experiments/main_scale_sweep.yaml and docs/method_definition.md.
+    #
+    # 4-bit support stays in the configuration system either way; what is undecided is whether the
+    # main study uses it.
+    # ---------------------------------------------------------------------------------------------
     bits: 8
     scheme: symmetric
-    # Per-channel scales cost one extra float per output channel and consistently beat
-    # per-tensor at the same bit width, so the comparison is run per-channel throughout.
+    # Per-channel scales cost one extra float per output channel and generally do at least as well
+    # as per-tensor at the same bit width, so the comparison is run per-channel throughout. What
+    # matters for validity is that the setting is identical across arms, not which one wins.
     granularity: per_channel
     group_size: 128
     # 'x86' is the modern CPU backend; 'fbgemm' is its predecessor and 'qnnpack' targets ARM.
-    # The backend affects measured latency, so it is recorded in every run record.
+    # The backend affects measured latency, so it is recorded in every run record -- and both arms
+    # must use the same one for their latencies to be comparable.
     backend: x86
     observer: min_max
     calibration_samples: 128

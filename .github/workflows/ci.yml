@@ -1,0 +1,102 @@
+name: CI
+
+# Lint, format, and the fast test suite. Nothing here downloads a model, trains, or
+# benchmarks: the deployment measurements in this study are taken by hand on a known,
+# idle CPU (see docs/benchmarking_protocol.md), so a shared CI runner could not produce
+# a comparable number even if it tried.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Superseded runs on the same ref are pointless; cancel them.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Hard guarantee that no test can reach the Hugging Face Hub. Any code path that tries
+  # to download a checkpoint fails loudly instead of silently pulling gigabytes.
+  HF_HUB_OFFLINE: "1"
+  TRANSFORMERS_OFFLINE: "1"
+  HF_HUB_DISABLE_TELEMETRY: "1"
+  HF_HUB_DISABLE_IMPLICIT_TOKEN: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  check:
+    name: lint, format, fast tests (Python 3.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install the project and development dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # CPU wheel explicitly: the default index would pull a multi-gigabyte CUDA
+          # build that this workflow has no use for. Matches the README's install path.
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e . -r requirements-dev.txt
+
+      - name: Report the resolved environment
+        run: |
+          python --version
+          pip --version
+          python -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())"
+          python -c "import scale_aware_compression as s; print('package', s.__version__)"
+
+      - name: Lint (ruff check)
+        run: ruff check .
+
+      - name: Format check (ruff format)
+        run: ruff format --check .
+
+      - name: Fast test suite
+        # Markers are declared in pyproject.toml. Deselecting them here keeps CI to the
+        # offline, CPU-only, no-training tests; the excluded ones need weights on disk,
+        # a real accelerator, or minutes of compute.
+        run: pytest -m "not slow and not requires_model and not requires_torch"
+
+      - name: Confirm the fast suite needs neither torch nor the network
+        # The library keeps torch and transformers imports lazy on purpose, and the tests
+        # assert it. This step proves the property end to end: the same suite must pass in
+        # an interpreter that has no torch installed at all, which is what makes config
+        # validation and `sajc info` usable on a machine without the modelling stack.
+        run: |
+          python -m venv /tmp/minimal-env
+          /tmp/minimal-env/bin/python -m pip install --quiet --upgrade pip
+          /tmp/minimal-env/bin/python -m pip install --quiet pytest pyyaml psutil
+          /tmp/minimal-env/bin/python -m pytest -q \
+            -m "not slow and not requires_model and not requires_torch"
+
+      - name: Verify no run artefacts were produced
+        # The scaffold must not write checkpoints, metrics, or figures as an import or
+        # test side effect. If any appear, something ran that should not have.
+        run: |
+          set -euo pipefail
+          unexpected=$(find outputs results -type f ! -name '.gitkeep' -print)
+          if [ -n "$unexpected" ]; then
+            echo "CI produced unexpected run artefacts:"
+            echo "$unexpected"
+            exit 1
+          fi
+          echo "outputs/ and results/ contain only .gitkeep, as expected."

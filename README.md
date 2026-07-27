@@ -39,17 +39,27 @@ Secondary questions and the full framing live in [docs/research_question.md](doc
 The main scale sweep uses the EleutherAI Pythia suite, which holds data, tokeniser, and training
 recipe fixed across sizes:
 
-| Short name     | Hugging Face ID           | Role                                        |
-| -------------- | ------------------------- | ------------------------------------------- |
-| `pythia-160m`  | `EleutherAI/pythia-160m`  | scale sweep                                 |
-| `pythia-410m`  | `EleutherAI/pythia-410m`  | scale sweep                                 |
-| `pythia-1b`    | `EleutherAI/pythia-1b`    | scale sweep                                 |
-| `pythia-1.4b`  | `EleutherAI/pythia-1.4b`  | scale sweep (optional, if hardware permits) |
-| `qwen2.5-0.5b` | `Qwen/Qwen2.5-0.5B`       | optional external validation                |
+| Short name     | Hugging Face ID           | Role                                          |
+| -------------- | ------------------------- | --------------------------------------------- |
+| `pythia-160m`  | `EleutherAI/pythia-160m`  | **main** scale sweep                          |
+| `pythia-410m`  | `EleutherAI/pythia-410m`  | **main** scale sweep                          |
+| `pythia-1b`    | `EleutherAI/pythia-1b`    | **main** scale sweep                          |
+| `pythia-1.4b`  | `EleutherAI/pythia-1.4b`  | *extended* sweep — optional, hardware-dependent |
+| `qwen2.5-0.5b` | `Qwen/Qwen2.5-0.5B`       | optional external validation                  |
+
+The **main sweep is three models** (`main_scale_sweep.yaml`). `pythia-1.4b` lives in
+`extended_scale_sweep.yaml` and is run only after the main sweep succeeds — and it counts as a fourth
+scale point only if it can be run with settings identical to the main sweep. A 1.4B run that needed
+bf16, a smaller effective batch size, or gradient checkpointing differs from the 1B run in more than
+scale, so mixing it into the trend would attribute a training-settings difference to model scale. In
+that case it is reported separately and excluded from the trend.
 
 Qwen2.5-0.5B is deliberately *not* part of the scale sweep. It is a different family with a
 different tokeniser and training recipe, and is used only to check whether a trend observed within
 Pythia transfers outside it.
+
+Model revisions ship unpinned. **Pilot runs may leave them unpinned; every result cited in the paper
+must use a pinned commit SHA** — see [reproducibility.md](docs/reproducibility.md#model-revisions).
 
 ## Compression methods compared
 
@@ -65,9 +75,42 @@ The central quantity of interest is **joint gain**: the quality of the joint pip
 quality of the sequential pipeline at a matched compression budget. See
 [joint_gain.py](src/scale_aware_compression/metrics/joint_gain.py).
 
+The study compares **one specific sequential implementation against one specific joint
+implementation** and does not claim to represent pruning or quantisation in general. The joint arm is
+*joint magnitude pruning with quantisation-aware fine-tuning*, not a universal joint compression
+algorithm. Nothing in the design presumes it wins: a null or negative joint gain is a valid outcome.
+Exact definitions — compressible modules, pruning and quantisation methods, mask scoring, and the
+matched-budget requirements — are in [method_definition.md](docs/method_definition.md), and what could
+still make the results wrong is in [validity_threats.md](docs/validity_threats.md).
+
+### Bit widths and the 4-bit backend risk
+
+The moderate budget is 50% sparsity at **INT8**; the aggressive budget is 70% sparsity at **4-bit**.
+The second carries a real risk that must be resolved before the main experiments:
+
+- PyTorch's native CPU quantisation support is **strongest for INT8**.
+- **4-bit weight-only CPU deployment may require a separate backend** — a packed-weight custom linear
+  module, or an external runtime. There is no equally mature built-in 4-bit CPU kernel.
+- **Latency and size results are not comparable if the moderate and aggressive settings use different
+  runtimes or artefact formats.** The same applies across arms with more force: a 4-bit joint artefact
+  measured against an INT8 sequential artefact is not a joint-gain measurement at all.
+- **The final backend decision must be made before the main experiments**, not after seeing results.
+
+Documented fallback if a single 4-bit CPU path cannot be implemented for both arms:
+
+| Budget                  | Sparsity | Bit width |
+| ----------------------- | -------- | --------- |
+| Moderate                | 50%      | INT8      |
+| Aggressive (fallback)   | 70%      | INT8      |
+
+This keeps every row on one runtime and one artefact format, at the cost of making precision a
+constant rather than a second compression axis. 4-bit support stays in the configuration system
+either way; what the fallback changes is whether the *main study* uses it.
+
 ## Experimental workflow
 
 ```
+0.  pilot pipeline validation           configs/experiments/pilot.yaml   (produces no results)
 1.  prepare data and calibration sets       scripts/prepare_data.py
 2.  dense FP32 baseline per model           scripts/run_dense_baseline.py
 3.  pruning only                            scripts/run_pruning.py
@@ -76,9 +119,16 @@ quality of the sequential pipeline at a matched compression budget. See
 6.  joint pruning-aware quantisation        scripts/run_joint.py
 7.  quality evaluation (all variants)       scripts/run_evaluation.py
 8.  CPU deployment benchmark (all variants) scripts/run_cpu_benchmark.py
-9.  aggregate the scale sweep               scripts/run_scale_sweep.py
-10. figures and tables                      scripts/generate_plots.py
+9.  main scale sweep (3 models)             scripts/run_scale_sweep.py
+10. extended sweep (+1.4B, optional)        scripts/run_scale_sweep.py
+11. figures and tables                      scripts/generate_plots.py
 ```
+
+Step 0 is not optional in practice. `pilot.yaml` is a **pipeline-validation run**: one model, one
+seed, one budget, tiny evaluation and calibration sets, ~60 optimiser steps. It exists to prove the
+pipeline executes and writes a well-formed record. **Its numbers are not results** and must never
+appear in the write-up — a pipeline bug found at 160M costs minutes; the same bug found at 1B costs
+hours.
 
 Every run writes one structured record (JSON, plus a row appended to CSV) under `outputs/`, keyed
 by experiment ID. See [docs/experiment_protocol.md](docs/experiment_protocol.md).
@@ -150,12 +200,19 @@ python scripts/run_joint.py          --config configs/experiments/pilot.yaml
 python scripts/run_evaluation.py     --config configs/experiments/pilot.yaml
 python scripts/run_cpu_benchmark.py  --config configs/experiments/pilot.yaml --threads 4
 
-# the full scale sweep, then figures
+# see the sweep expansion before committing compute
+python scripts/run_scale_sweep.py --config configs/experiments/main_scale_sweep.yaml --plan-only
+
+# the main scale sweep (3 models), then figures
 python scripts/run_scale_sweep.py --config configs/experiments/main_scale_sweep.yaml
 python scripts/generate_plots.py  --results outputs/metrics --output outputs/figures
 
 # optional external validation
 python scripts/run_scale_sweep.py --config configs/experiments/qwen_validation.yaml
+
+# optional extended sweep: adds pythia-1.4b. Run only after the main sweep succeeds, and only if
+# the settings can be held identical to it -- see the header of the config.
+python scripts/run_scale_sweep.py --config configs/experiments/extended_scale_sweep.yaml
 ```
 
 The same operations are available through the `sajc` console script, e.g.
@@ -165,9 +222,10 @@ The same operations are available through the `sajc` console script, e.g.
 
 ```
 .
+├── .github/workflows/ CI: ruff check, ruff format --check, fast tests (no downloads)
 ├── configs/           YAML configs: models, compression, evaluation, experiments
 ├── data/              raw / processed / calibration data (contents git-ignored)
-├── docs/              research question, methodology, protocols, paper outline
+├── docs/              research question, method definition, protocols, validity threats
 ├── notebooks/         exploratory analysis, kept output-free
 ├── scripts/           argparse entry points, one per pipeline stage
 ├── src/scale_aware_compression/
@@ -181,9 +239,43 @@ The same operations are available through the `sajc` console script, e.g.
 │   ├── training/      trainer, pruning recovery, callbacks
 │   └── visualisation/ plots and tables
 ├── tests/             lightweight tests; no downloads, no training
-├── outputs/           run artefacts: checkpoints, logs, metrics, benchmarks, figures
-└── results/           curated results promoted out of outputs/ for the write-up
+├── outputs/           RAW, UNVERIFIED run artefacts -- safe to delete, never cited
+└── results/           VERIFIED, CURATED, FROZEN artefacts -- what the paper cites
 ```
+
+### `outputs/` versus `results/`
+
+The two directories carry different guarantees, and the distinction is what stops an unverified number
+reaching the paper.
+
+| | `outputs/` | `results/` |
+| --- | --- | --- |
+| **Contents** | all raw run artefacts, logs, temporary checkpoints, unverified metrics, benchmark records | verified, curated, frozen artefacts used in the paper |
+| **Written by** | scripts, automatically | a human, deliberately |
+| **Reviewed** | no | yes — via the promotion checklist |
+| **Mutable** | yes; regenerated freely | no; frozen once promoted |
+| **Safe to delete** | yes, entirely | no |
+| **Cited in the write-up** | **never** | yes |
+
+`outputs/` will contain runs that should never be reported: crashed sweeps, wrong thread counts, noisy
+benchmarks, unmatched budgets, and a re-run sitting next to the buggy run it replaced. Nothing is
+filtered on the way in.
+
+Promotion is a one-way door — `outputs/` → checklist → `results/` — and an artefact only passes with
+**all** of the following true:
+
+- [ ] successful run completion (no crash, no interruption, no partial checkpoint)
+- [ ] resolved configuration saved in the record
+- [ ] git commit recorded, with no `-dirty` suffix
+- [ ] hardware metadata recorded
+- [ ] matched sequential and joint budgets (`training_cost_overhead` = 1.00)
+- [ ] no benchmark anomaly (CV < 15%, thread count honoured, ≥5 warm-up and ≥30 measured runs)
+- [ ] final quality metrics verified (measured sparsity matches target, `is_converted` true,
+      `dataset_fingerprint` matches the dense baseline, evaluated on CPU)
+- [ ] consistent backend and output format across the promoted set
+
+Full detail, including the extra items for a promoted *set*, is in
+[reproducibility.md](docs/reproducibility.md#promotion-checklist).
 
 ## Reproducibility notes
 
@@ -192,10 +284,11 @@ The same operations are available through the `sajc` console script, e.g.
 - Configurations are files, not command-line flags. Overrides are possible
   (`--override key.path=value`) but are serialised into the record, so a run is always
   reconstructible.
-- Model revisions are pinnable per model config, so a silently updated Hub checkpoint cannot
-  change results.
+- Model revisions stay configurable. Pilot runs may use an unpinned revision; **every result cited in
+  the paper must use a pinned commit SHA**, since a Hub repository can be updated in place.
 - Benchmarks from different machines are never averaged together; thread count, batch size, and
   sequence length are fixed and recorded.
+- Nothing is promoted from `outputs/` to `results/` without passing the checklist above.
 
 Details in [docs/reproducibility.md](docs/reproducibility.md).
 
@@ -207,11 +300,13 @@ and CPU benchmarking harness are in place. The compression algorithms are not.
 | Area                                      | Status                       |
 | ----------------------------------------- | ---------------------------- |
 | Repository layout, packaging, tooling     | done                         |
+| CI (lint, format, fast tests)             | done                         |
 | Configuration system and validation       | done                         |
 | Model registry and safe loader            | done                         |
 | Metrics utilities (sparsity, ratio, gain) | done                         |
 | CPU benchmarking harness and statistics   | done                         |
 | Experiment records (JSON + CSV)           | done                         |
+| Method definition and validity analysis   | done                         |
 | Data loading and calibration sampling     | placeholder                  |
 | Pruning                                   | placeholder                  |
 | Quantisation                              | placeholder                  |
@@ -223,6 +318,33 @@ and CPU benchmarking harness are in place. The compression algorithms are not.
 
 Placeholder modules raise `NotImplementedError` with a pointer to what needs writing, rather than
 silently returning plausible-looking numbers.
+
+### Open decisions requiring a human choice
+
+Three methodological questions cannot be resolved from the code, and all three should be settled
+**before** the first main experiment — not after seeing which choice produces a nicer result:
+
+1. **The final CPU quantisation backend.** Constrains every downstream bit-width choice, so decide it
+   first. Candidates: PyTorch native `x86` / `fbgemm` (INT8 only), or an external runtime with 4-bit
+   CPU support.
+2. **The exact joint mask-scoring rule.** Rank by absolute fake-quantised weight magnitude, or by
+   absolute FP32 shadow-weight magnitude with fake quantisation active throughout?
+   [method_definition.md](docs/method_definition.md#mask-scoring) recommends the latter, with reasons;
+   confirm or override it.
+3. **Whether 4-bit stays in the main study** or the INT8 fallback is adopted. Follows from (1).
+
+## Documentation
+
+| Document | Contents |
+| --- | --- |
+| [research_question.md](docs/research_question.md) | primary and secondary questions; what the study does *not* claim |
+| [method_definition.md](docs/method_definition.md) | exactly what the two arms are: modules, methods, mask scoring, matched budgets |
+| [methodology.md](docs/methodology.md) | variables, controls, fair-comparison mechanisms |
+| [experiment_protocol.md](docs/experiment_protocol.md) | the run tables, execution order, pre/post-run checklists |
+| [benchmarking_protocol.md](docs/benchmarking_protocol.md) | CPU measurement rules and backend constraints |
+| [validity_threats.md](docs/validity_threats.md) | what could still make these results wrong |
+| [reproducibility.md](docs/reproducibility.md) | seeds, revision pinning, record contents, promotion checklist |
+| [paper_outline.md](docs/paper_outline.md) | how the results become a write-up |
 
 ## Disclaimer
 

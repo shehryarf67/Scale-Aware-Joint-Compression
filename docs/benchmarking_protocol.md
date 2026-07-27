@@ -31,9 +31,43 @@ The split follows one principle: a GPU may be used to *produce* a compressed mod
    accelerator.
 3. **GPU latency hides the effect.** At batch 1 and short sequences a GPU is launch-latency bound, so
    removing arithmetic changes almost nothing and every arm measures the same.
-4. **Quantised kernel support is a CPU story.** PyTorch's int8 CPU backends are mature; the
-   equivalent GPU paths are less uniform. A CPU measurement of a quantised model is measuring the
-   deployment path people actually use.
+4. **Quantised INT8 kernel support is well established on CPU.** PyTorch's INT8 CPU backends are
+   mature, so a CPU measurement of an INT8 model is measuring a deployment path people actually use.
+   This does *not* extend to every bit width — see the backend section below.
+
+## Backend and bit-width constraints
+
+**Read this before running the aggressive budget.** The measurement protocol below is sound only if
+every row being compared was produced by the same runtime on the same artefact format.
+
+- **PyTorch's native CPU quantisation support is strongest for INT8.** That is the well-trodden path,
+  and it is what the moderate budget uses.
+- **4-bit weight-only CPU deployment may require a separate backend** — a packed-weight custom linear
+  module, or an external runtime. There is no equally mature built-in 4-bit CPU kernel.
+- **Latency and size results are not comparable if the moderate and aggressive settings use different
+  runtimes or artefact formats.** Each budget may be internally valid while the comparison *between*
+  them measures the runtime rather than the compression. The same applies with more force across arms:
+  a 4-bit joint artefact benchmarked against an INT8 sequential artefact is not a joint-gain
+  measurement.
+- **The final backend decision must be made before the main experiments begin**, not after seeing which
+  choice produces a more favourable result. It constrains which bit widths the study can use at all.
+
+Documented fallback, if a single 4-bit CPU path cannot be implemented for both the sequential and joint
+arms:
+
+| Budget | Sparsity | Bit width |
+| --- | --- | --- |
+| Moderate | 50% | INT8 |
+| Aggressive (fallback) | 70% | INT8 |
+
+This keeps every row on one runtime and one artefact format, at the cost of making precision a constant
+rather than a second compression axis. 4-bit support remains in the configuration system either way;
+what the fallback changes is whether the *main study* uses it. See
+[method_definition.md](method_definition.md#bit-widths-and-the-4-bit-risk) and the commented fallback
+block in [`main_scale_sweep.yaml`](../configs/experiments/main_scale_sweep.yaml).
+
+Whatever is chosen, record `quantisation.backend` and the artefact format in every run record, and
+check they agree before putting two rows in the same table.
 
 ## Fixed parameters
 
@@ -148,9 +182,16 @@ sparsity_realisation = (measured_speedup - 1) / (theoretical_speedup - 1)
 ```
 
 1.0 means fully realised; 0.0 means none of it. **A near-zero realisation for unstructured sparsity
-is the expected result and a finding worth reporting**, not a bug. Dense GEMM kernels do not skip
-scattered zeros. The 2:4 semi-structured variant exists to test whether a pattern with kernel
-support does better.
+is the expected result and a finding worth reporting**, not a bug: a dense GEMM kernel performs the
+same multiply-accumulates whether or not the operands are zero, so the zeros are multiplied rather
+than skipped. Realising a gain from sparsity requires a kernel that exploits the pattern, which is a
+property of the runtime and not of the compression method.
+
+The 2:4 semi-structured variant exists to test whether a pattern *more likely* to admit such a kernel
+does better. Verify that the installed CPU backend actually provides a 2:4 kernel before reading its
+row — support for semi-structured sparsity on CPU is much less established than the GPU equivalent, and
+without a kernel the row measures a dense operation on a patterned weight matrix. Record which kernel
+was used.
 
 ## Optional: thread-count sweep
 
@@ -178,3 +219,8 @@ Report each thread count as its own series. **Never average across thread counts
 - [ ] `storage_efficiency` plausible for every quantised artefact
 - [ ] `is_converted` true for every quantised and joint artefact
 - [ ] Theoretical bound reported next to every measured speedup
+- [ ] All rows share one `quantisation.backend` and one artefact format
+- [ ] Sequential and joint rows for a given budget used the same runtime
+- [ ] If moderate and aggressive rows used different runtimes, they are reported as separate,
+      non-comparable measurement sets rather than as one trade-off curve
+- [ ] For a 2:4 row, the kernel actually used is recorded (sparse kernel or dense fallback)

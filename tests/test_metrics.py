@@ -241,7 +241,11 @@ class TestEfficiency:
         assert sparsity_realisation(1.5, 2.0) == pytest.approx(0.5)
 
     def test_no_realisation_is_the_expected_unstructured_result(self):
-        """Dense CPU GEMM kernels do not skip scattered zeros; that is a finding, not a bug."""
+        """A dense kernel multiplies the zeros rather than skipping them.
+
+        Realising a gain needs a kernel that exploits the pattern, so a zero here is a finding about
+        the runtime rather than a bug.
+        """
         assert sparsity_realisation(1.0, 2.0) == pytest.approx(0.0)
 
     def test_negative_realisation_when_slower_than_baseline(self):

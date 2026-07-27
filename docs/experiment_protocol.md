@@ -22,11 +22,52 @@ Fill the result columns from `outputs/metrics/results.csv`, not by hand.
 | Budget       | Sparsity | Bits | Theoretical size reduction | Rationale |
 | ------------ | -------- | ---- | -------------------------- | --------- |
 | `moderate`   | 0.50     | 8    | ~8x                        | A well-tuned sequential pipeline should lose little here, so any joint gain is small and needs seed repeats to be credible. |
-| `aggressive` | 0.70     | 4    | ~27x                       | Quality degrades enough that the arms should separate. Where the "at which budgets does joint help?" question is answered. |
+| `aggressive` | 0.70     | 4    | ~27x                       | Quality degrades enough that the arms should separate. Where the "at which budgets does joint help?" question is answered. **Subject to the backend decision below.** |
 | `pilot`      | 0.50     | 8    | ~8x                        | Reduced step and sample counts for pipeline validation. **Not a results budget.** |
 
 Theoretical reduction is `32 / (bits * (1 - sparsity))` and assumes a storage format that actually
 exploits both. The measured checkpoint size is what gets reported; see `storage_efficiency`.
+
+### Backend decision required before running the aggressive budget
+
+- PyTorch's native CPU quantisation support is strongest for **INT8**.
+- **4-bit weight-only CPU deployment may require a separate backend** (a packed-weight custom linear
+  module, or an external runtime); there is no equally mature built-in 4-bit CPU kernel.
+- **Latency and size results are not comparable if the moderate and aggressive settings use different
+  runtimes or artefact formats.** The same applies across arms with more force: a 4-bit joint artefact
+  measured against an INT8 sequential artefact is not a joint-gain measurement.
+- **Decide the final backend before the main experiments start**, not after seeing results.
+
+Fallback if a single 4-bit CPU path cannot be implemented for both arms:
+
+| Budget                  | Sparsity | Bits | Theoretical size reduction |
+| ----------------------- | -------- | ---- | -------------------------- |
+| `moderate`              | 0.50     | 8    | ~8x                        |
+| `aggressive` (fallback) | 0.70     | 8    | ~13x                       |
+
+The fallback keeps every row on one runtime and one artefact format. It makes precision a constant
+rather than a second compression axis, and narrows the compression-ratio range — both of which must be
+stated in the write-up if it is used. 4-bit stays in the configuration system regardless; see
+[method_definition.md](method_definition.md#bit-widths-and-the-4-bit-risk).
+
+## Sweep scope
+
+The **main** sweep is three models: `pythia-160m`, `pythia-410m`, `pythia-1b`
+([`main_scale_sweep.yaml`](../configs/experiments/main_scale_sweep.yaml)).
+
+`pythia-1.4b` is **optional and hardware-dependent**, and lives in
+[`extended_scale_sweep.yaml`](../configs/experiments/extended_scale_sweep.yaml). Rows for it appear in
+the tables below so the protocol is complete, but they count as a fourth scale point **only if the run
+used settings identical to the main sweep** — same precision, sequence length, effective batch size,
+optimiser steps, and no memory-saving technique the smaller runs did not also use. If any of those had
+to change, report the 1.4B result separately and exclude it from the scale trend; a three-point trend
+with an honest footnote beats a four-point trend with a hidden confound.
+
+Run `sajc sweep --config <file> --plan-only` for the exact run count of any sweep. The plan is the
+authority, not these tables.
+
+Throughout the tables below, **`pythia-1.4b*`** marks a row that is part of the extended sweep only:
+optional, hardware-dependent, and valid as a scale point only under comparable settings.
 
 ---
 
@@ -39,7 +80,7 @@ One run per model. Every other row in the study is measured against its own mode
 | pythia-160m  | 162M  | 1234 | — | — | — | — | — | — |
 | pythia-410m  | 405M  | 1234 | — | — | — | — | — | — |
 | pythia-1b    | 1.01B | 1234 | — | — | — | — | — | — |
-| pythia-1.4b  | 1.41B | 1234 | — | — | — | — | — | — |
+| pythia-1.4b*  | 1.41B | 1234 | — | — | — | — | — | — |
 | qwen2.5-0.5b | 494M  | 1234 | — | — | — | — | — | — |
 
 Notes:
@@ -69,21 +110,28 @@ Isolates sparsity. Magnitude criterion, cubic gradual schedule, per-layer rankin
 | pythia-410m | aggressive | 0.70 | unstructured | 500 | — | — | — | — |
 | pythia-1b   | moderate   | 0.50 | unstructured | 500 | — | — | — | — |
 | pythia-1b   | aggressive | 0.70 | unstructured | 500 | — | — | — | — |
-| pythia-1.4b | moderate   | 0.50 | unstructured | 500 | — | — | — | — |
-| pythia-1.4b | aggressive | 0.70 | unstructured | 500 | — | — | — | — |
+| pythia-1.4b* | moderate   | 0.50 | unstructured | 500 | — | — | — | — |
+| pythia-1.4b* | aggressive | 0.70 | unstructured | 500 | — | — | — | — |
 
 **Measured sparsity must match the target.** A gap means masks were not applied, or the optimiser
 refilled pruned positions.
 
-**Expect little or no latency improvement from unstructured sparsity.** Dense CPU GEMM kernels do
-not skip scattered zeros. That is a finding to report, not a bug — and it is why the 2:4 variant
-below exists.
+**Expect little or no latency improvement from unstructured sparsity.** A dense GEMM kernel performs
+the same multiply-accumulates whether or not the operands are zero, so a speedup requires a kernel
+that exploits the sparsity pattern. That is a finding to report, not a bug — and it is why the 2:4
+variant below exists.
 
 ### Table 2b — Semi-structured 2:4 sparsity
 
 Same models, `granularity: "2:4"`, which fixes sparsity at 0.50 by definition. 2:4 is the pattern
-with actual CPU kernel support, so this table is what answers whether *any* sparsity pattern
-converts into measured latency.
+most likely to admit a sparsity-exploiting kernel, so this table is what tests whether *any* sparsity
+pattern converts into measured latency on the target backend.
+
+**Verify before reading this table:** CPU support for semi-structured sparsity is much less
+established than the GPU equivalent, and the installed backend may provide no 2:4 kernel at all. If
+it does not, the row measures a dense kernel operating on a 2:4-patterned weight matrix, and the
+correct conclusion is about the deployment path rather than about the pruning pattern. Record which
+kernel was actually used.
 
 | Model | Sparsity | Granularity | Retention (%) | Latency (ms) | Speedup vs dense | Sparsity realisation |
 | ----- | -------- | ----------- | ------------- | ------------ | ---------------- | -------------------- |
@@ -113,8 +161,8 @@ recovery.
 | pythia-410m | aggressive | 4 | symmetric | per_channel | 128 | — | — | — | — |
 | pythia-1b   | moderate   | 8 | symmetric | per_channel | 128 | — | — | — | — |
 | pythia-1b   | aggressive | 4 | symmetric | per_channel | 128 | — | — | — | — |
-| pythia-1.4b | moderate   | 8 | symmetric | per_channel | 128 | — | — | — | — |
-| pythia-1.4b | aggressive | 4 | symmetric | per_channel | 128 | — | — | — | — |
+| pythia-1.4b* | moderate   | 8 | symmetric | per_channel | 128 | — | — | — | — |
+| pythia-1.4b* | aggressive | 4 | symmetric | per_channel | 128 | — | — | — | — |
 
 **Check `is_converted` and `storage_efficiency` before reading these rows.** A model that was
 fake-quantised but never converted is numerically quantised and still FP32 on disk, which produces
@@ -134,8 +182,8 @@ The baseline pipeline. Stages: dense → prune → recovery → quantise → con
 | pythia-410m | aggressive | 0.70 | 4 | 500 | — | — | — | — |
 | pythia-1b   | moderate   | 0.50 | 8 | 500 | — | — | — | — |
 | pythia-1b   | aggressive | 0.70 | 4 | 500 | — | — | — | — |
-| pythia-1.4b | moderate   | 0.50 | 8 | 500 | — | — | — | — |
-| pythia-1.4b | aggressive | 0.70 | 4 | 500 | — | — | — | — |
+| pythia-1.4b* | moderate   | 0.50 | 8 | 500 | — | — | — | — |
+| pythia-1.4b* | aggressive | 0.70 | 4 | 500 | — | — | — | — |
 
 ---
 
@@ -152,8 +200,8 @@ joint fine-tune → convert.
 | pythia-410m | aggressive | 0.70 | 4 | 500 | — | — | — | — | 1.00x |
 | pythia-1b   | moderate   | 0.50 | 8 | 500 | — | — | — | — | 1.00x |
 | pythia-1b   | aggressive | 0.70 | 4 | 500 | — | — | — | — | 1.00x |
-| pythia-1.4b | moderate   | 0.50 | 8 | 500 | — | — | — | — | 1.00x |
-| pythia-1.4b | aggressive | 0.70 | 4 | 500 | — | — | — | — | 1.00x |
+| pythia-1.4b* | moderate   | 0.50 | 8 | 500 | — | — | — | — | 1.00x |
+| pythia-1.4b* | aggressive | 0.70 | 4 | 500 | — | — | — | — | 1.00x |
 
 The cost column must read 1.00x for a headline comparison. Anything else means the arms were not
 budget-matched and the corresponding joint gain is confounded with extra training.
@@ -170,11 +218,11 @@ seed-to-seed spread.
 | pythia-160m  | 162M  | moderate   | — | — | — | — | — |
 | pythia-410m  | 405M  | moderate   | — | — | — | — | — |
 | pythia-1b    | 1.01B | moderate   | — | — | — | — | — |
-| pythia-1.4b  | 1.41B | moderate   | — | — | — | — | — |
+| pythia-1.4b*  | 1.41B | moderate   | — | — | — | — | — |
 | pythia-160m  | 162M  | aggressive | — | — | — | — | — |
 | pythia-410m  | 405M  | aggressive | — | — | — | — | — |
 | pythia-1b    | 1.01B | aggressive | — | — | — | — | — |
-| pythia-1.4b  | 1.41B | aggressive | — | — | — | — | — |
+| pythia-1.4b*  | 1.41B | aggressive | — | — | — | — | — |
 
 **A gain smaller than the seed spread is inconclusive and must be reported as such.**
 
@@ -201,36 +249,50 @@ Order is not arbitrary. Every non-dense arm needs its model's dense perplexity a
 reference, so a model's dense run must complete first.
 
 ```
-for each model, smallest first:
-    1. dense baseline           -> establishes the retention reference
-    2. pruning only             -> isolates sparsity
-    3. quantisation only        -> isolates precision
-    4. sequential               -> the baseline pipeline
-    5. joint                    -> the arm under test
+0. pilot.yaml                       -> pipeline validation only; produces no results
+
+main sweep, for each model, smallest first:
+    1. dense baseline               -> establishes the retention reference
+    2. pruning only                 -> isolates sparsity
+    3. quantisation only            -> isolates precision
+    4. sequential                   -> the baseline pipeline
+    5. joint                        -> the arm under test
     (repeat 2-5 per budget, per seed)
 then:
     6. Qwen validation
-    7. aggregate, figures, tables
+    7. extended sweep (1.4B)        -> OPTIONAL, only if the main sweep succeeded and the
+                                       settings can be held identical
+    8. aggregate, figures, tables
 ```
 
 Run the pilot config end to end before starting the sweep. A pipeline bug found at pythia-1b costs
-hours; the same bug found at pythia-160m costs minutes.
+hours; the same bug found at pythia-160m costs minutes. The pilot is a pipeline-validation run: its
+numbers are not results and must never appear in the write-up.
 
 ```bash
 # validate configuration without running anything
 python scripts/run_sequential.py --config configs/experiments/pilot.yaml --dry-run
 
-# see the full sweep expansion before committing compute
+# pipeline validation: minutes, not hours
+python scripts/run_dense_baseline.py --config configs/experiments/pilot.yaml
+python scripts/run_sequential.py     --config configs/experiments/pilot.yaml
+python scripts/run_joint.py          --config configs/experiments/pilot.yaml
+
+# see the sweep expansion before committing compute
 sajc sweep --config configs/experiments/main_scale_sweep.yaml --plan-only
 ```
 
 ## Pre-run checklist
 
-- [ ] Model revisions pinned in the model configs
+- [ ] **CPU quantisation backend chosen and recorded** (see the backend decision above)
+- [ ] **4-bit-versus-INT8-fallback decision made**, before any main run
+- [ ] **Mask scoring rule fixed** in [method_definition.md](method_definition.md#mask-scoring)
+- [ ] Model revisions pinned to commit SHAs in the model configs (pilot runs may leave them unpinned)
 - [ ] Pilot config completes end to end
 - [ ] Dense baselines exist for every model in the sweep
 - [ ] `budget_overrides` identical between the sweep and the validation config
 - [ ] Sequential `recovery.max_steps` equals joint `joint_max_steps`
+- [ ] Both arms resolve the same compressible-module list
 - [ ] Benchmark machine idle; thread count pinned
 - [ ] Git tree clean, so recorded commits are meaningful
 - [ ] Disk space for the checkpoints the sweep will write
@@ -243,5 +305,13 @@ sajc sweep --config configs/experiments/main_scale_sweep.yaml --plan-only
 - [ ] Every joint record's `training_cost_overhead` is 1.00
 - [ ] `find_comparison_pairs()` reports a complete pair at every scale and budget
 - [ ] All benchmark records share one `hardware_cpu_model` and one thread count
+- [ ] All records in a table share one `quantisation.backend` and one artefact format
 - [ ] Latency coefficient of variation under 15% on every benchmark
 - [ ] Generation diagnostics show no degenerate outputs at the aggressive budget
+- [ ] Any 1.4B result was run under settings identical to the main sweep, or is reported separately
+      and excluded from the scale trend
+- [ ] Every joint gain is compared against the seed spread, and those smaller than it are reported as
+      inconclusive rather than as small positive effects
+
+Promoting anything from `outputs/` to `results/` has its own checklist — see
+[reproducibility.md](reproducibility.md#promotion-checklist).

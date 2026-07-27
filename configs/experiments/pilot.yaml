@@ -1,10 +1,62 @@
-# Pilot: one model, one arm, small budgets. Use this to validate a pipeline change end to end
-# before committing to the full sweep.
+# Pilot: a PIPELINE-VALIDATION RUN, NOT A RESEARCH RESULT.
 #
-# Everything is scaled down: 200 optimiser steps instead of 500, 128 evaluation samples instead
-# of 512, 10 measured benchmark runs instead of 30. The numbers it produces are NOT results --
-# the evaluation sample count alone makes them too noisy to compare arms with. Its job is to
-# prove the pipeline runs, writes a well-formed record, and produces a plausible artefact size.
+# ============================================================================================
+# WHAT THIS IS FOR
+# ============================================================================================
+#
+# One purpose: prove that the whole pipeline executes end to end and writes a well-formed record.
+# Specifically, that
+#   * the model and tokeniser load,
+#   * the calibration set builds and is disjoint from the evaluation set,
+#   * pruning reaches its target sparsity and the measured value confirms it,
+#   * quantisation converts, and the artefact is actually smaller on disk,
+#   * the sequential and joint arms both complete with matched optimisation budgets,
+#   * evaluation produces a perplexity and a retention figure against the dense baseline,
+#   * the CPU benchmark yields a median, a standard deviation, and a p95,
+#   * a JSON record and a CSV row are written with the full config, git commit, and hardware.
+#
+# ============================================================================================
+# WHAT THIS IS NOT
+# ============================================================================================
+#
+# The numbers it produces ARE NOT RESULTS and must never appear in the write-up, not even as
+# preliminary evidence. Every dimension is deliberately too small to support a comparison:
+#   * 64 evaluation sequences -- a perplexity difference of a few percent is indistinguishable
+#     from sampling noise at this size
+#   * 1 seed -- no error bar at all, so a joint-versus-sequential difference cannot be judged
+#     against seed variation, which is the only thing that makes such a difference credible
+#   * 8 measured benchmark runs -- enough to compute a p95 arithmetically, not enough to trust it
+#   * 60 optimiser steps -- far too few for recovery to converge, so both arms are being measured
+#     mid-recovery rather than at their achievable quality
+#   * 256-token windows -- a different evaluation window from the main sweep's 512, so pilot
+#     perplexities are not even comparable with the real runs
+#
+# A pilot that shows joint beating sequential shows only that the code path runs.
+#
+# It also MUST NOT LAUNCH THE FULL STUDY: no `sweep:` section is defined here, so this config
+# describes exactly one run. Use `scripts/run_*.py --config configs/experiments/pilot.yaml` for a
+# single arm. `sajc sweep` against this file expands to one cell, not the grid.
+#
+# Model revision: an unpinned revision is acceptable here (see ../models/pythia_160m.yaml). Final
+# paper results must use a pinned commit SHA -- see docs/reproducibility.md.
+#
+# ============================================================================================
+# HOW TO RUN IT
+# ============================================================================================
+#
+#   # 1. dense baseline first -- every other arm needs it as the retention reference
+#   python scripts/run_dense_baseline.py --config configs/experiments/pilot.yaml
+#
+#   # 2. the main comparison: the two arms this study is actually about
+#   python scripts/run_sequential.py --config configs/experiments/pilot.yaml
+#   python scripts/run_joint.py      --config configs/experiments/pilot.yaml
+#
+#   # 3. optional, to exercise the single-method code paths too
+#   python scripts/run_pruning.py      --config configs/experiments/pilot.yaml
+#   python scripts/run_quantisation.py --config configs/experiments/pilot.yaml
+#
+# Expect the whole sequence to take minutes, not hours. If it takes hours, something is wrong with
+# the settings rather than with your patience.
 
 include:
   - ../models/pythia_160m.yaml
@@ -14,15 +66,20 @@ include:
 
 experiment:
   id: pilot
-  name: Pilot run
+  name: Pilot pipeline validation
   description: >-
-    Smoke test of the full pipeline on pythia-160m with the sequential arm at a reduced budget.
-    Switch the included compression config to try another arm.
+    Pipeline-validation run on pythia-160m at one moderate budget with one seed. Exercises the
+    sequential and joint arms against a dense baseline. Produces no research results: the
+    evaluation set, seed count, and optimisation budget are all far too small for any comparison
+    between arms to be meaningful.
   tags:
     - pilot
-    - smoke-test
+    - pipeline-validation
+    - not-a-result
 
 runtime:
+  # One seed. Not three: the pilot is not measuring anything, so repeats would only cost time.
+  # The absence of an error bar is also what stops a pilot number being mistaken for a result.
   seed: 1234
   deterministic: true
   num_threads: null
@@ -31,38 +88,69 @@ runtime:
   log_to_file: true
 
 data:
-  sequence_length: 512
+  # 256 rather than the main sweep's 512: halves every forward pass. Also means pilot perplexities
+  # are on a different scale from the real runs, which is a feature -- they cannot be confused.
+  sequence_length: 256
   batch_size: 4
-  max_eval_samples: 128
-  calibration_samples: 32
+  # 64 evaluation sequences. Enough to confirm the metric computes and lands in a plausible range;
+  # nowhere near enough to compare two arms.
+  max_eval_samples: 64
+  # 16 calibration sequences instead of 128. Enough to populate every observer, so the code path is
+  # exercised; too few for the resulting scales to be well estimated.
+  calibration_samples: 16
+  calibration_split: train
 
 compression:
+  # One budget only, and the moderate one: 50% sparsity with INT8. INT8 specifically, because it is
+  # the well-supported CPU path -- a pilot should validate the pipeline, not simultaneously
+  # discover that the 4-bit backend is missing. Exercise 4-bit deliberately and separately with
+  # --override compression.quantisation.bits=4 once the backend decision is settled.
   budget_label: pilot
   pruning:
     sparsity: 0.5
-    # 0.8 x the 200-step budget, matching compression.joint.freeze_masks_after_ratio, so both arms
+    # 0.8 x the 60-step budget, matching compression.joint.freeze_masks_after_ratio, so both arms
     # reach the target sparsity at the same step and get the same tail of recovery after it.
-    schedule_end_step: 160
+    schedule_end_step: 48
+    # Every 12 steps: with only 60 steps, the main sweep's interval of 50 would fire roughly once
+    # and leave the gradual schedule untested.
+    schedule_frequency: 12
   quantisation:
     bits: 8
-    calibration_samples: 32
+    calibration_samples: 16
   recovery:
-    max_steps: 200
+    # 60 steps. Enough for the loop, the callbacks, and the mask re-application to run many times
+    # over; far too few to converge. Do not read the resulting quality as achievable quality.
+    max_steps: 60
   joint:
-    # Kept equal to recovery.max_steps above: the pilot exists to validate the pipeline, and a
-    # budget mismatch here would make its numbers misleading rather than merely noisy.
-    joint_max_steps: 200
-    quantisation_warmup_steps: 20
+    # Kept equal to recovery.max_steps above. The pilot validates the pipeline, and a budget
+    # mismatch here would make its numbers actively misleading rather than merely noisy -- it would
+    # also mean the pilot fails to exercise the budget-matching check it is meant to prove works.
+    joint_max_steps: 60
+    mask_update_interval: 12
+    quantisation_warmup_steps: 6
 
 evaluation:
-  max_samples: 128
+  device: cpu
+  batch_size: 2
+  sequence_length: 256
+  max_samples: 64
+  # Perplexity and agreement only. Generation is skipped: it is a qualitative diagnostic for
+  # inspecting degeneracy at aggressive budgets, and the pilot runs neither.
   metrics:
     - perplexity
-  agreement_samples: 32
+    - agreement
+  compare_to_dense: true
+  agreement_samples: 16
 
 benchmark:
+  device: cpu
   num_threads: 4
-  warmup_runs: 3
-  measured_runs: 10
+  # 2 warm-up runs. Below the protocol's 5 and the runner will warn -- accepted here because the
+  # pilot is checking that the timing loop works, not producing a comparable latency.
+  warmup_runs: 2
+  # 8 measured runs: the minimum that still yields a sample standard deviation and an interpolated
+  # p95 sitting between distinct order statistics, so all the reported statistics are exercised.
+  # The protocol's 30 is required for anything reportable.
+  measured_runs: 8
   batch_size: 1
-  sequence_length: 128
+  sequence_length: 64

@@ -147,11 +147,14 @@ def build_masks(
     Raises:
         NotImplementedError: Always, in the current scaffold.
     """
-    # TODO(masks): implement per-granularity mask construction.
+    # TODO(masks): implement per-granularity mask construction. Unstructured magnitude pruning is
+    # the initial planned method; the others are variants for the latency question.
     #   unstructured    : threshold |w| at the sparsity-th quantile, per tensor or globally
     #   2:4 / 4:8       : reshape the last dim into groups of 4/8 and keep the top-k by
-    #                     magnitude within each group; this is the only pattern with CPU
-    #                     kernel support, so it is the one that can show real latency gains
+    #                     magnitude within each group. Semi-structured patterns are the ones with
+    #                     any prospect of kernel support, so they are where a measured latency gain
+    #                     could plausibly come from -- subject to the installed backend actually
+    #                     providing such a kernel, which must be verified rather than assumed
     #   channel         : rank output channels by L2 norm and drop whole rows
     # For GPT-NeoX, remember that attention.query_key_value fuses q/k/v: a channel pattern
     # must be applied consistently across all three slices or the heads break.

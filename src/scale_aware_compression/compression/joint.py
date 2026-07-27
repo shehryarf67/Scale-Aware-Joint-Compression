@@ -8,16 +8,28 @@ Stages, explicitly::
         -> recovery / joint fine-tuning
         -> final conversion
 
-The difference from :mod:`sequential` is *when* the model learns about quantisation. Here fake
-quantisation is inserted before any weight is pruned, so:
+The first implementation of this arm is **joint magnitude pruning with quantisation-aware
+fine-tuning**, not a general-purpose joint compression algorithm. The difference from
+:mod:`sequential` is *when* the model learns about quantisation: fake quantisation is inserted
+before any weight is pruned, so
 
-* the pruning criterion ranks weights as the quantisation grid will actually represent them, and
-  a weight whose quantised value rounds to zero is no longer worth keeping;
-* a single optimisation run compensates for both perturbations together, instead of recovering
-  from pruning and then absorbing an unrecovered quantisation error.
+* the pruning criterion operates while fake quantisation is active, rather than on weights that
+  have never been rounded;
+* a single optimisation run adapts to both perturbations together, instead of recovering from
+  pruning and then absorbing an unrecovered quantisation error.
 
 The cost is a longer, more fragile training run. Whether that cost pays off — and whether it
-pays off *more at larger scale* — is the research question.
+pays off *more at larger scale* — is the research question. Nothing here presumes it does; a null
+or negative joint gain is a valid outcome of the study.
+
+Mask scoring is a *choice*, documented in ``docs/method_definition.md`` and not a settled fact.
+Ranking by fake-quantised magnitude and ranking by FP32 shadow-weight magnitude while fake
+quantisation stays active are both defensible, and they differ mainly for weights near a grid
+boundary. The shadow-weight rule is the planned default because it is stable across mask updates
+(the quantised value of a small weight can jump between grid points from step to step, making the
+ranking noisy), and because it keeps the pruning criterion identical in form to the sequential
+arm's -- so the two arms differ in the *pipeline*, not in the scoring function. Whichever rule is
+implemented must be used consistently and recorded in the run record.
 
 Fairness requirement: ``config.compression.joint.match_sequential_budget`` exists because the
 joint arm gets one training run covering both perturbations while the sequential arm gets one
@@ -107,9 +119,18 @@ class JointCompressor(Compressor):
         Raises:
             NotImplementedError: Always, in the current scaffold.
         """
-        # TODO(joint): build masks at pruning.initial_sparsity from the *fake-quantised*
-        # weights -- ranking the FP32 shadow weights instead would discard the whole point of
-        # this arm -- then register mask hooks so the optimiser cannot refill pruned positions.
+        # TODO(joint): build masks at pruning.initial_sparsity, then register mask hooks so the
+        # optimiser cannot refill pruned positions.
+        #
+        # Use the scoring rule fixed in docs/method_definition.md -- planned default: absolute FP32
+        # shadow-weight magnitude, with fake quantisation active throughout optimisation. Record
+        # which rule was used in the run record. Do not switch rules between arms or between runs,
+        # and do not combine them into a weighted score unless that variant is implemented and
+        # ablated separately.
+        #
+        # Note what makes this arm "joint": fake quantisation is active during the optimisation that
+        # the mask updates are interleaved with, so the weights being ranked have been shaped by
+        # quantisation-aware training. That holds under either scoring rule.
         raise NotImplementedError(
             "JointCompressor.apply is not implemented yet; see the TODO in compression/joint.py"
         )
@@ -136,11 +157,13 @@ class JointCompressor(Compressor):
         """
         # TODO(joint): run one optimisation loop that, per step:
         #   1. computes the current target via sparsity_at_step()
-        #   2. on mask-update steps before mask_freeze_step(), rebuilds masks from the
-        #      fake-quantised weights and re-applies them
+        #   2. on mask-update steps before mask_freeze_step(), rebuilds masks using the scoring rule
+        #      fixed in docs/method_definition.md and re-applies them
         #   3. takes an optimiser step with fake quantisation active (after
         #      quantisation_warmup_steps dense steps, if configured)
         #   4. re-applies masks so momentum cannot refill pruned positions
+        # After mask_freeze_step() the masks are frozen for the remainder of training: no regrowth,
+        # so the final phase is pure recovery at the target sparsity.
         # Increment self.optimiser_steps and self.mask_updates, and record them via
         # record_stage: total_optimiser_steps is compared against the sequential arm, and a
         # mismatch invalidates the joint gain.

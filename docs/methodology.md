@@ -6,10 +6,11 @@ A controlled scale sweep within one model family, plus an optional external vali
 second family.
 
 ```
-                    Pythia scale sweep (controlled)
-    160M ────────── 410M ────────── 1B ────────── 1.4B (optional)
-      │               │              │               │
-      └── 5 arms x 2 budgets x 3 seeds at every size ┘
+              MAIN Pythia scale sweep (controlled)          EXTENDED (optional)
+    160M ────────── 410M ────────── 1B          ┊ ┈┈┈┈┈┈┈┈ 1.4B
+      │               │              │          ┊            ┊
+      └── 5 arms x 2 budgets x 3 seeds ─────────┘   same, but only if the
+                                                     settings are identical
 
                     External validation (not a sweep point)
                           Qwen2.5-0.5B
@@ -24,10 +25,20 @@ makes a like-for-like comparison across sizes possible. Comparing, say, GPT-2 to
 vary scale, data, tokeniser, architecture, and training budget simultaneously, and no result could
 be attributed to scale.
 
-Sizes used: 160M, 410M, 1B, and optionally 1.4B. That spans roughly one order of magnitude, which is
-enough to see a direction. `pythia-1.4b` is optional because joint training at that size may not fit
-in available memory; a missing fourth point is better than a fourth point run under different memory
-settings.
+**Main sweep: 160M, 410M, 1B.** Three points spanning roughly one order of magnitude — enough to
+establish the direction of a trend, not enough to fit a scaling law.
+
+**Extended sweep: adds 1.4B, optional and hardware-dependent.** It is separated out because joint
+training at that size may not fit in available memory, and the workarounds — bf16, gradient
+checkpointing, a smaller effective batch size — would each make the largest point differ from the
+others in more than scale. Since it sits at the end of the trend line it has outsized influence on the
+slope, which is the headline result. So: it counts as a fourth scale point only if it runs under
+settings identical to the main sweep, and otherwise is reported separately and excluded from the trend.
+A three-point trend with an honest footnote beats a four-point trend with a hidden confound.
+
+One caveat about the suite itself: scale in Pythia is not a perfectly isolated scalar. Depth and width
+both grow, head counts change, and the tokens-per-parameter ratio falls across the suite. See
+[validity_threats.md](validity_threats.md#scale-as-an-independent-variable).
 
 ### Why Qwen2.5-0.5B for validation
 
@@ -129,10 +140,13 @@ quantisation is normally deployed. Symmetric, per-channel, weight-only.
 dense -> prune -> recovery fine-tune -> quantise -> convert -> evaluate -> benchmark
 ```
 
-The baseline pipeline and standard practice. The ordering has a real effect: the quantisation
-observers see the already-sparse weight distribution, whose dynamic range is narrower than the dense
-one, so the grid is fitted to the pruned model. What it cannot do is the converse — the pruning
-decision is made with no knowledge of the quantisation grid.
+The baseline pipeline and standard practice. Quantisation is calibrated on the altered post-pruning
+distribution, including the increased mass at zero and the remaining non-zero weights, so the grid is
+fitted to the pruned model. Whether that distribution is *easier* to quantise is left as an empirical
+question: magnitude pruning removes the smallest-magnitude weights, so the surviving values are not
+necessarily confined to a narrower range and the observed min/max may be unchanged. What the ordering
+definitely cannot do is the converse — the pruning decision is made with no knowledge of the
+quantisation grid.
 
 Implemented by composing `Pruner` and `Quantiser` rather than reimplementing either, so the
 sequential arm cannot drift from the single-method arms it is supposed to be the composition of.
@@ -148,10 +162,15 @@ dense
   -> evaluate -> benchmark
 ```
 
-The arm under test. Fake quantisation goes in **before** any weight is pruned, so the pruning
-criterion ranks weights as the quantisation grid will actually represent them, and a weight whose
-quantised value rounds to zero is no longer worth keeping. A single optimisation run then absorbs
-both perturbations.
+The arm under test, and specifically **joint magnitude pruning with quantisation-aware fine-tuning** —
+one implementation of a joint pipeline, not a general joint compression algorithm. Fake quantisation
+goes in **before** any weight is pruned, so mask selection happens while quantisation-aware training
+is active rather than on weights that have never been rounded, and a single optimisation run adapts
+to both perturbations.
+
+The mask scoring rule is a documented choice rather than a property of the method; see
+[method_definition.md](method_definition.md). Nothing in this design presumes the joint arm wins: a
+null or negative joint gain is a valid outcome.
 
 ## Fair-comparison requirements
 
@@ -210,20 +229,28 @@ the spread is reported as inconclusive.
 
 ## Threats to validity
 
+Summary only. The full analysis — construct, internal, external, statistical, and backend validity —
+is in [validity_threats.md](validity_threats.md).
+
 | Threat | Mitigation | Residual risk |
 | --- | --- | --- |
 | Joint arm gets more effective training | matched step budgets, recorded per stage | equal steps is not identical optimisation difficulty |
 | Small evaluation set makes gains noisy | 512 sequences, three seeds, spread reported | perplexity differences of <1% remain hard to resolve |
-| Unstructured sparsity gives no CPU speedup | measured latency reported against the theoretical bound | a null latency result is a framework finding as much as a method one |
+| Unstructured sparsity gives no CPU speedup | measured latency reported against the theoretical bound | a null latency result is a finding about the runtime as much as the method |
+| 4-bit may need a different backend from INT8 | one backend per table; INT8 fallback documented | **decision still open**; cross-budget latency comparison invalid if unresolved |
 | Only one corpus | fingerprinted and fixed; a second corpus is future work | quality findings are WikiText-2 findings |
-| Three or four scale points | trend direction only, no scaling law claimed | a non-monotone trend could be missed between points |
+| Three scale points (four with the extended sweep) | trend direction only, no scaling law claimed | a non-monotone trend could be missed between points |
+| Largest model may need different training settings | 1.4B separated into the extended sweep, excluded from the trend unless settings match | discipline is documented, not enforced by code |
 | Qwen differs in more than family | only sign and magnitude of gain compared | a transfer failure has several possible causes |
 | Pruning/quantisation are standard baselines | keeps the pipeline comparison clean | a better base method could change the gap |
 | Embeddings excluded | keeps the budget comparable across scale | reported ratios are lower than whole-model ratios |
+| Mask scoring rule could be tuned to favour joint | rule fixed in advance, no unablated combined score | **choice still open**; must be settled before implementation |
 
 ## Related documents
 
 - [research_question.md](research_question.md) — questions and definitions
+- [method_definition.md](method_definition.md) — the exact methods, module selection, and mask scoring
 - [experiment_protocol.md](experiment_protocol.md) — the run tables
 - [benchmarking_protocol.md](benchmarking_protocol.md) — CPU measurement rules
+- [validity_threats.md](validity_threats.md) — threats to validity, in full
 - [reproducibility.md](reproducibility.md) — seeds, pins, and record contents

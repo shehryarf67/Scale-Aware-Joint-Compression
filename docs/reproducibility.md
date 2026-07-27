@@ -47,15 +47,52 @@ would conflate two sources of variation.
 
 ### Model revisions
 
-Every model config has a `revision` field. It ships as `null`, which resolves to `main` — **pin it
-before collecting results.** A Hub checkpoint can be updated in place, and an unpinned revision means
-a re-run may silently load different weights.
+Every model config has a `revision` field, and it stays configurable rather than hard-coded. It ships
+as `null`, which resolves to whatever `main` points at today.
+
+**The policy:**
+
+| Stage | Revision |
+| --- | --- |
+| Pilot / pipeline-validation runs | unpinned (`null`) is acceptable |
+| Exploratory runs while iterating | unpinned is acceptable |
+| **Main sweep, validation, extended sweep** | **must be pinned to a commit SHA** |
+| **Any result cited in the paper** | **must be pinned to a commit SHA** |
+
+A Hugging Face repository can be updated in place. An unpinned revision means a re-run months later
+may silently load different weights, and the result would be irreproducible with no error to indicate
+why.
+
+**How to pin.** Look up the current commit for each model and paste it in — do not copy a SHA from
+this document or from any other project, and do not guess one. An invented SHA fails at load time,
+which is the good case; a SHA belonging to a different revision than you think is the bad case.
+
+```bash
+# print the current main-branch commit for each model in the sweep
+python - <<'PY'
+from huggingface_hub import HfApi
+
+from scale_aware_compression.models.registry import list_models, resolve_model_id
+
+api = HfApi()
+for name in list_models():
+    info = api.model_info(resolve_model_id(name))
+    print(f"{name:14s} {resolve_model_id(name):26s} {info.sha}")
+PY
+```
+
+Then set it in the model config:
 
 ```yaml
 model:
   name: pythia-410m
-  revision: 8b6c9d6c31d2b7a0f7d1e0a1b2c3d4e5f6a7b8c9   # a commit SHA, not a branch
+  # Replace with the real 40-character commit SHA from the command above.
+  # A branch name ('main') or tag is NOT a pin -- both can move.
+  revision: <PASTE-COMMIT-SHA-HERE>
 ```
+
+Every run record stores the resolved `revision`, so a record made with an unpinned revision is
+distinguishable after the fact from one made with a pin — but only the pin makes the run repeatable.
 
 ### Dependencies
 
@@ -120,6 +157,90 @@ across machines; that is why the hardware block is recorded.
 | Bit-exact GPU training | non-deterministic kernels remain even under `use_deterministic_algorithms(warn_only=True)` | recovery/joint results reported over three seeds |
 | Hub downloads over time | upstream repositories change | pin revisions |
 
+## `outputs/` versus `results/`
+
+Two directories, two different guarantees. The distinction is what stops an unverified number reaching
+the paper.
+
+### `outputs/` — raw, unverified, disposable
+
+Everything a run produces, the moment it produces it. Nothing here has been checked.
+
+| Path | Contents |
+| --- | --- |
+| `outputs/checkpoints/` | temporary model checkpoints, including failed and partial runs |
+| `outputs/logs/` | per-run log files |
+| `outputs/metrics/` | **unverified** JSON run records and the appended `results.csv` |
+| `outputs/benchmarks/` | benchmark records, including runs with anomalous timing |
+| `outputs/figures/` | figures regenerated on every analysis pass |
+| `outputs/tables/` | tables regenerated on every analysis pass |
+
+Properties:
+
+- **Written automatically** by scripts, with no human review.
+- **Safe to delete entirely.** Everything is either regenerable from a config or was never verified.
+- **May contain contradictory records** — a re-run under a fixed bug sits next to the buggy one, and
+  only the experiment ID and timestamp distinguish them.
+- **May contain runs that should never be reported**: crashed mid-sweep, wrong thread count, noisy
+  benchmark, unmatched budgets.
+- **Never cite a path under `outputs/` in the write-up.**
+
+### `results/` — verified, curated, frozen
+
+Only artefacts that have passed the promotion checklist below, and that the paper actually cites.
+
+| Path | Contents |
+| --- | --- |
+| `results/raw/` | frozen copies of the verified run records a result rests on |
+| `results/processed/` | the aggregated tables the figures were built from |
+| `results/summaries/` | curated Markdown summaries, committed to git |
+
+Properties:
+
+- **Written deliberately**, by a human promoting a specific artefact after checking it.
+- **Frozen.** Once promoted, a file is not edited. A correction means promoting a new, separately
+  identified artefact and recording why the old one was superseded — not overwriting it.
+- **One backend, one machine, one schema per promoted set.**
+- **Every promoted artefact traces to a git commit and a resolved configuration**, so it can be
+  regenerated from scratch.
+- The write-up cites `results/`, never `outputs/`.
+
+Promotion is a one-way door: `outputs/` → checklist → `results/`. Nothing moves the other way.
+
+## Promotion checklist
+
+Every item must hold before an artefact moves from `outputs/` to `results/`. A single unchecked box
+means it stays in `outputs/`.
+
+- [ ] **Successful run completion.** The run finished; it did not crash, time out, or get interrupted.
+      No partial checkpoint, no truncated record.
+- [ ] **Resolved configuration saved.** The fully merged config — after includes and overrides — is
+      stored in the record's `config` block, so the run is reconstructible without the original
+      command line.
+- [ ] **Git commit recorded.** Non-null `git_commit` with **no `-dirty` suffix**. A dirty tree means
+      the commit does not describe the code that ran.
+- [ ] **Hardware metadata recorded.** CPU model, core counts, memory, and thread environment present
+      in the record. Absent metadata makes a latency number uninterpretable.
+- [ ] **Matched sequential and joint budgets.** `training_cost_overhead` is 1.00, and
+      `match_sequential_budget` is true. An unmatched pair cannot support a joint-gain claim.
+- [ ] **No benchmark anomaly.** Latency coefficient of variation under 15%; `warmup_runs` ≥ 5 and
+      `measured_runs` ≥ 30; `thread_report.torch_num_threads` equals the requested count; no bimodal
+      latency distribution suggesting thermal throttling.
+- [ ] **Final quality metrics verified.** Measured sparsity matches its target; `is_converted` true
+      for every quantised artefact; `storage_efficiency` plausible; evaluation `dataset_fingerprint`
+      matches the model's dense baseline; the run was evaluated on CPU.
+- [ ] **Consistent backend and output format.** Every artefact in the promoted set shares one
+      `quantisation.backend`, one artefact format, and one `software.torch` version.
+
+Additional items for a promoted *set* rather than a single run:
+
+- [ ] All seeds for the cell are present, and the spread across them is recorded alongside the mean.
+- [ ] Any joint gain smaller than the seed spread is labelled inconclusive, not reported as a small
+      positive effect.
+- [ ] Any 1.4B result was produced under settings identical to the main sweep, or is excluded from the
+      scale trend and labelled as such.
+- [ ] A frozen environment file (`pip freeze`) is saved alongside.
+
 ## Artefacts and what is committed
 
 | Path | Committed? | Contents |
@@ -130,8 +251,9 @@ across machines; that is why the hardware block is recorded.
 | `notebooks/` | yes, outputs stripped | analysis; `nbstripout` runs as a pre-commit hook |
 | `data/*` | no | corpora and calibration caches, rebuildable |
 | `outputs/checkpoints/` | no | model weights, large |
-| `outputs/logs/`, `outputs/metrics/`, `outputs/benchmarks/` | no | per-run artefacts |
+| `outputs/logs/`, `outputs/metrics/`, `outputs/benchmarks/` | no | unverified per-run artefacts |
 | `outputs/figures/`, `outputs/tables/` | no | regenerated from records |
+| `results/raw/`, `results/processed/` | no | large; frozen locally and archived separately |
 | `results/summaries/*.md` | yes | curated result summaries promoted for the write-up |
 
 Directory structure is tracked through `.gitkeep` files; the contents are ignored. Model weights and

@@ -16,10 +16,14 @@ compression:
     method: magnitude
     sparsity: 0.5
     initial_sparsity: 0.0
-    # 'unstructured' gives the best quality at a given sparsity but no CPU speedup, because
-    # dense GEMM kernels cannot skip scattered zeros. '2:4' is the pattern with kernel support.
-    # Running both is how the "does theoretical sparsity produce real CPU latency gains?"
-    # question gets answered.
+    # 'unstructured' is the initial planned method and generally gives the best quality at a given
+    # sparsity, but it should not be expected to reduce latency: a dense GEMM kernel performs the
+    # same multiply-accumulates whether or not the operands are zero, so a speedup requires a kernel
+    # that exploits the sparsity pattern. '2:4' is the pattern most likely to admit such a kernel --
+    # but CPU support for semi-structured sparsity is far less established than on GPU and must be
+    # verified on the target backend rather than assumed. Running both is how the "does theoretical
+    # sparsity produce real CPU latency gains?" question gets answered, and a null answer is a
+    # legitimate finding about the deployment path.
     granularity: unstructured
     schedule: cubic
     schedule_start_step: 0
