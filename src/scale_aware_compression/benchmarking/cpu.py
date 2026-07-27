@@ -279,8 +279,8 @@ def build_forward_callable(
     Raises:
         BenchmarkError: If the model cannot be prepared for benchmarking.
     """
-    import torch
-
+    # Validation runs before torch is imported. A misconfigured benchmark should report the
+    # actual problem, and should be able to do so even where the modelling stack is absent.
     if config.device is not Device.CPU:
         raise BenchmarkError(
             f"benchmark.device={config.device.value!r}; deployment measurements are CPU-only."
@@ -303,6 +303,8 @@ def build_forward_callable(
         raise BenchmarkError(
             "Could not determine a usable vocabulary size for the synthetic benchmark input"
         )
+
+    import torch
 
     generator = torch.Generator().manual_seed(BENCHMARK_INPUT_SEED)
     input_ids = torch.randint(

@@ -13,12 +13,21 @@ pruning-then-quantisation, and whether the gap changes with model scale (Pythia 
 
 The governing documents, in order of authority:
 
-1. `docs/method_definition.md` — exactly what the two arms are. **The spec.**
-2. `docs/experiment_protocol.md` — the run tables and checklists.
-3. `docs/benchmarking_protocol.md` — CPU measurement rules.
-4. `docs/validity_threats.md` — what could make the results wrong.
+1. `docs/research_plan.pdf` — **the authoritative source**. The full 28-page execution plan:
+   research questions, method family, experimental matrix, seed policy, schedule, permissible
+   claims. Read it when a detail is not in the markdown docs, and prefer it when they disagree.
+2. `docs/method_definition.md` — exactly what the two arms are. The engineering spec.
+3. `docs/implementation_plan.md` — the ten build phases with exit tests, and the testing plan.
+4. `docs/experiment_protocol.md` — the run tables and checklists.
+5. `docs/benchmarking_protocol.md` — CPU measurement rules.
+6. `docs/validity_threats.md` — what could make the results wrong.
 
 If code and docs disagree, that is a bug in one of them. Say so rather than picking silently.
+
+**The method is layerwise post-training reconstruction** (plan §3.1), not full-model
+quantisation-aware fine-tuning. The unit of optimisation is *local steps per layer*. Parts of the
+config still carry the older fine-tuning vocabulary; see the reconciliation table in
+`docs/implementation_plan.md`.
 
 ## Machine policy
 

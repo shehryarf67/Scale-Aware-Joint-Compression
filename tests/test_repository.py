@@ -21,12 +21,14 @@ from scale_aware_compression.constants import Device
 REQUIRED_DOCS = (
     "research_question.md",
     "method_definition.md",
+    "implementation_plan.md",
     "methodology.md",
     "experiment_protocol.md",
     "benchmarking_protocol.md",
     "validity_threats.md",
     "reproducibility.md",
     "paper_outline.md",
+    "STATUS.md",
 )
 
 
@@ -94,6 +96,30 @@ class TestDocumentation:
             "## Backend Limits",
         ):
             assert heading in text, f"validity_threats.md is missing {heading!r}"
+
+    def test_the_authoritative_research_plan_is_committed(self, project_root: Path):
+        """The plan is the source document; a repo without it cannot be worked from alone."""
+        plan = project_root / "docs" / "research_plan.pdf"
+        assert plan.is_file(), "docs/research_plan.pdf is missing"
+        assert plan.stat().st_size > 50_000, "research_plan.pdf looks truncated"
+
+    def test_agent_guidance_exists_and_points_at_the_status_file(self, project_root: Path):
+        """CLAUDE.md is auto-loaded; it is what makes a session on a fresh machine work."""
+        text = (project_root / "CLAUDE.md").read_text(encoding="utf-8")
+        assert "docs/STATUS.md" in text
+        assert "research_plan.pdf" in text
+        assert "implementation_plan.md" in text
+
+    def test_status_file_records_when_it_was_last_updated(self, project_root: Path):
+        """A stale handoff is worse than none, so it must be datable at a glance."""
+        text = (project_root / "docs" / "STATUS.md").read_text(encoding="utf-8")
+        assert "Last updated" in text
+
+    def test_implementation_plan_covers_every_phase(self, project_root: Path):
+        text = (project_root / "docs" / "implementation_plan.md").read_text(encoding="utf-8")
+        for phase in range(11):
+            assert f"### Phase {phase} " in text, f"implementation_plan.md is missing Phase {phase}"
+        assert "## Testing plan" in text
 
     def test_method_definition_marks_the_algorithms_as_placeholders(self, project_root: Path):
         """Until the algorithms exist, the document must say so."""

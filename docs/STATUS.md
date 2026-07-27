@@ -4,6 +4,10 @@
 
 > Read this first. It is the handoff between sessions and between machines. If it looks stale,
 > check `git log` — the truth is the commit history, this file is a summary of it.
+>
+> **This file = where we are now.** For the durable roadmap (all ten phases, exit tests, the
+> testing plan) see [implementation_plan.md](implementation_plan.md). For the authoritative
+> source, [research_plan.pdf](research_plan.pdf).
 
 ---
 
@@ -65,8 +69,9 @@ What this means in practice:
 - Config needs a `compression.reconstruction` section (`local_steps`, `damping`, `block_size`)
   and `local_steps` becomes the fairness unit in place of `max_steps`.
 
-Full reconciliation list (items A1–A9) is in the session notes; the short version is below under
-*Deferred reconciliation*.
+The full reconciliation list (A1–A9), with sizes and the reinterpreted `Compressor` stage
+semantics, is in [implementation_plan.md](implementation_plan.md#reconciliation-plan-versus-scaffold).
+A summary is repeated below for convenience.
 
 ---
 
@@ -89,7 +94,9 @@ notebook, until each piece is provably right. This mirrors the plan's own 48-hou
 rounding; realised sparsity is exact; quantised weights take ≤ 2^b distinct values per group;
 pack → unpack is lossless.
 
-Then Step 5 (loop it over a model), Step 6 (the five arms), Step 7 (budget screening).
+Then Phase 6 (the five arms through one shared solver), Phase 7 (budget screening), Phase 8
+(sweep). Full detail and exit tests for every phase:
+[implementation_plan.md](implementation_plan.md#phases).
 
 ---
 
