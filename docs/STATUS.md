@@ -141,20 +141,64 @@ flagged in the docstring rather than discovered later.
 
 ---
 
-## Next: Phase 6 — the five arms through one shared solver
+## 🔴 Found in Phase 6: the joint mechanism may be inert at moderate precision
 
-The primitives exist; what is missing is the driver that walks a real model. Needed first, in
-order:
+**Read [validity_threats.md](validity_threats.md#the-joint-mechanism-may-be-inert-at-moderate-precision)
+before running any screening.** This is the most serious open issue and it needs a decision.
 
-1. **Phase 2 gaps** — `select_compressible_modules`, `get_decoder_blocks`, `get_weight_tensors`,
-   `count_targeted_parameters` (A6). All still placeholders, and every arm needs them.
-2. **A2 config** — a `reconstruction` section (`local_steps`, `damping`, `group_size`,
-   `saliency`), with `local_steps` replacing `max_steps` as the fairness unit.
-3. **`CompressionMethod`** gains `SEQUENTIAL_PQ` / `SEQUENTIAL_QP` (A3).
-4. **`compression/layerwise.py`** — block iteration in depth order, propagating activations through
-   the already-compressed prefix so error accumulation is realistic.
-5. The five arms as call-order variations on that driver, plus the §3.8 regression test that
-   **fails** if joint is implemented as "prune fully, then plain PTQ".
+§3.8 says a method is joint if (a) the mask is scored under quantised weights and (b) the scales are
+re-estimated after the mask moves. Measured on a synthetic layer, **both are weak or inert at the
+planned precisions**:
+
+| Bit width | Joint mask positions differing from sequential (of 512) |
+| --- | --- |
+| W2 | 206 |
+| W3 | 2 |
+| W4 | **0** |
+| W8 | **0** |
+
+And symmetric max-abs scales are provably blind to magnitude pruning — the row maximum survives, so
+refitting on survivors returns the identical scale (100% of channels unchanged, max relative change
+0.0000).
+
+So at the moderate budget the joint arm reduces to sequential plus a different reconstruction order,
+and a joint gain near zero there is close to guaranteed *by construction*. Reporting that as an
+empirical finding about pipeline design would be wrong.
+
+Both properties are pinned by tests so they cannot regress or be rediscovered late. Three options
+with costs are laid out in validity_threats.md; the recommendation is to change the scale rule from
+max-abs to an error-minimising search, which makes mechanism (b) live. **Not actioned** — it changes
+a §2.7-frozen choice, and §6.3 forbids revising it once results exist, so it must be decided
+deliberately now.
+
+---
+
+## Next: Phase 6 remainder — wire the arms into `ExperimentRunner`
+
+The driver and all five arms are **done and tested**. What remains is the plumbing that lets
+`ExperimentRunner.run` drive them, so a config turns into a run record.
+
+Done this session:
+
+- **Phase 2 adapters** — `select_compressible_modules` (adapter-gated *and* substring-gated, raising
+  `EmptySelectionError` rather than returning the dense model), `get_decoder_blocks`,
+  `get_weight_tensors`, `get_linear_modules`, `describe_architecture`,
+  `count_targeted_parameters` (A6).
+- **A2 config** — a `reconstruction` section (`solver`, `local_steps`, `joint_iterations`,
+  `damping`, `block_size`, `activation_order`), with `local_steps` as the fairness unit.
+- **`CompressionMethod.SEQUENTIAL_QP`** and the `ReconstructionSolver` / `SaliencyRule` enums (A3).
+  `SEQUENTIAL` remains P→Q, the primary order, so no existing config changed meaning.
+- **`compression/layerwise.py`** — depth-order block iteration, activations captured *through the
+  already-compressed prefix*, all five arms as call-order variations on one solver,
+  `assert_matched_plans` enforcing §3.11.
+
+Still to do:
+
+1. Wire `Pruner` / `Quantiser` / `SequentialCompressor` / `JointCompressor` stage methods to the
+   driver, and register `SEQUENTIAL_QP` in `COMPRESSOR_REGISTRY`.
+2. `convert` — real int4/int8 packing into a deployable artefact, so `is_converted` and
+   `storage_efficiency` mean something.
+3. Decide the scale-rule question above before screening.
 
 Then Phase 7 (budget screening), Phase 8 (sweep). Full detail and exit tests for every phase:
 [implementation_plan.md](implementation_plan.md#phases).

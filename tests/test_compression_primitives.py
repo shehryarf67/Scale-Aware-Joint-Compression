@@ -46,7 +46,11 @@ from scale_aware_compression.compression.reconstruct import (
     reconstruction_loss,
     solve_masked_rows,
 )
-from scale_aware_compression.constants import PruningGranularity, QuantisationGranularity
+from scale_aware_compression.constants import (
+    PruningGranularity,
+    QuantisationGranularity,
+    ReconstructionSolver,
+)
 
 pytestmark = pytest.mark.requires_torch
 
@@ -417,43 +421,56 @@ class TestReconstruction:
         direct = float(((activations @ weight.t()) - (activations @ candidate.t())).pow(2).sum())
         assert reconstruction_loss(gram, weight, candidate) == pytest.approx(direct, rel=1e-4)
 
-    def test_reconstruction_strictly_beats_naive_masking(self, synthetic_layer):
+    @pytest.mark.parametrize("solver", list(ReconstructionSolver))
+    def test_reconstruction_strictly_beats_naive_masking(
+        self, solver: ReconstructionSolver, synthetic_layer
+    ):
         """The Phase 5 exit criterion, for pruning-only."""
         activations, weight, gram = synthetic_layer
         mask = build_mask_from_scores(
             activation_weighted_saliency(weight, activations.norm(dim=0)), sparsity=0.5
         )
 
-        result = reconstruct(gram, weight, mask, local_steps=3, bits=None)
+        result = reconstruct(gram, weight, mask, solver=solver, local_steps=3, bits=None)
         assert result.final_loss < result.naive_loss
         assert result.relative_improvement > 0
 
-    def test_reconstruction_beats_naive_rounding_with_quantisation(self, synthetic_layer):
+    @pytest.mark.parametrize("solver", list(ReconstructionSolver))
+    def test_reconstruction_beats_naive_rounding_with_quantisation(
+        self, solver: ReconstructionSolver, synthetic_layer
+    ):
         """The Phase 5 exit criterion, for the combined constraint."""
         activations, weight, gram = synthetic_layer
         mask = build_mask_from_scores(
             activation_weighted_saliency(weight, activations.norm(dim=0)), sparsity=0.5
         )
 
-        result = reconstruct(gram, weight, mask, local_steps=6, bits=4)
+        result = reconstruct(gram, weight, mask, solver=solver, local_steps=6, bits=4)
         assert result.final_loss < result.naive_loss
 
     @pytest.mark.parametrize("bits", [None, 2, 4, 8])
+    @pytest.mark.parametrize("solver", list(ReconstructionSolver))
     def test_reconstruction_never_returns_something_worse_than_naive(
-        self, bits: int | None, synthetic_layer
+        self, bits: int | None, solver: ReconstructionSolver, synthetic_layer
     ):
-        """Projection onto a discrete grid is not monotone, so the loop must be guarded."""
+        """Neither solver may hand back something worse than plain rounding.
+
+        Both can overshoot -- ALS because projecting onto a discrete grid is not monotone, the
+        sweep because error compensation can amplify on a badly conditioned Gram matrix. Each
+        guards itself by falling back, and this is the assertion that keeps them honest.
+        """
         activations, weight, gram = synthetic_layer
         mask = build_mask_from_scores(
             activation_weighted_saliency(weight, activations.norm(dim=0)), sparsity=0.7
         )
 
-        result = reconstruct(gram, weight, mask, local_steps=5, bits=bits)
+        result = reconstruct(gram, weight, mask, solver=solver, local_steps=5, bits=bits)
         assert result.final_loss <= result.naive_loss
         assert result.history[0] == result.naive_loss
-        assert min(result.history) == pytest.approx(result.final_loss)
+        assert result.final_loss == pytest.approx(min(result.history))
 
-    def test_reconstruction_respects_the_mask(self, synthetic_layer):
+    @pytest.mark.parametrize("solver", list(ReconstructionSolver))
+    def test_reconstruction_respects_the_mask(self, solver: ReconstructionSolver, synthetic_layer):
         """Error compensation must not resurrect a pruned weight."""
         import torch
 
@@ -462,16 +479,19 @@ class TestReconstruction:
             activation_weighted_saliency(weight, activations.norm(dim=0)), sparsity=0.5
         )
 
-        result = reconstruct(gram, weight, mask, local_steps=3, bits=4)
+        result = reconstruct(gram, weight, mask, solver=solver, local_steps=3, bits=4)
         assert torch.all(result.weight[~mask] == 0)
         assert realised_sparsity(result.weight != 0) >= 0.5
 
-    def test_reconstruction_stays_on_the_quantisation_grid(self, synthetic_layer):
+    @pytest.mark.parametrize("solver", list(ReconstructionSolver))
+    def test_reconstruction_stays_on_the_quantisation_grid(
+        self, solver: ReconstructionSolver, synthetic_layer
+    ):
         """A solver that returned continuous survivors would report an unachievable loss."""
         _, weight, gram = synthetic_layer
         mask = build_mask_from_scores(weight.abs(), sparsity=0.5)
 
-        result = reconstruct(gram, weight, mask, local_steps=4, bits=4)
+        result = reconstruct(gram, weight, mask, solver=solver, local_steps=4, bits=4)
         requantised = quantise_weight(result.weight, bits=4)
         assert requantised.distinct_values_per_group() <= 2**4
 
@@ -483,7 +503,9 @@ class TestReconstruction:
         )
 
         losses = [
-            reconstruct(gram, weight, mask, local_steps=steps, bits=4).final_loss
+            reconstruct(
+                gram, weight, mask, solver=ReconstructionSolver.ALS, local_steps=steps, bits=4
+            ).final_loss
             for steps in (0, 1, 4)
         ]
         assert losses[1] <= losses[0]
@@ -493,7 +515,9 @@ class TestReconstruction:
         _, weight, gram = synthetic_layer
         mask = build_mask_from_scores(weight.abs(), sparsity=0.5)
 
-        result = reconstruct(gram, weight, mask, local_steps=0, bits=4)
+        result = reconstruct(
+            gram, weight, mask, solver=ReconstructionSolver.ALS, local_steps=0, bits=4
+        )
         assert result.final_loss == result.naive_loss
         assert result.local_steps_used == 0
 

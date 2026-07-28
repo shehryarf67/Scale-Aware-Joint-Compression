@@ -274,14 +274,71 @@ constant rather than a second compression axis. See
 *Residual risk:* **this decision is still open** and it constrains the scope of the whole study. It
 must be made before the main experiments, not after seeing which choice produces a nicer result.
 
+## The Joint Mechanism May Be Inert at Moderate Precision
+
+**Discovered 2026-07-28, on implementing Phase 6. This is the most serious threat currently known,
+because it predicts a null result for structural reasons rather than empirical ones.**
+
+§3.8 lists two things that make a method joint: the mask is scored under quantised weights, and the
+quantisation scales are re-estimated after the mask changes. Measured on a synthetic layer with
+correlated activations, **both are weak or inert at the precisions the study plans to use.**
+
+### The mask stops responding to quantisation above about 3 bits
+
+Scoring saliency on fake-quantised weights only changes the mask when rounding reorders the ranking.
+Mask positions differing from the sequential P→Q arm, same layer and budget:
+
+| Bit width | Positions differing (of 512) |
+| --- | --- |
+| W2 | 206 |
+| W3 | 2 |
+| W4 | **0** |
+| W8 | **0** |
+
+At W4 and W8 the joint arm produces a **bit-identical mask** to the sequential arm. Whatever joint
+gain appears at those budgets cannot come from quantisation-aware mask selection, because there is
+none — it can only come from the order in which reconstruction is applied.
+
+### Symmetric max-abs scales cannot respond to the mask at all
+
+A symmetric per-channel scale is `max|W_row| / qmax`. Saliency pruning removes the *smallest*
+entries, so each row's maximum survives and refitting on the survivors returns the identical number.
+Measured: **100% of output channels unchanged, maximum relative change 0.0000.**
+
+So §3.8's second requirement is satisfied only formally. The re-estimation step runs; it provably
+cannot alter anything.
+
+### Why this matters
+
+Taken together, at the moderate budget (50% + W8) the joint arm reduces to the sequential arm plus a
+different reconstruction ordering. A joint gain of approximately zero there is then close to
+guaranteed *by construction*, and would be misreported as an empirical finding about pipeline design.
+
+Both properties are pinned by tests in `tests/test_layerwise.py` so they cannot regress silently or
+be rediscovered during writing-up.
+
+### Options, none yet taken
+
+| Option | Effect | Cost |
+| --- | --- | --- |
+| **Change the scale rule** to minimise reconstruction error rather than match the maximum (a clipping or MSE search, standard in PTQ) | Makes scale re-estimation genuinely responsive to the mask, so §3.8's second mechanism becomes live | Changes a §2.7-frozen choice (`observer`). Must be applied to every arm and every scale, and re-recorded |
+| **Screen a lower bit width** so the mask mechanism is active | Keeps the method as frozen; measures joint where it can actually differ | §3.9 names W8 and W4 as the screened widths; adding W2/W3 widens the matrix and W2 quality may be catastrophic |
+| **Report as-is** | Honest, and a null result is publishable (§6.7) | Weak paper: the headline comparison would be structurally incapable of showing a difference at one of the two budgets |
+
+The first is the substantive fix and is the recommendation. It is **not** actioned here because it
+changes a frozen protocol decision with direct consequences for the paper, and §6.3 forbids revising
+such choices after results are seen — which makes now, before any compressed result exists, exactly
+the right time to decide it deliberately.
+
 ## Summary of unresolved risks
 
 | Risk | Status |
 | --- | --- |
-| CPU quantisation backend undecided | **open — blocks main experiments** |
-| Whether 4-bit stays in the main study or the INT8 fallback is used | **open — follows from the above** |
-| Mask scoring rule not finalised | **open — Option B recommended in method_definition.md** |
-| No automatic check that both arms saw the same module list | gap in tooling |
+| **Joint mask identical to sequential at W4/W8; scale re-estimation provably inert** | **open — threatens the headline comparison; see above** |
+| CPU quantisation backend undecided | settled — PyTorch native INT8, engine `onednn` (D1) |
+| Whether 4-bit stays in the main study or the INT8 fallback is used | settled — W4 for quality and size, never for latency (D1) |
+| Mask scoring rule not finalised | settled — activation-weighted magnitude on quantised weights (D3) |
+| No automatic check that both arms saw the same module list | closed — `assert_matched_plans` checks coverage, calibration and local steps |
 | No automatic check that a sweep's models share training settings | gap in tooling |
 | No pre-registered practically-meaningful effect size | should be set before reading results |
 | Three seeds give a weak variance estimate | accepted; report inconclusive results as inconclusive |

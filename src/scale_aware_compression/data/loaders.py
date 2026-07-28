@@ -107,9 +107,18 @@ def load_raw_dataset(config: DataConfig, split: str) -> Any:
             cache_dir=str(config.cache_dir) if config.cache_dir else None,
         )
     except Exception as error:
+        hint = ""
+        if "/" not in config.dataset:
+            # The most likely cause, and the message datasets gives for it is opaque: it complains
+            # about an internal `hf://` URI rather than about the name that was passed in.
+            hint = (
+                f" Hint: {config.dataset!r} is not a namespaced Hub repository id. `datasets` 5.x "
+                f"rejects bare canonical aliases -- try a 'namespace/name' form such as "
+                f"'Salesforce/{config.dataset}'."
+            )
         raise DataError(
             f"Could not load {config.dataset!r} (subset={config.subset!r}, split={split!r}): "
-            f"{error}"
+            f"{error}{hint}"
         ) from error
     return loaded
 

@@ -36,7 +36,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from scale_aware_compression.constants import QuantisationGranularity
+from scale_aware_compression.constants import QuantisationGranularity, ReconstructionSolver
 from scale_aware_compression.logging_utils import get_logger
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -210,6 +210,73 @@ def reconstruct(
     dense_weight: torch.Tensor,
     mask: torch.Tensor,
     *,
+    solver: ReconstructionSolver = ReconstructionSolver.SWEEP,
+    local_steps: int = 4,
+    damping: float = 1e-2,
+    bits: int | None = None,
+    granularity: QuantisationGranularity = QuantisationGranularity.PER_CHANNEL,
+    group_size: int = 128,
+    block_size: int = 128,
+    reestimate_scales: bool = True,
+) -> ReconstructionResult:
+    """Reconstruct a layer's weights under a fixed mask, optionally on a quantisation grid.
+
+    The single entry point every arm calls, so the solver cannot vary between arms or between
+    layers within a run. Which algorithm runs is a configuration decision, not a per-layer one.
+
+    Args:
+        gram: ``H = X^T X``, shape ``(in_features, in_features)``.
+        dense_weight: The original weight, shape ``(out_features, in_features)``.
+        mask: Boolean keep-mask, same shape. Fixed for this call -- mask updates belong to the
+            joint arm's outer loop (§3.7).
+        solver: Which minimiser to use. Defaults to the column sweep, which is the only one that
+            scales to the wide layers in the sweep; ``ALS`` is the reference implementation kept
+            for validation.
+        local_steps: Refinement iterations, used by ``ALS`` only. **The fairness unit** (§3.11).
+        damping: Ridge coefficient relative to the mean Gram diagonal.
+        bits: Quantisation bit width, or ``None`` for pruning-only reconstruction.
+        granularity: Quantisation granularity, when ``bits`` is set.
+        group_size: Elements per quantisation group, for per-group granularity.
+        block_size: Column block width, used by ``SWEEP`` only.
+        reestimate_scales: Refit scales on survivors at each projection, ``ALS`` only.
+
+    Returns:
+        The result, including the naive baseline it was measured against.
+
+    Raises:
+        ReconstructionError: If shapes are inconsistent or a parameter is out of range.
+    """
+    if solver is ReconstructionSolver.SWEEP:
+        return sweep_reconstruct(
+            gram,
+            dense_weight,
+            mask,
+            damping=damping,
+            bits=bits,
+            granularity=granularity,
+            group_size=group_size,
+            block_size=block_size,
+        )
+    if solver is not ReconstructionSolver.ALS:
+        raise ReconstructionError(f"unknown solver {solver!r}")
+    return als_reconstruct(
+        gram,
+        dense_weight,
+        mask,
+        local_steps=local_steps,
+        damping=damping,
+        bits=bits,
+        granularity=granularity,
+        group_size=group_size,
+        reestimate_scales=reestimate_scales,
+    )
+
+
+def als_reconstruct(
+    gram: torch.Tensor,
+    dense_weight: torch.Tensor,
+    mask: torch.Tensor,
+    *,
     local_steps: int = 4,
     damping: float = 1e-2,
     bits: int | None = None,
@@ -217,7 +284,7 @@ def reconstruct(
     group_size: int = 128,
     reestimate_scales: bool = True,
 ) -> ReconstructionResult:
-    """Reconstruct a layer's weights under a fixed mask, optionally on a quantisation grid.
+    """Damped alternating refinement -- the reference solver.
 
     Without ``bits`` this is pure pruning reconstruction and the first solve is already optimal,
     so later iterations find nothing to add. With ``bits`` the problem is discrete and the loop
@@ -305,6 +372,296 @@ def reconstruct(
         accepted_steps=accepted,
         history=history,
     )
+
+
+def _inverse_cholesky(
+    gram: torch.Tensor,
+    damping: float,
+    *,
+    max_attempts: int = 6,
+) -> torch.Tensor:
+    """Return upper-triangular ``U`` with ``H^-1 = U^T U``, escalating damping until it factorises.
+
+    The sweep needs ``H^-1`` in a form whose diagonal gives the per-column error denominator and
+    whose rows give the propagation coefficients. A Cholesky factor supplies both.
+
+    Escalation matters in practice. A calibration Gram matrix is routinely near-singular -- dead
+    input columns, strongly correlated channels -- and a bare fp32 Cholesky fails on it. Raising the
+    ridge until the factorisation succeeds is how every published implementation of this handles it;
+    doing it in a loop and logging makes the fallback visible instead of silent.
+
+    Args:
+        gram: ``H = X^T X``, square.
+        damping: Starting ridge, relative to the mean diagonal.
+        max_attempts: How many times to multiply the ridge by ten before giving up.
+
+    Returns:
+        Upper-triangular factor of ``H^-1``.
+
+    Raises:
+        ReconstructionError: If no amount of damping in range makes ``H`` factorisable.
+    """
+    import torch
+
+    size = gram.shape[0]
+    identity = torch.eye(size, dtype=gram.dtype, device=gram.device)
+    mean_diagonal = torch.diagonal(gram).mean()
+    if not bool(torch.isfinite(mean_diagonal)) or mean_diagonal <= 0:
+        mean_diagonal = torch.ones((), dtype=gram.dtype, device=gram.device)
+
+    # A column the calibration data never excited contributes nothing to the objective, but a zero
+    # diagonal entry makes H singular. Lift it so the factorisation is defined. The weights on that
+    # column are left alone -- zeroing them here would push realised sparsity past its target and
+    # break the exactness invariant the masks guarantee.
+    stabilised = gram.clone()
+    diagonal = torch.diagonal(stabilised)
+    dead = diagonal <= 0
+    num_dead = int(dead.sum())
+    if num_dead:
+        LOGGER.debug("stabilising %d dead input column(s) in the Gram matrix", num_dead)
+        diagonal[dead] = float(mean_diagonal)
+
+    ridge = damping
+    for attempt in range(max_attempts):
+        candidate = stabilised + identity * float(ridge * mean_diagonal)
+        try:
+            lower = torch.linalg.cholesky(candidate)
+            inverse = torch.cholesky_inverse(lower)
+            return torch.linalg.cholesky(inverse, upper=True)
+        except RuntimeError:
+            ridge *= 10.0
+            LOGGER.warning(
+                "Cholesky failed at attempt %d; raising relative damping to %.3g",
+                attempt + 1,
+                ridge,
+            )
+    raise ReconstructionError(
+        f"could not factorise the Gram matrix after {max_attempts} damping escalations "
+        f"(final relative ridge {ridge:.3g}). The calibration set is likely degenerate."
+    )
+
+
+def sweep_reconstruct(
+    gram: torch.Tensor,
+    dense_weight: torch.Tensor,
+    mask: torch.Tensor,
+    *,
+    damping: float = 1e-2,
+    bits: int | None = None,
+    granularity: QuantisationGranularity = QuantisationGranularity.PER_CHANNEL,
+    group_size: int = 128,
+    block_size: int = 128,
+    activation_order: bool = True,
+) -> ReconstructionResult:
+    """Error-compensated column sweep -- the solver that makes wide layers tractable.
+
+    Walks the input columns left to right. Each column is committed to its final value (zero if
+    masked out, otherwise rounded onto the grid), and the resulting error is pushed forward onto the
+    columns not yet visited, scaled by the inverse-Hessian coefficients. By the time a column is
+    reached it has already absorbed the error of everything before it.
+
+    This computes the same kind of solution as :func:`reconstruct` with
+    :data:`~scale_aware_compression.constants.ReconstructionSolver.ALS`, but the cost profile is
+    completely different, and that is the point:
+
+    ==================  ================================  ==============================
+    Solver              Cost                              ``in=8192``, ``out=8192``
+    ==================  ================================  ==============================
+    ALS (per-row)       ``out * |S|^3``                    infeasible -- a 4096-wide solve
+                                                          per output channel
+    Sweep (this)        ``in^3 + out * in^2``              seconds on one GPU
+    ==================  ================================  ==============================
+
+    All output channels advance together, so a per-row mask costs nothing extra -- which is what
+    lets a global unstructured mask (§3.10) be used at scale rather than a per-row one chosen for
+    solver convenience.
+
+    Args:
+        gram: ``H = X^T X``, shape ``(in_features, in_features)``.
+        dense_weight: The original weight, shape ``(out_features, in_features)``.
+        mask: Boolean keep-mask, same shape. Taken as given -- the mask is decided by the saliency
+            rule (**D3**), not by this solver.
+        damping: Starting ridge relative to the mean Gram diagonal; escalated if needed.
+        bits: Quantisation bit width, or ``None`` for pruning-only reconstruction.
+        granularity: Quantisation granularity.
+        group_size: Elements per quantisation group, for per-group granularity.
+        block_size: Columns processed before the accumulated error is flushed to the remaining
+            columns. Purely a memory/throughput knob; it does not change the result.
+        activation_order: Visit columns in descending order of activation energy
+            (``diag(H)``) rather than left to right. A one-pass sweep commits early columns before
+            it has seen the later ones, so whichever columns go first effectively get the least
+            compensation. Taking the high-energy columns first spends that disadvantage on the
+            columns that matter least. Ignored for per-group quantisation, where reordering would
+            change which weights share a scale and therefore change the scheme itself.
+
+    Returns:
+        The result, measured against the same naive baseline :func:`reconstruct` uses.
+
+    Raises:
+        ReconstructionError: If shapes are inconsistent, ``block_size`` is not positive, or the
+            Gram matrix cannot be factorised.
+    """
+    import torch
+
+    from scale_aware_compression.compression.quantisation import fake_quantise
+
+    _validate_shapes(gram, dense_weight, mask)
+    if block_size <= 0:
+        raise ReconstructionError(f"block_size must be > 0, got {block_size}")
+
+    original_gram, original_weight, original_mask = gram, dense_weight, mask
+    permutation: torch.Tensor | None = None
+    if activation_order:
+        if granularity is QuantisationGranularity.PER_GROUP:
+            LOGGER.debug("per-group quantisation: skipping activation ordering")
+        else:
+            permutation = torch.argsort(torch.diagonal(gram), descending=True)
+            gram = gram.index_select(0, permutation).index_select(1, permutation)
+            dense_weight = dense_weight.index_select(1, permutation)
+            mask = mask.index_select(1, permutation)
+
+    in_features = dense_weight.shape[1]
+    keep = mask.to(dense_weight.dtype)
+
+    def quantise_all(candidate: torch.Tensor) -> torch.Tensor:
+        if bits is None:
+            return candidate
+        return fake_quantise(candidate, bits=bits, granularity=granularity, group_size=group_size)
+
+    naive = quantise_all(dense_weight * keep) * keep
+    naive_loss = reconstruction_loss(gram, dense_weight, naive)
+
+    # Scales are fitted once, to the masked dense weight, and held for the sweep. Refitting them
+    # mid-sweep would move the grid under columns already committed, so the errors propagated
+    # earlier would no longer correspond to the values finally stored. The joint arm re-estimates
+    # scales between its outer iterations instead, which is where §3.8 asks for it.
+    grid_scales = None
+    if bits is not None:
+        grid_scales = _scales_for(dense_weight * keep, bits, granularity, group_size)
+
+    inverse = _inverse_cholesky(gram.to(torch.float32), damping)
+    working = dense_weight.to(torch.float32).clone()
+    result = torch.zeros_like(working)
+
+    for start in range(0, in_features, block_size):
+        stop = min(start + block_size, in_features)
+        width = stop - start
+        block = working[:, start:stop].clone()
+        committed = torch.zeros_like(block)
+        errors = torch.zeros_like(block)
+        block_inverse = inverse[start:stop, start:stop]
+
+        for offset in range(width):
+            column_index = start + offset
+            column = block[:, offset]
+            denominator = block_inverse[offset, offset]
+
+            value = column * keep[:, column_index]
+            if bits is not None:
+                value = (
+                    _quantise_column(
+                        value,
+                        column_index,
+                        bits=bits,
+                        granularity=granularity,
+                        group_size=group_size,
+                        scales=grid_scales,
+                    )
+                    * keep[:, column_index]
+                )
+
+            committed[:, offset] = value
+            error = (column - value) / denominator
+            errors[:, offset] = error
+            # Push this column's error onto the rest of the block.
+            block[:, offset:] -= error.unsqueeze(1) * block_inverse[offset, offset:].unsqueeze(0)
+
+        result[:, start:stop] = committed
+        if stop < in_features:
+            working[:, stop:] -= errors @ inverse[start:stop, stop:]
+
+    reconstructed = (result * keep).to(dense_weight.dtype)
+    if permutation is not None:
+        # Undo the visiting order so the weight matches the layer's real column layout. Every
+        # figure from here on is computed against the unpermuted tensors.
+        inverse_permutation = torch.argsort(permutation)
+        reconstructed = reconstructed.index_select(1, inverse_permutation)
+        gram, dense_weight, mask = original_gram, original_weight, original_mask
+        naive = quantise_all(dense_weight * mask.to(dense_weight.dtype)) * mask.to(
+            dense_weight.dtype
+        )
+        naive_loss = reconstruction_loss(gram, dense_weight, naive)
+
+    final_loss = reconstruction_loss(gram, dense_weight, reconstructed)
+
+    # The sweep is not guaranteed to beat naive rounding on every layer -- error compensation can
+    # overshoot when the Gram matrix is badly conditioned. Returning the worse of the two would
+    # silently degrade a layer, so fall back rather than trusting it blindly.
+    if final_loss > naive_loss:
+        LOGGER.warning(
+            "sweep produced a worse objective than naive rounding (%.6g vs %.6g); keeping naive",
+            final_loss,
+            naive_loss,
+        )
+        return ReconstructionResult(
+            weight=naive,
+            naive_loss=naive_loss,
+            final_loss=naive_loss,
+            local_steps_used=1,
+            accepted_steps=0,
+            history=[naive_loss, final_loss],
+        )
+
+    return ReconstructionResult(
+        weight=reconstructed,
+        naive_loss=naive_loss,
+        final_loss=final_loss,
+        local_steps_used=1,
+        accepted_steps=1,
+        history=[naive_loss, final_loss],
+    )
+
+
+def _quantise_column(
+    column: torch.Tensor,
+    column_index: int,
+    *,
+    bits: int,
+    granularity: QuantisationGranularity,
+    group_size: int,
+    scales: torch.Tensor | None,
+) -> torch.Tensor:
+    """Round one column of weights onto the grid its group belongs to.
+
+    Args:
+        column: One input column across all output channels, shape ``(out_features,)``.
+        column_index: Which input column this is, needed to locate its per-group scale.
+        bits: Bit width.
+        granularity: Quantisation granularity.
+        group_size: Elements per group.
+        scales: Scales fitted by :func:`_scales_for`, shaped per the grouped view.
+
+    Returns:
+        The rounded column.
+    """
+    import torch
+
+    qmax = (1 << (bits - 1)) - 1
+    if scales is None:
+        return column
+
+    if granularity is QuantisationGranularity.PER_TENSOR:
+        scale = scales.reshape(-1)[0]
+    elif granularity is QuantisationGranularity.PER_CHANNEL:
+        scale = scales.reshape(-1)
+    else:
+        # Per-group scales were flattened as (out_features * num_groups, 1); pick this column's
+        # group for every output channel.
+        num_groups = scales.numel() // column.shape[0]
+        group = column_index // group_size
+        scale = scales.reshape(column.shape[0], num_groups)[:, group]
+
+    return torch.round(column / scale).clamp_(-qmax, qmax) * scale
 
 
 def _scales_for(

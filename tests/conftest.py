@@ -194,7 +194,7 @@ def minimal_config_document() -> dict[str, Any]:
         "runtime": {"seed": 42, "output_dir": "outputs", "log_level": "WARNING"},
         "model": {"name": "pythia-160m", "size_label": "160M", "device": "cpu", "dtype": "float32"},
         "data": {
-            "dataset": "wikitext",
+            "dataset": "Salesforce/wikitext",
             "subset": "wikitext-2-raw-v1",
             "sequence_length": 128,
             "batch_size": 2,

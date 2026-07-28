@@ -367,6 +367,21 @@ class TestFrozenProtocolMatchesTheConfigs:
                 f"{path.name} revision {revision!r} is not a 40-character commit SHA"
             )
 
+    def test_every_shipped_config_names_a_namespaced_dataset(self, configs_dir: Path):
+        """`datasets` 5.x rejects bare canonical aliases like ``wikitext``.
+
+        Found the hard way: the first real execution of the load path failed with an opaque
+        HfUriError about an internal ``hf://`` path. It fails at load time, after the model is
+        already resident, so it costs a whole setup. Only *shipped* configs are checked -- test
+        fixtures legitimately use stub corpus names that never reach the Hub.
+        """
+        for path in sorted(configs_dir.rglob("*.yaml")):
+            config = ExperimentConfig.from_mapping(load_document(path))
+            assert "/" in config.data.dataset, (
+                f"{path.name} names dataset {config.data.dataset!r}, which is not a "
+                "'namespace/name' Hub id"
+            )
+
     def test_no_pythia_config_uses_the_deduplicated_variant(self, configs_dir: Path):
         """§2.7 forbids mixing standard and deduplicated Pythia across sizes."""
         for path in sorted((configs_dir / "models").glob("*.yaml")):

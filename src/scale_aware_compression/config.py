@@ -41,6 +41,7 @@ from scale_aware_compression.constants import (
     PruningScheduleName,
     QuantisationGranularity,
     QuantisationScheme,
+    ReconstructionSolver,
 )
 from scale_aware_compression.logging_utils import get_logger
 
@@ -139,7 +140,13 @@ class ModelConfig:
 class DataConfig:
     """Evaluation and calibration corpora, tokenisation window, and batching."""
 
-    dataset: str = "wikitext"
+    dataset: str = "Salesforce/wikitext"
+    """Fully namespaced Hub repository id.
+
+    Must be ``namespace/name``. The bare canonical alias ``wikitext`` worked under older
+    ``datasets`` releases but 5.x rejects it outright, which is what the first real run of the load
+    path found. A bare name fails at load time, after the model is already in memory.
+    """
     subset: str | None = "wikitext-2-raw-v1"
     train_split: str = "train"
     eval_split: str = "validation"
@@ -334,6 +341,53 @@ class JointConfig:
 
 
 @dataclass(slots=True)
+class ReconstructionConfig:
+    """Layerwise post-training reconstruction settings (plan §3.1, gap A2).
+
+    This is the section that governs the *actual* method. ``local_steps`` is the fairness unit
+    §3.11 requires be matched between arms -- not ``recovery.max_steps``, which belongs to the
+    superseded fine-tuning design and survives only for the optional ablation.
+    """
+
+    enabled: bool = True
+    solver: ReconstructionSolver = ReconstructionSolver.SWEEP
+    """Which minimiser runs. Must be the same for every layer and every arm in a results table:
+    mixing solvers would mean different layers were optimised by different algorithms."""
+    local_steps: int = 1
+    """Refinement iterations per layer. **The fairness unit.** Used by the ALS solver; the sweep is
+    single-pass, so its cost is fixed and matching is automatic."""
+    joint_iterations: int = 4
+    """Outer alternations in the joint arm (``K`` in §3.7): fake-quantise, rescore saliency under
+    the quantised weights, update the mask, re-estimate scales, reconstruct."""
+    damping: float = 1e-2
+    """Ridge coefficient, relative to the mean Gram diagonal so one value works at every width."""
+    block_size: int = 128
+    """Column block width for the sweep solver. Throughput knob; does not change the result."""
+    activation_order: bool = True
+    """Visit high-energy columns first in the sweep. Ignored for per-group quantisation."""
+    calibration_dtype: str = "float32"
+    """Accumulation dtype for ``H = XᵀX``. fp32 keeps the largest layer Hessian at 256 MiB."""
+
+    def __post_init__(self) -> None:
+        """Validate the optimisation budget."""
+        if self.local_steps < 0:
+            raise ConfigError(
+                f"compression.reconstruction.local_steps must be >= 0, got {self.local_steps}"
+            )
+        _require_positive("compression.reconstruction.joint_iterations", self.joint_iterations)
+        if self.damping < 0:
+            raise ConfigError(
+                f"compression.reconstruction.damping must be >= 0, got {self.damping}"
+            )
+        _require_positive("compression.reconstruction.block_size", self.block_size)
+        if self.calibration_dtype not in {"float32", "float64"}:
+            raise ConfigError(
+                "compression.reconstruction.calibration_dtype must be 'float32' or 'float64', "
+                f"got {self.calibration_dtype!r}"
+            )
+
+
+@dataclass(slots=True)
 class CompressionConfig:
     """Which experimental arm to run, and the settings for each of its stages."""
 
@@ -343,6 +397,7 @@ class CompressionConfig:
     sequential rows can be matched when computing joint gain."""
     pruning: PruningConfig = field(default_factory=PruningConfig)
     quantisation: QuantisationConfig = field(default_factory=QuantisationConfig)
+    reconstruction: ReconstructionConfig = field(default_factory=ReconstructionConfig)
     recovery: RecoveryConfig = field(default_factory=RecoveryConfig)
     joint: JointConfig = field(default_factory=JointConfig)
 

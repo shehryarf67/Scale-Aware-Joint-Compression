@@ -45,13 +45,53 @@ TABLE_SUBDIR: Final[str] = "tables"
 # Enumerations
 # ---------------------------------------------------------------------------
 class CompressionMethod(StrEnum):
-    """The five experimental arms compared in the study."""
+    """The experimental arms compared in the study.
+
+    ``SEQUENTIAL`` is the **primary** order, prune then quantise (§3.5). ``SEQUENTIAL_QP`` is the
+    reverse-order ablation run at one representative budget (§3.6), which exists so the joint arm
+    is not compared only against a weak ordering. Where both are available, §6.1 defines the
+    sequential baseline as the *stronger* of the two and requires the winning order be recorded.
+    """
 
     DENSE = "dense"
     PRUNING = "pruning"
     QUANTISATION = "quantisation"
     SEQUENTIAL = "sequential"
+    SEQUENTIAL_QP = "sequential_qp"
     JOINT = "joint"
+
+
+class ReconstructionSolver(StrEnum):
+    """How the layerwise reconstruction objective is minimised.
+
+    Both solvers minimise the same objective and take the same mask, so an arm's result is
+    comparable across them -- but only if **one** solver is used for every layer and every arm in a
+    results table. Mixing them within a run would mean different layers were optimised by different
+    algorithms, which is neither describable in a paper nor fair between arms.
+    """
+
+    ALS = "als"
+    """Damped alternating refinement. Exact per output channel, ``O(out * |S|^3)``. Reference
+    implementation: simple enough to verify by inspection, too slow for wide layers."""
+
+    SWEEP = "sweep"
+    """Error-compensated column sweep over a Cholesky factor of ``H^-1``. ``O(in^3 + out * in^2)``,
+    which is what makes 1B-scale layers tractable."""
+
+
+class SaliencyRule(StrEnum):
+    """Which weights the pruning saliency is computed on.
+
+    This is decision **D3**, and §3.8 makes it the definition of joint: a mask ranked on weights the
+    quantiser has not touched is chosen in ignorance of the grid it will live on.
+    """
+
+    DENSE = "dense"
+    """Rank ``|W| * ||X_j||`` on the dense weights. Correct for sequential P->Q, where no quantiser
+    exists at mask time."""
+
+    QUANTISED = "quantised"
+    """Rank ``|Q_b(W)| * ||X_j||`` on the fake-quantised weights. Required for the joint arm."""
 
 
 class CompressionStage(StrEnum):

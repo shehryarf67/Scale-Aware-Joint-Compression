@@ -29,7 +29,10 @@ evaluation:
   generation_max_new_tokens: 64
 
 data:
-  dataset: wikitext
+  # Must be a namespaced Hub id. This was `wikitext` until the load path was first executed for
+  # real on 2026-07-28: `datasets` 5.x rejects the bare canonical alias with an HfUriError, and it
+  # fails at load time -- after the model is already resident.
+  dataset: Salesforce/wikitext
   subset: wikitext-2-raw-v1
   eval_split: validation
   text_column: text
