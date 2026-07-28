@@ -91,6 +91,10 @@ sweep:
     - s2_50_w8
     - s3_50_w4
     - s4_70_w4
+    # Second round, added after the first four were measured (F-10). Only S1 survived the selection
+    # rule, and §5.3 needs two budgets, so the grid is extended rather than the rule relaxed.
+    - s5_30_w4
+    - s6_40_w8
   # §5.5: exploratory screening gets ONE seed. Three seeds are for the confirmatory comparison on
   # the frozen budgets, and spending them here would cost ~3x for numbers that get discarded.
   seeds:
@@ -137,6 +141,34 @@ sweep:
           sparsity: 0.7
         quantisation:
           bits: 4
+
+    # S5 -- the cell the original grid missed: MILD sparsity with AGGRESSIVE precision.
+    #
+    # Motivated by two measurements pulling in opposite directions. F-05 found W4 is the only regime
+    # where the joint mechanism is actually live (8.86% mask divergence against 0.46% at W8), so a
+    # study with no W4 budget removes the one condition under which joint could plausibly differ.
+    # But F-10 found 50% + W4 collapses at 160M. The original grid only ever paired W4 with 50% or
+    # 70% sparsity, so mild-sparsity W4 was never tested.
+    #
+    # Also note the budget is a CONTROLLED variable across scales (§2.5), so whatever is frozen must
+    # be survivable at 160M -- the smallest and most fragile model sets the ceiling for all three.
+    s5_30_w4:
+      compression:
+        budget_label: s5_30_w4
+        pruning:
+          sparsity: 0.3
+        quantisation:
+          bits: 4
+
+    # S6 -- intermediate sparsity at the safe precision. A fallback aggressive candidate if S5 also
+    # collapses: F-08 put 40% + W8 at 58% retention on the pilot window, which is borderline.
+    s6_40_w8:
+      compression:
+        budget_label: s6_40_w8
+        pruning:
+          sparsity: 0.4
+        quantisation:
+          bits: 8
 
   skip_existing: true
   # Screening is exploratory and a collapsed cell is informative rather than fatal: "S4 diverged"

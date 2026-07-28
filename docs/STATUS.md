@@ -1,7 +1,7 @@
 # Project status
 
 **Last updated:** 2026-07-28 · first session on the HP Omen · **Phases 0, 5 and 6 complete**;
-all five arms run end to end on a real model
+**Phase 7 (budget screening) part-run and paused mid-grid** — see the resume point below
 
 > Read this first. It is the handoff between sessions and between machines. If it looks stale,
 > check `git log` — the truth is the commit history, this file is a summary of it.
@@ -279,7 +279,73 @@ Two smaller things noticed in the same runs:
 
 ---
 
-## Next: Phase 7 — budget screening
+## 🟡 Phase 7 — IN PROGRESS, paused. Resume here.
+
+### Where it stopped
+
+Round 1 of the §5.3 screening grid is **complete and committed**: 9 cells on Pythia-160M (dense,
+sequential and joint at S1–S4), one seed, 493 × 512 evaluation window. Records are in
+`outputs/metrics/pythia-160m_*.json` on the Omen only — they are git-ignored.
+
+Round 2 was **started and deliberately killed**, so nothing partial exists: S5 and S6 were added to
+`configs/experiments/screening.yaml` but have **not run**. Verified no partial records were written, so
+`skip_existing: true` will resume correctly.
+
+**To resume, one command.** It skips the 9 finished cells and runs the 4 outstanding ones
+(sequential + joint at S5 and S6), roughly 40 minutes:
+
+```bash
+python scripts/run_scale_sweep.py --config configs/experiments/screening.yaml
+python scripts/summarise_screening.py --model pythia-160m     --budgets s1_30_w8,s2_50_w8,s3_50_w4,s4_70_w4,s5_30_w4,s6_40_w8
+```
+
+### What round 1 found
+
+Dense reference **36.97**. Full detail and provenance in
+[findings_log.md](findings_log.md#f-10).
+
+| Budget | Sequential | Joint | Seq ret. | Joint ret. | Joint gain | Verdict |
+| --- | --- | --- | --- | --- | --- | --- |
+| **S1 30% + W8** | 45.97 | 45.93 | **80.4%** | **80.5%** | +0.06 pp | **ELIGIBLE** |
+| S2 50% + W8 | 161.46 | 163.85 | 22.9% | 22.6% | −0.33 pp | catastrophic |
+| S3 50% + W4 | 250.25 | 256.74 | 14.8% | 14.4% | −0.37 pp | catastrophic |
+| S4 70% + W4 | 4663.88 | 4802.72 | 0.8% | 0.8% | −0.02 pp | catastrophic |
+
+**§5.3's grid does not contain two usable budgets at 160M.** Only S1 survives. This supersedes the
+pair baked into `main_scale_sweep.yaml` (50% + W8 and 70% + W4) — **both are catastrophic** at the
+smallest model, and since the budget is a controlled variable across scales (§2.5), 160M sets the
+ceiling for all three.
+
+**Joint did not beat sequential at any budget.** Do not read a sign off that: one seed, and §6.3
+requires a gain to exceed the seed spread, which is unmeasured. It is consistent with
+[F-05](findings_log.md#f-05)'s prediction that the mechanism is near-inert at W8, and no more.
+
+### Why round 2 tests what it tests
+
+The original grid never paired W4 with *mild* sparsity — S3 and S4 were 50% and 70%. That gap matters
+because [F-05](findings_log.md#f-05) found W4 is the **only** regime where the joint mechanism is live
+(8.86% mask divergence against 0.46% at W8), so a study with no W4 budget removes the one condition
+under which joint could plausibly differ.
+
+- **S5 = 30% + W4** — the missing cell. Mild sparsity, aggressive precision.
+- **S6 = 40% + W8** — fallback if S5 also collapses. [F-08](findings_log.md#f-08) put it at 58%
+  retention on the pilot window, which is borderline.
+
+### The decision waiting at the end
+
+§5.3 requires **two** budgets frozen before 1B, and §6.3 forbids revisiting the choice once results
+exist. If S5 and S6 both fail, the options are: freeze one budget and drop the budget axis (weakening
+secondary question 2); screen a finer grid; or accept a budget below the catastrophic threshold and
+say so. **That choice is a human one** — it has a judgement clause ("enough separation to test whether
+joint gain changes with scale") and it cannot be revisited later.
+
+Once two budgets are chosen: write them into
+[protocol_freeze.md](protocol_freeze.md), update `main_scale_sweep.yaml` and
+`extended_scale_sweep.yaml`, and confirm on 410M before touching 1B.
+
+---
+
+## Then: Phase 8 — the full scale sweep
 
 The driver and all five arms are done, tested, and wired into `ExperimentRunner`.
 
