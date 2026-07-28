@@ -1,0 +1,454 @@
+# Findings log
+
+Every measurement this project has produced, with the conditions that produced it.
+
+**Why this file exists.** [STATUS.md](STATUS.md) says where the work stands and is rewritten every
+session. [validity_threats.md](validity_threats.md) says what could make the results wrong. This file
+is the **append-only record of what was actually measured** — so that when the paper is written, every
+number in it can be traced to a configuration, a commit, and a machine, and nothing has to be
+reconstructed from memory or re-derived under different conditions.
+
+**Rules for this file:**
+
+- **Append, do not rewrite.** If a number is superseded, add the new one and mark the old one
+  superseded with the reason. A deleted measurement is a measurement that will be re-argued later.
+- **Every number carries its conditions.** Model, revision, budget, calibration set, evaluation
+  window, machine. A perplexity without its evaluation window is not a result.
+- **Record rejected approaches with their numbers.** "We tried X and it was worse" is a reportable
+  ablation, and without the numbers it becomes an unsupported assertion in the Limitations section.
+- **Mark provenance honestly.** Synthetic-layer measurements and real-model measurements are labelled
+  as such, because one of them has already been wrong once (see [F-04](#f-04)).
+
+---
+
+## 1. Environment of record
+
+Every number below comes from this machine unless stated otherwise. §4.7 forbids mixing machines in
+one table, and §2.7 requires the runtime frozen for the study's duration.
+
+| | |
+| --- | --- |
+| Machine | HP Omen — **the only machine that runs code** |
+| CPU | 13th Gen Intel Core i7-13620H · 6 P-cores + 4 E-cores · 10 physical / 16 logical |
+| RAM | 13.7 GiB |
+| GPU | NVIDIA GeForce RTX 4050 Laptop · **6.0 GiB** (6141 MiB) · sm_89 (Ada) |
+| NVIDIA driver | 592.82 |
+| OS | Windows 11 Home 10.0.26200 |
+| Power profile | High performance `ad8e16f4-0e1d-4811-9f3b-165752347277` · processor throttle min **and** max 100% · AC sleep and hibernate disabled |
+| Benchmark threads | **4** — inside the 6 P-core budget, so no repetition lands on an E-core or an SMT sibling |
+| Python | 3.11.9 |
+| torch | **2.13.0+cu126** |
+| transformers | 5.14.1 |
+| datasets | 5.0.0 |
+| numpy | 2.4.6 |
+| Quantised engine | **`onednn`** — the *only* engine this build supports (see [F-02](#f-02)) |
+| Smart App Control | **disabled** 2026-07-28, machine rebooted (see [F-01](#f-01)) |
+
+**Do not upgrade torch mid-study.** `torch.ao.quantization` and the `qint8`/`quint8`/`qint32` dtypes
+are both deprecated in favour of `torchao`. They work on the pinned version; §2.7 pins the environment
+for the study's duration, so a deprecated-but-working path is reproducible. Moving off the pin would
+change the quantisation backend under the results.
+
+### Model revisions (pinned 2026-07-28)
+
+Resolved with `HfApi().model_info(repo_id, revision="main").sha`. All **standard** Pythia — no
+`-deduped` anywhere, which §2.7 requires and which is checkable at a glance from this table.
+
+| Config | Repository | Commit SHA |
+| --- | --- | --- |
+| `pythia_160m.yaml` | `EleutherAI/pythia-160m` | `50f5173d932e8e61f858120bcb800b97af589f46` |
+| `pythia_410m.yaml` | `EleutherAI/pythia-410m` | `9879c9b5f8bea9051dcb0e68dff21493d67e9d4f` |
+| `pythia_1b.yaml` | `EleutherAI/pythia-1b` | `f73d7dcc545c8bd326d8559c8ef84ffe92fea6b2` |
+| `pythia_1_4b.yaml` | `EleutherAI/pythia-1.4b` | `fedc38a16eea3bd36a96b906d78d11d2ce18ed79` |
+| `qwen2_5_0_5b.yaml` | `Qwen/Qwen2.5-0.5B` | `060db6499f32faf8b98477b0a26969ef7d8b9987` |
+
+### Data of record
+
+`Salesforce/wikitext` / `wikitext-2-raw-v1`, tokenised with the pinned pythia-160m tokeniser.
+
+| Split | Tokens | Blocks | Fingerprint |
+| --- | --- | --- | --- |
+| train | 2,431,839 | 9,499 × 256 | `798e41edc78ea923` |
+| validation | 252,468 | 986 × 256 | `b96c6c1be84cad97` |
+
+| Set | Detail | Fingerprint |
+| --- | --- | --- |
+| Evaluation loader (pilot) | 64 sequences × 256 tokens | `8b17abdeb30e252b` |
+| Calibration (pilot) | 16 sequences + 3 held-out, seed 1234 | indices `20bf57e6b08ed60d`, tokens `4914adc5531d4aad` |
+| Calibration (128-sample probe) | 128 sequences | `60fc1307e7c7e0ac` |
+
+> **Every perplexity in §3 uses the pilot evaluation window: 64 sequences × 256 tokens = 16,320
+> tokens.** This is *not* the protocol published papers use (full test set at a 2048-token context),
+> so these numbers are **not** directly comparable with the literature. They are internally
+> comparable with each other, which is what the arm comparison needs.
+
+---
+
+## 2. Findings
+
+### F-01 — Smart App Control silently broke the environment 30 minutes after install {#f-01}
+
+*2026-07-28 · environment*
+
+Windows Smart App Control (`VerifiedAndReputablePolicyState = 1`) enforces user-mode code integrity
+and blocks unsigned native extensions. The full test suite passed **502 tests** immediately after
+install; torch stopped importing roughly thirty minutes later as the policy caught up with the
+newly written binaries.
+
+Blocked, from `Microsoft-Windows-CodeIntegrity/Operational` event 3077: `shm.dll` and
+`torch_cuda.dll` (torch), `ccalendar` / `interval` / `lib` `.pyd` (pandas), `_regex` (a transformers
+dependency).
+
+**Resolved** by disabling SAC and rebooting. Verified: state `0`, enforcement `0`, and torch, pandas,
+regex and datasets all import. Suite runtime fell from ~108 s to ~32 s, because torch was no longer
+retrying blocked loads.
+
+**Carry into the paper:** nothing. **Carry into reproduction instructions:** yes — a green test run is
+not evidence the environment is stable on a SAC-enabled Windows machine. Re-check the policy state
+before trusting a result. Disabling SAC is irreversible without reinstalling Windows.
+
+### F-02 — The quantisation engine is `onednn`, not `x86` {#f-02}
+
+*2026-07-28 · would have failed at conversion, after the compute was spent*
+
+Probed rather than read from documentation:
+
+```
+torch.backends.quantized.supported_engines  ->  ['onednn']
+  engine = 'x86'      -> RuntimeError: quantized engine X86 is not supported
+  engine = 'fbgemm'   -> RuntimeError: quantized engine FBGEMM is not supported
+  engine = 'qnnpack'  -> RuntimeError: quantized engine QNNPACK is not supported
+  engine = 'onednn'   -> ok
+```
+
+The shipped configs said `backend: x86`, the name every PyTorch tutorial uses. INT8 *is* functional
+under `onednn`: `quantize_dynamic` on an `nn.Linear` produces a module whose stored weight dtype is
+genuinely `torch.qint8`.
+
+**Guarded by** a `requires_torch` test asserting the shipped backend against the installed torch, so a
+future upgrade that renames engines fails a test rather than a run.
+
+### F-03 — The solver had to change for the study to be feasible at all {#f-03}
+
+*2026-07-28 · real Pythia layer shapes, full-rank Gram, RTX 4050*
+
+The per-output-channel exact solve (damped ALS) cannot scale: at `in_features = 8192` one row is a
+4096-wide system and there are 8192 rows. Batching does not help — the batched form alone would need
+~1 PB. Replaced with an error-compensated column sweep over a Cholesky factor of `H⁻¹`:
+`O(in³ + out·in²)` against ALS's `O(out·|S|³)`.
+
+| Layer | Shape | Sweep | ALS |
+| --- | --- | --- | --- |
+| 160m `attention.dense` | 768×768 | **0.46 s** | 4.65 s |
+| 160m `mlp.dense_4h_to_h` | 768×3072 | **1.27 s** | 21.08 s |
+| 410m `mlp.dense_4h_to_h` | 1024×4096 | **1.59 s** | not feasible |
+| **1b `mlp.dense_4h_to_h`** | **2048×8192** | **4.12 s** | not feasible |
+
+Peak GPU memory 2.55 GiB, inside the 6.0 GiB budget.
+
+**Honest trade-off, for the Methods section:** ALS reaches a *better* objective where both run —
+16.6% vs 8.9% improvement over naive rounding at 768×768, and 21.9% vs 11.9% at 768×3072 — because it
+solves the survivors exactly rather than greedily. The sweep is used because it is the only one that
+scales, and **one solver must be used for every layer and arm in a results table**. ALS is retained as
+a reference implementation and both are parametrised over the Phase 5 exit tests.
+
+### F-04 — A synthetic layer gave a wrong answer that a real layer corrected {#f-04}
+
+*2026-07-28 · methodological note worth keeping*
+
+The first measurement of whether the joint mask responds to quantisation used a synthetic layer
+(random weights, correlated random activations). It reported **zero** mask divergence at W4. Six real
+Pythia-160M layers report **8.86%**.
+
+Real weights have heavier tails and real activations have outlier channels, both of which let rounding
+reorder the saliency. The synthetic layer was too well-behaved to show the effect.
+
+**Carry forward:** synthetic layers are adequate for *correctness* (exact sparsity, lossless packing,
+objective decreases) and unreliable for *effect sizes*. Every effect size in this file is from real
+layers, and labelled.
+
+### F-05 — The joint mechanism is weak by construction, and it is precision-dependent {#f-05}
+
+*2026-07-28 · six real Pythia-160M layers (0/5/11, attention and MLP), real calibration set, 50% sparsity*
+
+§3.8 defines a method as joint if (a) the mask is scored under quantised weights and (b) the scales
+are re-estimated after the mask moves. Measured:
+
+| Bits | Joint vs sequential mask differs | Channels whose max-abs scale moves on refit |
+| --- | --- | --- |
+| W8 | **0.46%** | 0.2% |
+| W4 | **8.86%** | 0.2% |
+| W3 | 15.42% | 0.2% |
+| W2 | 45.54% | 0.2% |
+
+**Mechanism (a) is live at W4 and effectively inert at W8.** At W8 quantisation error is small enough
+that the saliency ranking survives intact, so a joint arm's mask is nearly identical to the sequential
+arm's and any gain there can only come from reconstruction ordering.
+
+**Mechanism (b) is inert at every width.** A symmetric per-channel scale is `max|W_row| / qmax`, and
+saliency pruning removes the *smallest* entries, so each row's maximum almost always survives.
+
+> **Correction on the record.** This was first stated as *provably* inert. It is not. Because the
+> saliency is activation-*weighted*, a row's largest weight can be pruned when it sits on a low-energy
+> input column, and it does — 1.3% of channels in layer 11's MLP. The claim is empirical, not
+> algebraic.
+
+**Consequences for the paper:** W4 carries the headline comparison. **W8 should be read as a control**,
+where a near-zero joint gain is the expected outcome rather than a failure. Reporting a W8 null as a
+scale-independent finding about pipeline design would be a misreading. And W2 must **not** be adopted
+to chase a larger effect — selecting a precision because it produces a positive result is what §6.3
+forbids.
+
+### F-06 — Two principled fixes for F-05, both measured, both rejected {#f-06}
+
+*2026-07-28 · same six real layers · layer-objective joint gain, positive = joint better than sequential*
+
+| Configuration | W8 | W4 |
+| --- | --- | --- |
+| max-abs scales + activation-weighted magnitude (**default**) | −0.49% | **+1.12%** |
+| + error-minimising clipping scale search | −1.51% | −0.99% |
+| + quantisation-aware keep-benefit scoring | −11.83% | **−16.15%** |
+
+**Error-minimising clipping scale search** does everything it promises in isolation: it cuts *naive*
+quantisation error by **12.8% at W4** (38.5% at W3, 68.1% at W2; optimal clip ratio α = 0.81 at W4,
+1.00 at W8), and it makes scale re-estimation genuinely mask-dependent — **70.0% of channels move
+their grid on refit at W4, against 0.2% for max-abs.** But the layer gets *worse* after
+reconstruction. The two objectives are different: clipping saturates outliers, and a saturated weight
+cannot be repaired by error compensation.
+
+**Keep-benefit scoring** `B_ij = ‖X_j‖²[W_ij² − (W_ij − Q(W_ij))²]` fails for an analytic reason. For
+round-to-nearest symmetric quantisation the score is bounded below by zero — if `|W| < s/2` then
+`Q(W) = 0`, both error terms equal `W²`, and `B = 0` exactly; otherwise `|W − Q(W)| ≤ s/2 ≤ |W|`. And
+above the step size `(W − Q(W))²` is nearly independent of `W`, leaving `B ≈ ‖X_j‖²·W_ij²` minus a
+near-constant — a monotone transform of activation-weighted magnitude. So it largely *reproduces* the
+ranking it was meant to improve, and where it deviates it favours weights that happen to sit near a
+grid point, which says nothing about importance.
+
+Both are retained behind `compression.reconstruction.scale_search` and `.keep_benefit_saliency`,
+defaulting off. **These are reportable ablations**, not dead ends: "the obvious quantisation-aware
+criterion is worse than magnitude, and here is why" belongs in the paper.
+
+**Open direction:** a criterion consistent with error compensation needs the inverse-Hessian term
+rather than a diagonal approximation. A clipping search evaluated against the *post*-reconstruction
+objective would be the principled version of the scale fix, at the cost of one full sweep per
+candidate ratio.
+
+### F-07 — The mask comparison group cost 6.7× perplexity {#f-07}
+
+*2026-07-28 · real Pythia-160M, end to end · **the largest single quality finding so far***
+
+The first compressed run retained only 15% of dense perplexity. Isolating the two techniques found the
+cause in one step:
+
+| Arm | Perplexity | Retention |
+| --- | --- | --- |
+| Dense | 34.77 | 100% |
+| **Quantisation only (W8)** | **34.85** | **99.8%** — essentially lossless |
+| **Pruning only (50%)** | **233.94** | 15% |
+
+Quantisation was never the problem. **All the damage was pruning**, and specifically the comparison
+group.
+
+**Mechanism.** Activation-weighted saliency multiplies every weight in an input column by that
+column's norm. Ranked across the whole tensor, a low-energy column scores low *everywhere* and is
+pruned out **entirely** — deleting an input feature rather than thinning it. Ranking within each
+output channel makes every row keep its own top-k, so no column can be removed wholesale. §3.10
+permits either, so this is a default change inside the frozen protocol, not a protocol change.
+
+| Configuration | Perplexity |
+| --- | --- |
+| Pruning 50%, tensor-wide ranking | 233.94 |
+| Pruning 50%, **per-output ranking** | **124.32** |
+| Joint 50% + W8, tensor-wide | 231.96 |
+| Joint 50% + W8, **per-output** | **122.51** |
+
+Two controls confirm the rest of the stack is sound rather than merely less broken:
+
+- **Reconstruction does real work.** Mask only, no reconstruction: **209.21**. With the sweep:
+  **124.32** — a 41% improvement end to end, not just on the layer objective.
+- **Calibration size is not a factor.** 8× more calibration data (16 → 128 sequences, fingerprint
+  `60fc1307e7c7e0ac`) moved perplexity from 231.96 to **227.08**, under 3%.
+
+### F-08 — Degradation curve on Pythia-160M, and what it means for budget selection {#f-08}
+
+*2026-07-28 · joint arm, per-output masks, W8, pilot evaluation window, one seed*
+
+| Budget | Perplexity | Retention |
+| --- | --- | --- |
+| Dense | 34.77 | 100% |
+| W8 only, no pruning | 34.85 | 99.8% |
+| **30% + W8** | **42.43** | **82%** |
+| 40% + W8 | 60.46 | 58% |
+| 50% + W8 | 122.51 | 28% |
+
+§5.3 requires budgets that are "technically stable, measurably but non-catastrophically degraded". At
+160M that is **30%, not 50%.** The screening grid's S1 (30% + W8) looks right; S2–S4 (50% + W8,
+50% + W4, 70% + W4) look likely to be catastrophic at this scale.
+
+That is itself **scale-relevant** — larger models should tolerate more sparsity — and it is a
+hypothesis for Phase 7 to test, not a conclusion. **One seed, one model, one evaluation window.**
+
+**Unresolved and explicitly not chased down:** retention at 50% is below published one-shot pruning
+results on comparably sized models. Part of the gap is protocol (64 sequences at 256 tokens vs a full
+test set at 2048), part may be Pythia-160M having little redundancy to give. This does **not**
+invalidate the design — the study measures *differences between arms at matched budgets*, not absolute
+quality — but the paper must not present these absolute numbers as comparable to the literature.
+
+### F-09 — Phase 6 verification run {#f-09}
+
+*2026-07-28 · joint arm, 50% + W8, real Pythia-160M, full pipeline config → run record*
+
+| | |
+| --- | --- |
+| Target modules | 48 |
+| Targeted parameters | **84,934,656** (the §2.6 scale x-axis; total model 162.3M) |
+| Measured sparsity | **0.5000019779911747** against a 0.5 target |
+| Effective bits per weight | **8.03125** |
+| Storage efficiency | **0.89** |
+| Reconstruction vs naive rounding | mean **+40.94%**, min +27.32%, max +65.30% across 48 layers |
+| Total local steps | 192 |
+| Compression wall-clock | 116.3 s |
+
+This is the evidence that the pipeline is sound independently of the quality question in F-08: the
+budget is exactly hit, the precision is real, and every layer's objective improves.
+
+---
+
+## 3. All end-to-end perplexities in one table
+
+Pythia-160M at `50f5173d`, `Salesforce/wikitext` validation, **64 sequences × 256 tokens (16,320
+tokens)**, seed 1234, calibration `20bf57e6b08ed60d`, CPU evaluation, one seed each.
+
+| # | Arm | Sparsity | Bits | Comparison group | Reconstruction | Perplexity | Retention |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | dense | — | 32 | — | — | **34.77** | 100% |
+| 2 | quantisation only | 0% | 8 | — | sweep | **34.85** | 99.8% |
+| 3 | pruning only | 50% | 32 | tensor | sweep | **233.94** | 15% |
+| 4 | pruning only | 50% | 32 | **output** | sweep | **124.32** | 28% |
+| 5 | pruning only | 50% | 32 | **output** | **none** | **209.21** | 17% |
+| 6 | joint | 50% | 8 | tensor | sweep | **231.96** | 15% |
+| 7 | joint | 50% | 8 | tensor | sweep, 128-sample calibration | **227.08** | 15% |
+| 8 | joint | 50% | 8 | **output** | sweep | **122.51** | 28% |
+| 9 | joint | 40% | 8 | **output** | sweep | **60.46** | 58% |
+| 10 | joint | 30% | 8 | **output** | sweep | **42.43** | 82% |
+
+Rows 3, 6 and 7 are **superseded** by 4 and 8 — they used the tensor-wide comparison group, which
+F-07 shows was costing 6.7×. Retained because they are the evidence for F-07.
+
+Rows 2 and 5 are **diagnostic controls**, not experimental arms: row 2 isolates precision damage, row
+5 isolates the mask from reconstruction.
+
+---
+
+## 4. Bugs found that would have invalidated results
+
+Each of these produced plausible-looking output rather than an error, which is why they are worth
+recording.
+
+| # | Bug | What it would have done |
+| --- | --- | --- |
+| B-01 | `method_definition.md` specified full-model QAT while the plan specifies layerwise PTQ | The normative document described a method nobody was building; decision D3 was a direct casualty |
+| B-02 | D3 recommended ranking masks on FP32 shadow weights | Would have failed §3.8's definition of joint — the joint arm would not have been joint |
+| B-03 | `backend: x86` in shipped configs | Conversion fails *after* the compression compute is spent ([F-02](#f-02)) |
+| B-04 | `dataset: wikitext` | `datasets` 5.x rejects the bare alias with an opaque `HfUriError` about an internal `hf://` path; fails after the model is resident |
+| B-05 | `storage_efficiency` assumed every parameter reached the target bit width | Read 0.41 with a "2.4× larger than its budget allows" warning on an artefact that was exactly as small as the method can make it. Embeddings are excluded by design (§2.6) and are nearly half of a 160M model |
+| B-06 | `.gitignore` named only specific subdirectories | Run output at `outputs/<experiment_id>/` was untracked **and unignored** — one `git add -A` from being committed, against an explicit hard rule |
+| B-07 | `plan_from_config` read `quantisation.bits` directly | The **pruning-only arm** was handed a bit width and `convert` packed it — silently quantising the one FP32 arm, which is the arm that answers RQ4 |
+| B-08 | `tiny_causal_lm` is session-scoped and compression is destructive | Driver tests leaked compressed weights into every later test in the suite, including other files |
+| B-09 | Tensor-wide mask comparison group | 6.7× perplexity ([F-07](#f-07)) |
+| B-10 | Packed metadata returned from `get_extra_state` as a dict | `save_pretrained` walks the state dict expecting tensors; the first full run crashed at save |
+
+Two of these were **masked by tests that should have caught them**: B-07 (the test disabled
+quantisation in its fixture) and B-09 (the synthetic layer was too well-behaved). Both crutches have
+been removed.
+
+---
+
+## 5. Decisions taken, with the evidence
+
+Full reasoning in [protocol_freeze.md](protocol_freeze.md). Summarised here with what settled each.
+
+| # | Decision | Settled as | Settled by |
+| --- | --- | --- | --- |
+| D1 | CPU quantisation backend | PyTorch native INT8, engine `onednn`. W4 for quality and size only, never latency. RQ4 answered from the pruning-only arm, whose weights stay FP32 | §3.12 + §10.1 already separate size from latency; probe in [F-02](#f-02) |
+| D2 | Reconstruction solver | Error-compensated column sweep; damped ALS retained as reference | Feasibility measurement in [F-03](#f-03) |
+| D3 | Mask scoring | Activation-weighted magnitude on **quantised** weights in the joint arm | §3.7 and §3.8 require it; overrode the previous recommendation |
+| — | Mask comparison group | **Per-output** | Measurement in [F-07](#f-07) |
+| — | Scale rule | **max-abs**, clipping search rejected | Measurement in [F-06](#f-06) |
+| — | Pythia variant | standard, never deduped | §2.7 |
+| — | Downstream evaluator | `lm-evaluation-harness`, pinned | §4.3 requires HellaSwag / PIQA / ARC-Easy; reimplementing risks silent scoring differences |
+| — | Practical-importance rule | ≥ 1.0 pp retention, consistent in sign across all three confirmatory seeds, exceeding the seed spread | §6.3 requires it predefined; set before any compressed result existed |
+
+---
+
+## 6. What the paper may and may not claim from this log
+
+**May claim, with the conditions attached:**
+
+- The pipeline hits its budgets exactly and the precision is real, verified on a converted, reloaded
+  artefact ([F-09](#f-09)).
+- Reconstruction improves the layer objective on every layer measured, and improves end-to-end
+  perplexity by 41% over mask-only ([F-07](#f-07)).
+- Weight-only INT8 quantisation is essentially free at this scale (99.8% retention).
+- The comparison group is a first-order design choice for activation-weighted pruning, worth 6.7×
+  perplexity at 50% sparsity on a 160M model.
+- Two quantisation-aware refinements — clipping scale search and keep-benefit scoring — measurably
+  *hurt* under error-compensating reconstruction, with a mechanism for why.
+
+**May not claim:**
+
+- Anything about absolute quality relative to published results. The evaluation window is 64
+  sequences at 256 tokens, not a full test set at 2048 ([§1](#1-environment-of-record)).
+- Anything about scale. Every number here is Pythia-160M. One model is not a trend.
+- Anything with uncertainty. **Every end-to-end number in §3 is a single seed.** §5.5 requires three
+  confirmatory seeds for the central comparison, and none of these are confirmatory runs.
+- That joint beats sequential, or does not. No matched joint-vs-sequential comparison at a frozen
+  budget has been run yet — that is Phase 7 onward. The +1.12% in [F-06](#f-06) is a *layer*
+  objective on six layers, not a model-level result.
+- Any latency claim. No benchmark in this log was collected under the §4.7 protocol (20–30
+  repetitions, prefill/decode split, model-order rotation).
+
+---
+
+## 7. Reproduction
+
+```bash
+# Environment (Omen only; see §1 for the pinned versions)
+.venv\Scripts\python.exe -m pytest -q          # 740 passing, offline, ~37 s
+.venv\Scripts\ruff.exe check . && .venv\Scripts\ruff.exe format --check .
+
+# Data of record
+python scripts/prepare_data.py --config configs/experiments/pilot.yaml
+
+# The rows of §3, by number
+python scripts/run_dense_baseline.py --config configs/experiments/pilot.yaml            # 1
+python scripts/run_quantisation.py  --config configs/experiments/pilot.yaml             # 2
+python scripts/run_pruning.py       --config configs/experiments/pilot.yaml             # 4
+python scripts/run_joint.py         --config configs/experiments/pilot.yaml             # 8
+
+# Controls and variants used above
+--override compression.reconstruction.comparison_group=tensor        # rows 3, 6
+--override compression.reconstruction.solver=als \
+--override compression.reconstruction.local_steps=0                  # row 5, mask only
+--override data.calibration_samples=128                              # row 7
+--override compression.pruning.sparsity=0.3                          # row 10
+
+# Rejected ablations of F-06
+--override compression.reconstruction.scale_search=true
+--override compression.reconstruction.keep_benefit_saliency=true
+```
+
+Run IDs currently collide across arms — `experiment.id` is `pilot` for every arm, so a compressed run
+overwrites the dense record it needs for retention. Pass `--override experiment.id=<name>` until §5.6's
+convention (`<family>_<size>_<method>_<sparsity>_<bits>_<seed>`) is implemented.
+
+---
+
+## 8. Related
+
+- [research_plan.pdf](research_plan.pdf) — the authoritative source
+- [STATUS.md](STATUS.md) — where the work stands now
+- [protocol_freeze.md](protocol_freeze.md) — the frozen decisions and the environment record
+- [validity_threats.md](validity_threats.md) — what could still make the results wrong
+- [method_definition.md](method_definition.md) — what the arms are
+- [implementation_plan.md](implementation_plan.md) — build phases and exit tests

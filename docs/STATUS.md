@@ -8,8 +8,10 @@ all five arms run end to end on a real model
 >
 > **This file = where we are now.** For the durable roadmap (all ten phases, exit tests, the
 > testing plan) see [implementation_plan.md](implementation_plan.md). For the frozen decisions and
-> the environment record, [protocol_freeze.md](protocol_freeze.md). For the authoritative source,
-> [research_plan.pdf](research_plan.pdf).
+> the environment record, [protocol_freeze.md](protocol_freeze.md). For **every measurement this
+> project has produced, with the conditions that produced it**, see
+> [findings_log.md](findings_log.md) — that is what the paper gets written from. For the
+> authoritative source, [research_plan.pdf](research_plan.pdf).
 
 ---
 

@@ -18,9 +18,12 @@ The governing documents, in order of authority:
    claims. Read it when a detail is not in the markdown docs, and prefer it when they disagree.
 2. `docs/method_definition.md` — exactly what the two arms are. The engineering spec.
 3. `docs/implementation_plan.md` — the ten build phases with exit tests, and the testing plan.
-4. `docs/experiment_protocol.md` — the run tables and checklists.
-5. `docs/benchmarking_protocol.md` — CPU measurement rules.
-6. `docs/validity_threats.md` — what could make the results wrong.
+4. `docs/findings_log.md` — **every measurement taken, with its conditions**. Append-only; the
+   paper is written from it. Add to it whenever a number is produced, and never silently delete a
+   superseded one.
+5. `docs/experiment_protocol.md` — the run tables and checklists.
+6. `docs/benchmarking_protocol.md` — CPU measurement rules.
+7. `docs/validity_threats.md` — what could make the results wrong.
 
 If code and docs disagree, that is a bug in one of them. Say so rather than picking silently.
 
@@ -112,3 +115,9 @@ These are not style preferences. Each one, if broken, silently invalidates resul
 
 At the end of a session that changed anything meaningful, **update `docs/STATUS.md`** — current
 phase, what moved, what is next, any new open decision — and commit. That file is the handoff.
+
+If the session **produced a number** — a perplexity, a timing, an effect size, a rejected
+ablation — append it to **`docs/findings_log.md`** with the conditions that produced it: model
+revision, budget, calibration fingerprint, evaluation window, machine. A number without its
+conditions cannot go in the paper, and a number that only exists in a commit message will be
+re-derived later under different conditions.

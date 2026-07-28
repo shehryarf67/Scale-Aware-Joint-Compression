@@ -25,6 +25,7 @@ REQUIRED_DOCS = (
     "method_definition.md",
     "implementation_plan.md",
     "protocol_freeze.md",
+    "findings_log.md",
     "methodology.md",
     "experiment_protocol.md",
     "benchmarking_protocol.md",
@@ -167,6 +168,43 @@ class TestDocumentation:
             "Seeds",
         ):
             assert item in text, f"protocol_freeze.md does not freeze {item!r}"
+
+    def test_findings_log_records_the_conditions_every_number_came_from(self, project_root: Path):
+        """A perplexity without its evaluation window is not a result.
+
+        The log is what the paper will be written from, so it has to carry provenance rather than
+        bare numbers -- the machine, the pinned versions, the model revision, the calibration
+        fingerprint, and the evaluation window.
+        """
+        text = (project_root / "docs" / "findings_log.md").read_text(encoding="utf-8")
+        for item in (
+            "i7-13620H",  # the machine, per §4.7
+            "2.13.0+cu126",  # the pinned runtime, per §2.7
+            "50f5173d",  # the pythia-160m revision, per §2.7
+            "20bf57e6b08ed60d",  # the calibration set, per §3.11
+            "64 sequences",  # the evaluation window
+        ):
+            assert item in text, f"findings_log.md does not record {item!r}"
+
+    def test_findings_log_separates_permissible_from_impermissible_claims(self, project_root: Path):
+        """§6.7 and §6.8 govern what the paper may say; the log must not invite overclaiming.
+
+        Single-seed, single-model, single-window numbers are easy to quote as though they were
+        results. The log states explicitly that they are not.
+        """
+        text = (project_root / "docs" / "findings_log.md").read_text(encoding="utf-8")
+        assert "May not claim" in text
+        assert "single seed" in text.lower()
+
+    def test_findings_log_keeps_superseded_measurements(self, project_root: Path):
+        """A deleted measurement is one that gets re-argued later.
+
+        The tensor-wide comparison-group numbers are wrong as *results* but are the evidence for why
+        the default changed, so they stay on the record marked superseded.
+        """
+        text = (project_root / "docs" / "findings_log.md").read_text(encoding="utf-8")
+        assert "superseded" in text.lower()
+        assert "233.94" in text, "the pre-fix pruning perplexity is the evidence for F-07"
 
     def test_protocol_freeze_records_the_hardware_the_numbers_come_from(self, project_root: Path):
         """§10.2 requires the machine recorded; §4.7 forbids mixing machines in one table."""
