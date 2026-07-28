@@ -10,6 +10,7 @@ Nothing here downloads a model, imports torch, or needs CUDA.
 from __future__ import annotations
 
 import re
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -392,17 +393,47 @@ class TestFrozenProtocolMatchesTheConfigs:
 
 
 class TestNoRunArtefactsCommitted:
-    """`outputs/` and `results/` hold nothing but .gitkeep in a clean checkout."""
+    """Git tracks nothing but `.gitkeep` under `outputs/` and `results/`.
 
-    @pytest.mark.parametrize("directory", ["outputs", "results"])
-    def test_directory_contains_only_gitkeep(self, project_root: Path, directory: str):
-        root = project_root / directory
-        assert root.is_dir()
+    Checked against the index rather than the working tree. On the Omen -- the only machine that
+    runs code -- these directories are *supposed* to be full of run artefacts, so asserting the
+    directory is empty would fail for exactly the machine the rule exists to protect. The invariant
+    is that nothing gets committed, not that nothing exists.
+    """
+
+    @pytest.mark.parametrize("directory", ["outputs", "results", "data"])
+    def test_git_tracks_only_gitkeep(self, project_root: Path, directory: str):
+        tracked = subprocess.run(
+            ["git", "ls-files", directory],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if tracked.returncode != 0:
+            pytest.skip("not a git checkout")
+
         unexpected = [
-            str(path.relative_to(project_root))
-            for path in root.rglob("*")
-            if path.is_file() and path.name != ".gitkeep"
+            line
+            for line in tracked.stdout.splitlines()
+            if line.strip() and not line.endswith(".gitkeep")
         ]
         assert not unexpected, (
-            f"{directory}/ contains run artefacts, which should never be committed: {unexpected}"
+            f"git tracks run artefacts under {directory}/, which must never be committed: "
+            f"{unexpected}"
         )
+
+    @pytest.mark.parametrize("directory", ["outputs", "results", "data"])
+    def test_directory_is_ignored_so_a_stray_artefact_cannot_be_added(
+        self, project_root: Path, directory: str
+    ):
+        """The rule has to be enforced by .gitignore, not by remembering to check."""
+        probe = f"{directory}/__ignore_probe__.json"
+        result = subprocess.run(
+            ["git", "check-ignore", probe],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, f"{probe} is not git-ignored"

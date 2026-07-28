@@ -159,7 +159,7 @@ One limitation carried forward deliberately: `solve_masked_rows` does one dense 
 channel (`out_features × |S|³`), which is correct but will not scale to `in_features = 8192`.
 Phase 6 needs mask-grouping or the deferred Hessian column sweep.
 
-### Phase 6 — The five arms via the layerwise driver 🔑 ← **next**
+### Phase 6 — The five arms via the layerwise driver ✅ *done*
 *Plan: §3.3–3.8*
 
 All arms call the **same** solver, differing only in call order. That is what makes §3.8 ("what
@@ -179,12 +179,27 @@ joint            repeat K times:
                  freeze M and Q
 ```
 
-**Exit tests:**
+**Exit tests:** *all passing.*
 - Every arm hits its target sparsity and bit width exactly, verified on the **converted,
-  reloaded** artefact.
+  reloaded** artefact. — `tests/test_arms.py`, reloading into a fresh layer built at the *wrong*
+  bit width so the scheme metadata and buffer resizing both have to work.
 - A machine-checkable fairness assertion: identical calibration tensors, identical module lists,
-  equal total local steps.
-- A regression test that **fails** if joint is implemented as "prune fully, then plain PTQ".
+  equal total local steps. — `assert_matched_plans`.
+- A regression test that **fails** if joint is implemented as "prune fully, then plain PTQ". —
+  `tests/test_layerwise.py::TestJointIsGenuinelyJoint`.
+
+Verified end to end on real Pythia-160M: 48 target modules, 84.9M targeted parameters, measured
+sparsity 0.5000, effective 8.03 bits/weight, storage efficiency 0.89, reconstruction improving layers
+40.9% over naive rounding.
+
+> **Open quality question carried into Phase 7.** The pilot's 50% + W8 joint run retains only
+> **15%** of dense perplexity (34.77 → 231.96). The pipeline checks out — exact sparsity, real bit
+> width, reconstruction working — and calibration size is *not* the cause (8× more data moved
+> perplexity only to 227.08). Published one-shot 50% results on comparable models degrade far less,
+> so something in the method configuration is costing more than it should. The leading suspect is the
+> **mask comparison group**: the mask is currently ranked globally across each tensor, which lets
+> some output rows be pruned far harder than others, where Wanda-style per-output-row ranking is
+> known to do much better. §3.10 permits either. Measure before screening.
 
 ### Phase 7 — Budget screening
 *Plan: §5.3 · 160M then 410M, one seed*

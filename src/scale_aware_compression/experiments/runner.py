@@ -540,6 +540,11 @@ class ExperimentRunner:
             compressor = get_compressor(config)
             model = loaded.model
             if compressor is not None:
+                # Layerwise reconstruction needs calibration activations. They are drawn here, once,
+                # from `data.calibration_seed` rather than the run seed, and handed to the arm --
+                # so varying the run seed for error bars does not also change the calibration set,
+                # and every arm at this budget sees byte-identical data (§3.11).
+                self._attach_calibration(compressor, loaded)
                 with log_stage(LOGGER, f"compress ({compressor.name})"):
                     compression_result = compressor.run(model, loaded.tokenizer)
                     model = compression_result.model
@@ -592,6 +597,37 @@ class ExperimentRunner:
         LOGGER.info("Completed %s in %.1fs", record.experiment_id, record.duration_seconds)
         return record
 
+    def _attach_calibration(self, compressor: Any, loaded: Any) -> None:
+        """Draw the shared calibration set and hand it to a layerwise arm.
+
+        Only layerwise arms need this, and they are the only ones that expose
+        ``set_calibration``. The older fine-tuning compressors do not, so this is a no-op for them
+        rather than an error -- they raise from their own stages instead, which is where the message
+        naming the module to edit lives.
+
+        Args:
+            compressor: The arm about to run.
+            loaded: The loaded model bundle, for its tokeniser.
+        """
+        from scale_aware_compression.data.calibration import load_calibration_set
+
+        attach = getattr(compressor, "set_calibration", None)
+        if not callable(attach):
+            return
+
+        calibration = load_calibration_set(self.config.data, loaded.tokenizer)
+        batches = [
+            batch["input_ids"] if isinstance(batch, dict) else batch[0]
+            for batch in calibration.loader
+        ]
+        attach(batches, fingerprint=calibration.summary.token_fingerprint)
+        LOGGER.info(
+            "Calibration: %d sequence(s) in %d batch(es), fingerprint %s",
+            len(calibration),
+            len(batches),
+            calibration.summary.token_fingerprint,
+        )
+
     def _measure_artefact(
         self,
         record: ExperimentRecord,
@@ -629,11 +665,24 @@ class ExperimentRunner:
             )
             return
 
-        nonzero = max(record.parameter_count - _measured_zeros(model), 0) or None
+        # Split the parameter count into what this method compresses and what it deliberately does
+        # not. Treating the whole model as compressible makes the theoretical budget unachievable
+        # and every compressed artefact look inefficient against it.
+        untargeted: int | None = None
+        layerwise = getattr(compressor, "report", None)
+        if layerwise is not None and layerwise.targeted_parameters:
+            targeted = layerwise.targeted_parameters
+            targeted_nonzero = round(targeted * (1.0 - layerwise.realised_sparsity))
+            untargeted = max(record.parameter_count - targeted, 0)
+            nonzero = targeted_nonzero or None
+        else:
+            nonzero = max(record.parameter_count - _measured_zeros(model), 0) or None
+
         report = measure_checkpoint(
             target,
             nonzero_parameters=nonzero,
             bits=self.config.compression.effective_bits,
+            untargeted_parameters=untargeted,
         )
         record.checkpoint = report.to_dict()
         record.checkpoint_path = target

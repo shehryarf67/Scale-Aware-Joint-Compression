@@ -15,10 +15,16 @@ from scale_aware_compression.compression import (
     COMPRESSOR_REGISTRY,
     CompressionError,
     Compressor,
+    JointArm,
     JointCompressor,
+    LayerwiseArm,
     Pruner,
+    PruningArm,
+    QuantisationArm,
     Quantiser,
+    SequentialArm,
     SequentialCompressor,
+    SequentialQPArm,
     get_compressor,
 )
 from scale_aware_compression.compression.base import CompressionResult, StageRecord
@@ -159,12 +165,30 @@ class TestPipelineDefinitions:
 
 class TestRegistry:
     def test_registry_covers_every_non_dense_method(self):
+        """Every method except DENSE must be runnable, including the Q->P reverse ablation."""
         assert set(COMPRESSOR_REGISTRY) == {
             CompressionMethod.PRUNING,
             CompressionMethod.QUANTISATION,
             CompressionMethod.SEQUENTIAL,
+            CompressionMethod.SEQUENTIAL_QP,
             CompressionMethod.JOINT,
         }
+
+    def test_every_registered_arm_is_a_layerwise_arm(self):
+        """All five arms must share one driver, or §3.8 stops being checkable in code.
+
+        The older per-arm classes were written for the superseded fine-tuning design. They are still
+        importable so nothing breaks, but registering one would make that arm run a different
+        algorithm from its peers.
+        """
+        for method, arm in COMPRESSOR_REGISTRY.items():
+            assert issubclass(arm, LayerwiseArm), f"{method.value} is not a layerwise arm"
+
+    def test_each_arm_declares_a_distinct_call_order(self):
+        """The arm name is the only thing that distinguishes them, so it must be unique."""
+        names = [arm.arm for arm in COMPRESSOR_REGISTRY.values()]
+        assert len(set(names)) == len(names)
+        assert all(names)
 
     def test_dense_has_no_compressor(self, config: ExperimentConfig):
         config.compression.method = CompressionMethod.DENSE
@@ -173,10 +197,11 @@ class TestRegistry:
     @pytest.mark.parametrize(
         ("method", "expected"),
         [
-            (CompressionMethod.PRUNING, Pruner),
-            (CompressionMethod.QUANTISATION, Quantiser),
-            (CompressionMethod.SEQUENTIAL, SequentialCompressor),
-            (CompressionMethod.JOINT, JointCompressor),
+            (CompressionMethod.PRUNING, PruningArm),
+            (CompressionMethod.QUANTISATION, QuantisationArm),
+            (CompressionMethod.SEQUENTIAL, SequentialArm),
+            (CompressionMethod.SEQUENTIAL_QP, SequentialQPArm),
+            (CompressionMethod.JOINT, JointArm),
         ],
     )
     def test_returns_the_right_arm(

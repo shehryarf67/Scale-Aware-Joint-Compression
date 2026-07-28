@@ -81,14 +81,19 @@ def measure_checkpoint(
     *,
     nonzero_parameters: int | None = None,
     bits: int = FP32_BITS,
+    untargeted_parameters: int | None = None,
 ) -> CheckpointSizeReport:
     """Measure a saved checkpoint and compare it against its theoretical size.
 
     Args:
         path: A checkpoint file, or a directory written by ``save_pretrained``.
-        nonzero_parameters: Surviving parameter count. When given, the theoretical size and
-            storage efficiency are computed.
+        nonzero_parameters: Surviving **targeted** parameter count. When given, the theoretical size
+            and storage efficiency are computed.
         bits: Bits per stored weight for the theoretical size.
+        untargeted_parameters: Parameters that stay FP32 *by design* -- embeddings and the LM head,
+            which §2.6 excludes from compression. Counted at full precision in the theoretical size,
+            because a budget that assumed they were compressed would not be achievable by this
+            method and every artefact would look inefficient against it.
 
     Returns:
         The size report.
@@ -116,9 +121,17 @@ def measure_checkpoint(
             target,
         )
 
-    theoretical = (
-        theoretical_size_bytes(nonzero_parameters, bits) if nonzero_parameters is not None else None
-    )
+    theoretical = None
+    if nonzero_parameters is not None:
+        theoretical = theoretical_size_bytes(nonzero_parameters, bits)
+        if untargeted_parameters:
+            # Embeddings and the LM head are excluded from compression by design (§2.6), so they
+            # stay FP32 and the achievable budget has to include them at full precision. Comparing
+            # against an all-weights-at-target-bits figure understates efficiency badly -- at
+            # Pythia-160M the excluded parameters are nearly half the model, which produced a
+            # spurious "2.4x larger than its budget allows" warning on an artefact that was in fact
+            # exactly as small as this method can make it.
+            theoretical += theoretical_size_bytes(untargeted_parameters, FP32_BITS)
     report = CheckpointSizeReport(
         path=target.as_posix(),
         total_bytes=total,

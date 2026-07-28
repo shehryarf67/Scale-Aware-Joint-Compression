@@ -125,6 +125,29 @@ results/summaries/*
 !results/summaries/.gitkeep
 !results/summaries/*.md
 
+# ---------------------------------------------------------------------------
+# Catch-all for the three artefact roots.
+#
+# The rules above only name the subdirectories that existed when they were written. A run writes to
+# `outputs/<experiment_id>/`, which none of them match -- so the first real compressed run left
+# `outputs/pilot/checkpoint/` untracked *and unignored*, one `git add -A` away from being committed.
+# These patterns close that: everything under the three roots is ignored, with directories
+# re-included so git can still descend to the tracked `.gitkeep` files.
+#
+# Enforced by tests in tests/test_repository.py, because the hard rule ("never commit anything under
+# outputs/, results/ or data/") should not depend on anyone remembering it.
+# ---------------------------------------------------------------------------
+outputs/**
+!outputs/**/
+!outputs/**/.gitkeep
+results/**
+!results/**/
+!results/**/.gitkeep
+!results/summaries/*.md
+data/**
+!data/**/
+!data/**/.gitkeep
+
 # Large tabular exports anywhere in the tree
 *.parquet
 *.feather

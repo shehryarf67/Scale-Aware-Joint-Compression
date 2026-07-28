@@ -1,7 +1,7 @@
 # Project status
 
-**Last updated:** 2026-07-28 · first session on the HP Omen · **Phase 0 complete**, environment
-verified and frozen
+**Last updated:** 2026-07-28 · first session on the HP Omen · **Phases 0, 5 and 6 complete**;
+all five arms run end to end on a real model
 
 > Read this first. It is the handoff between sessions and between machines. If it looks stale,
 > check `git log` — the truth is the commit history, this file is a summary of it.
@@ -37,17 +37,17 @@ is not by itself evidence the environment is stable.
 
 ## Where we are
 
-Infrastructure is done, the dense baseline runs end to end, and **the Phase 0 decisions are now
-settled**. No compression algorithm is implemented yet.
+Infrastructure, the Phase 0 decisions, the compression primitives and the layerwise driver are all
+done. **Every arm runs from a config to a run record on real Pythia-160M.**
 
 | | State |
 | --- | --- |
-| Tests | **687 passing** in ~31 s, offline |
+| Tests | **732 passing** in ~36 s, offline |
 | Lint / format | `ruff check .` and `ruff format --check .` both clean |
 | CI | `.github/workflows/ci.yml` — lint, format, tests on push/PR to `main` |
 | Environment | verified end to end: torch 2.13.0+cu126, CUDA available, sm_89 |
-| Runnable today | dense baseline, end to end, producing a full run record |
-| Not yet implemented | pruning, quantisation, sequential, joint |
+| Runnable today | **all five arms** plus dense, config to run record, on a real model |
+| Not yet done | budget screening (Phase 7), downstream tasks (A4), prefill/decode split (A5) |
 
 ### What works
 
@@ -58,7 +58,7 @@ settled**. No compression algorithm is implemented yet.
 - **Evaluation** — perplexity, dense-vs-compressed agreement, generation diagnostics.
 - **CPU benchmark** — pinned threads, warm-up, repeated runs, median/p95/IQR-ready statistics.
 - **Run records** — JSON + CSV, with git commit, hardware, software versions, and `status`.
-- **`ExperimentRunner.run`** — complete for the dense arm.
+- **`ExperimentRunner.run`** — complete for every arm, including calibration injection.
 
 ### Sanity check that the evaluation is correct
 
@@ -190,10 +190,65 @@ Every number above is pinned by tests in `tests/test_layerwise.py`.
 
 ---
 
-## Next: Phase 6 remainder — wire the arms into `ExperimentRunner`
+## ✅ Phase 6 — complete, and verified on a real model
 
-The driver and all five arms are **done and tested**. What remains is the plumbing that lets
-`ExperimentRunner.run` drive them, so a config turns into a run record.
+All five arms run through one shared driver, from a YAML config to a run record. Verified end to end
+on **real Pythia-160M** with the real WikiText calibration set:
+
+| | |
+| --- | --- |
+| Target modules | 48 · **84,934,656** targeted parameters (the §2.6 scale x-axis) |
+| Measured sparsity | **0.5000** against a 0.5 target |
+| Effective bits/weight | **8.03** — real 8-bit plus scale overhead |
+| Storage efficiency | **0.89** |
+| Reconstruction | **+40.9%** mean objective improvement over naive rounding (27%–65%) |
+| Dense perplexity | 34.77 |
+| Joint 50% + W8 perplexity | 231.96 → retention **15.0%** |
+
+Delivered this session:
+
+- `compression/arms.py` — the five arms as thin declarations over the driver, plus
+  `plan_from_config` so every arm derives its budget from one function. `prepare` refuses to run if
+  the arm and the config's method disagree, because the budget comes from the config.
+- `compression/packed.py` — `PackedLinear` holding int2/4/8 codes plus fp32 scales and **no mask
+  buffer** (a byte-per-weight mask at 4 bits would be twice the size of the weights it describes).
+  Scheme metadata is an int64 tensor rather than `get_extra_state`, so a packed model saves through
+  the same `save_pretrained` path as the dense baseline — which is what makes their checkpoint sizes
+  comparable.
+- `SEQUENTIAL_QP` registered; all five methods now runnable. The older fine-tuning compressors stay
+  importable but unregistered, so one cannot be run by accident.
+- `ExperimentRunner` draws the calibration set once and injects it, so every arm at a budget sees
+  byte-identical data.
+
+### 🔴 Open quality question — resolve before Phase 7 screening
+
+**Retention is 15%, and that is much worse than it should be.** The pipeline itself checks out:
+sparsity exact, bit width real, reconstruction improving every layer by 27–65%. Calibration size is
+**not** the cause — 8× more data (16 → 128 sequences) moved perplexity only from 231.96 to 227.08.
+
+Published one-shot 50% pruning results on comparable-scale models degrade far less than this, so
+something in the configuration is costing more than it should. The leading suspect is the **mask
+comparison group**: the mask is ranked *globally across each tensor*, which permits some output rows
+to be pruned far harder than others — possibly near-entirely. Wanda-style **per-output-row** ranking
+is known to do substantially better for exactly this reason, and §3.10 permits either. Measure it on
+160M before freezing any budget.
+
+Two smaller things noticed in the same runs:
+
+- **Run IDs collide across arms.** `experiment.id` is `pilot` for every arm, so a compressed run
+  overwrites the dense record it needs for retention. §5.6's convention
+  (`<family>_<size>_<method>_<sparsity>_<bits>_<seed>`) fixes it; currently on the A-list.
+- **`.gitignore` only covered named subdirectories.** A run writes to `outputs/<experiment_id>/`,
+  which nothing matched — so the first real run left `outputs/pilot/` untracked *and unignored*, one
+  `git add -A` from being committed. Closed with catch-all rules, and now enforced by tests that
+  check the git index rather than the working tree (the old test asserted `outputs/` was empty, which
+  fails on the one machine that is supposed to fill it).
+
+---
+
+## Next: Phase 7 — budget screening
+
+The driver and all five arms are done, tested, and wired into `ExperimentRunner`.
 
 Done this session:
 
