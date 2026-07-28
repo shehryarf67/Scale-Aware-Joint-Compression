@@ -123,6 +123,102 @@ class MaskSet:
         }
 
 
+class MaskError(ValueError):
+    """Raised when a mask cannot be built at the requested sparsity or pattern."""
+
+
+_SEMI_STRUCTURED_GROUPS: dict[PruningGranularity, tuple[int, int]] = {
+    PruningGranularity.SEMI_STRUCTURED_2_4: (4, 2),
+    PruningGranularity.SEMI_STRUCTURED_4_8: (8, 4),
+}
+"""Granularity to ``(group_size, kept_per_group)``. Both patterns are 50% sparse by construction."""
+
+
+def build_mask_from_scores(
+    scores: torch.Tensor,
+    *,
+    sparsity: float,
+    granularity: PruningGranularity = PruningGranularity.UNSTRUCTURED,
+) -> torch.Tensor:
+    """Build a boolean keep-mask for one weight tensor from its saliency scores.
+
+    The realised sparsity is **exact**, not approximate: the number of pruned entries is computed
+    up front and that many are removed. A quantile threshold would miss the target whenever scores
+    tie -- and under activation-weighted saliency a dead input column makes an entire column of
+    scores exactly zero, so ties are common rather than pathological.
+
+    Args:
+        scores: Non-negative saliency, same shape as the weight. Larger means more important.
+        sparsity: Fraction to prune, in ``[0, 1)``.
+        granularity: Sparsity pattern. Unstructured ranks across the whole tensor; the
+            semi-structured patterns rank within fixed groups along the last dimension, which is
+            what admits a sparse kernel if the backend provides one.
+
+    Returns:
+        Boolean tensor, ``True`` meaning keep.
+
+    Raises:
+        MaskError: If sparsity is out of range, the pattern is unsupported, or a
+            semi-structured pattern does not divide the last dimension.
+    """
+    import torch
+
+    if not 0.0 <= sparsity < 1.0:
+        raise MaskError(f"sparsity must be in [0, 1), got {sparsity}")
+    if granularity is PruningGranularity.STRUCTURED_CHANNEL:
+        raise MaskError(
+            "channel-structured pruning is optional future work per plan §3.10: it changes tensor "
+            "shapes and needs a different runtime. Use unstructured or a semi-structured pattern."
+        )
+
+    if granularity in _SEMI_STRUCTURED_GROUPS:
+        group_size, kept = _SEMI_STRUCTURED_GROUPS[granularity]
+        implied = 1.0 - kept / group_size
+        if abs(sparsity - implied) > 1e-9:
+            raise MaskError(
+                f"granularity {granularity.value!r} implies sparsity {implied}, got {sparsity}"
+            )
+        if scores.shape[-1] % group_size != 0:
+            raise MaskError(
+                f"granularity {granularity.value!r} needs the last dimension divisible by "
+                f"{group_size}, got {scores.shape[-1]}"
+            )
+        grouped = scores.reshape(-1, group_size)
+        mask = torch.zeros_like(grouped, dtype=torch.bool)
+        keep_indices = grouped.topk(kept, dim=1).indices
+        mask.scatter_(1, keep_indices, True)
+        return mask.reshape(scores.shape)
+
+    if granularity is not PruningGranularity.UNSTRUCTURED:
+        raise MaskError(f"unsupported granularity {granularity!r}")
+
+    flat = scores.reshape(-1)
+    num_pruned = round(flat.numel() * sparsity)
+    num_kept = flat.numel() - num_pruned
+    mask = torch.zeros_like(flat, dtype=torch.bool)
+    if num_kept:
+        mask[flat.topk(num_kept).indices] = True
+    return mask.reshape(scores.shape)
+
+
+def realised_sparsity(mask: torch.Tensor) -> float:
+    """Fraction of entries a mask prunes.
+
+    Reported next to the target everywhere, per the project rule that measured and requested
+    values always appear together.
+
+    Args:
+        mask: Boolean keep-mask.
+
+    Returns:
+        Pruned fraction in ``[0, 1]``; ``0.0`` for an empty mask.
+    """
+    total = mask.numel()
+    if total == 0:
+        return 0.0
+    return float((~mask).sum()) / total
+
+
 def build_masks(
     weights: dict[str, torch.Tensor],
     *,
@@ -147,19 +243,24 @@ def build_masks(
     Raises:
         NotImplementedError: Always, in the current scaffold.
     """
-    # TODO(masks): implement per-granularity mask construction. Unstructured magnitude pruning is
-    # the initial planned method; the others are variants for the latency question.
-    #   unstructured    : threshold |w| at the sparsity-th quantile, per tensor or globally
-    #   2:4 / 4:8       : reshape the last dim into groups of 4/8 and keep the top-k by
-    #                     magnitude within each group. Semi-structured patterns are the ones with
-    #                     any prospect of kernel support, so they are where a measured latency gain
-    #                     could plausibly come from -- subject to the installed backend actually
-    #                     providing such a kernel, which must be verified rather than assumed
-    #   channel         : rank output channels by L2 norm and drop whole rows
-    # For GPT-NeoX, remember that attention.query_key_value fuses q/k/v: a channel pattern
-    # must be applied consistently across all three slices or the heads break.
+    # TODO(masks): this is the *model-level* driver and belongs to Phase 6, not Phase 5. The
+    # per-tensor work is already done in build_mask_from_scores(); what is missing is the plumbing
+    # around it, and the signature has to change first:
+    #
+    #   * saliency is activation-weighted magnitude (plan §3.3), so this needs the per-layer
+    #     column norms from compression.activations, not just the weights. Ranking on |w| alone is
+    #     the superseded design.
+    #   * the joint arm scores on QUANTISED weights (§3.8, decision D3), so the caller must be
+    #     able to pass in already-fake-quantised tensors. That is the whole difference between the
+    #     arms and it cannot be bolted on afterwards.
+    #   * global_ranking has to concatenate scores across layers before the top-k, which changes
+    #     what a per-layer latency measurement means -- hence it is not the default.
+    #
+    # Implement it as part of the layerwise driver so there is exactly one call path, then have
+    # this delegate per tensor to build_mask_from_scores.
     raise NotImplementedError(
-        "build_masks is not implemented yet; see the TODO in compression/masks.py"
+        "build_masks is not implemented yet; see the TODO in compression/masks.py. The per-tensor "
+        "primitive build_mask_from_scores is implemented and tested."
     )
 
 

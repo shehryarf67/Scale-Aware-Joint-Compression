@@ -42,7 +42,7 @@ settled**. No compression algorithm is implemented yet.
 
 | | State |
 | --- | --- |
-| Tests | **511 passing** in ~32 s, offline |
+| Tests | **604 passing** in ~30 s, offline |
 | Lint / format | `ruff check .` and `ruff format --check .` both clean |
 | CI | `.github/workflows/ci.yml` — lint, format, tests on push/PR to `main` |
 | Environment | verified end to end: torch 2.13.0+cu126, CUDA available, sm_89 |
@@ -97,33 +97,66 @@ Full reasoning for each is in
 
 ---
 
-## Next: Phase 5 — single-layer compression primitives
+## ✅ Phase 5 — single-layer compression primitives: **done and passing**
 
-**Blocked on the environment.** Nothing below can be written *and verified*, and unverified
-numerical code is exactly what this project must not accumulate.
+Every primitive is implemented at the **tensor level** and validated against a synthetic layer, as
+the plan's §10.2 checklist prescribes. 93 new tests.
 
-**Do not start by compressing a model.** Work on one `nn.Linear` with captured activations until
-each piece is provably right. This mirrors the plan's own 48-hour checklist (§10.2).
-
-| Primitive | What it does | Target file |
+| Primitive | Where | Status |
 | --- | --- | --- |
-| Activation capture | hook a layer, accumulate `H = XᵀX` and per-column `‖X_j‖₂` | `compression/activations.py` (new) |
-| Saliency | activation-weighted magnitude, `S_ij = \|W_ij\| · ‖X_j‖₂` | `compression/pruning.py` |
-| Mask | global-unstructured or blockwise at exact target sparsity | `compression/masks.py` |
-| Quantiser | symmetric weight-only, per-channel / groupwise, W8 and W4 | `compression/quantisation.py` |
-| Packing | int4/int8 storage + scales, bit-exact unpack round-trip | `compression/quantisation.py` |
-| Reconstruct | damped ALS on `(H + λI)`, per **D2** | `compression/reconstruct.py` (new) |
+| Activation capture — streamed `H = XᵀX`, `‖X_j‖₂`, relative damping, forward hook | `compression/activations.py` | done |
+| Saliency — `S_ij = \|W_ij\| · ‖X_j‖₂` | `compression/pruning.py` | done |
+| Mask — unstructured + 2:4 / 4:8, **exact** realised sparsity | `compression/masks.py` | done |
+| Quantiser — symmetric, per-tensor / channel / group, W8 + W4 (+ W2) | `compression/quantisation.py` | done |
+| Packing — int2/4/8 storage, bit-exact unpack, effective-bits accounting | `compression/quantisation.py` | done |
+| Reconstruct — damped ALS on `(H + λI)`, per **D2** | `compression/reconstruct.py` | done |
 
-**Exit test:** on a synthetic layer — reconstruction strictly reduces `‖Y − Ŷ‖²_F` versus naive
-rounding; realised sparsity is exact; quantised weights take ≤ 2^b distinct values per group;
-pack → unpack is lossless.
+**Exit criteria, all asserted:**
 
-Also outstanding from Phase 0: config needs a `reconstruction` section (`local_steps`, `damping`,
-`block_size`) with `local_steps` replacing `max_steps` as the fairness unit, and
-`CompressionMethod` needs `SEQUENTIAL_PQ` / `SEQUENTIAL_QP` (A2).
+- reconstruction strictly reduces `‖Y − Ŷ‖²_F` versus naive rounding — both pruning-only and
+  combined with W4
+- realised sparsity is exact, including when scores tie (which activation weighting makes routine,
+  since a dead input column zeroes a whole column of scores)
+- quantised weights take ≤ 2^b distinct values per group, across all three granularities
+- pack → unpack is bit-exact, tested at sizes that are *not* multiples of the lane count, because
+  padding is where that breaks
 
-Then Phase 6 (the five arms through one shared solver), Phase 7 (budget screening), Phase 8
-(sweep). Full detail and exit tests for every phase:
+Two design points worth knowing, both load-bearing:
+
+- **The solve redistributes pruned mass.** The right-hand side is `H w` over the *full* dense row,
+  so survivors absorb what the pruned weights were contributing. That error compensation is most of
+  what reconstruction buys, and there is a test that fails if it is dropped.
+- **The refinement loop only accepts improvements.** Projecting onto a discrete grid is not
+  guaranteed to reduce a quadratic objective, so an unguarded loop can finish worse than it
+  started. Naive rounding is iterate zero and nothing replaces it unless it measurably wins — which
+  is what makes "reconstruction improved the layer" safe to report.
+
+### Known limitation, deliberately left
+
+`solve_masked_rows` does one dense solve per output channel, roughly `out_features × |S|³`. Correct
+and fine for validation and the small end of the sweep, but it **will not scale** to
+`in_features = 8192` as written. Phase 6 needs either mask-grouping (rows sharing a keep-set solved
+together) or the Hessian column sweep D2 defers. Chosen simple-and-obviously-correct first, and
+flagged in the docstring rather than discovered later.
+
+---
+
+## Next: Phase 6 — the five arms through one shared solver
+
+The primitives exist; what is missing is the driver that walks a real model. Needed first, in
+order:
+
+1. **Phase 2 gaps** — `select_compressible_modules`, `get_decoder_blocks`, `get_weight_tensors`,
+   `count_targeted_parameters` (A6). All still placeholders, and every arm needs them.
+2. **A2 config** — a `reconstruction` section (`local_steps`, `damping`, `group_size`,
+   `saliency`), with `local_steps` replacing `max_steps` as the fairness unit.
+3. **`CompressionMethod`** gains `SEQUENTIAL_PQ` / `SEQUENTIAL_QP` (A3).
+4. **`compression/layerwise.py`** — block iteration in depth order, propagating activations through
+   the already-compressed prefix so error accumulation is realistic.
+5. The five arms as call-order variations on that driver, plus the §3.8 regression test that
+   **fails** if joint is implemented as "prune fully, then plain PTQ".
+
+Then Phase 7 (budget screening), Phase 8 (sweep). Full detail and exit tests for every phase:
 [implementation_plan.md](implementation_plan.md#phases).
 
 ---
@@ -215,9 +248,10 @@ Full record in [protocol_freeze.md](protocol_freeze.md#environment). Summary:
 - [x] Power profile → **High performance**; thread count pinned at **4**
 - [x] Pin model revision SHAs in all five model configs
 - [x] Probe the real quantisation backend → **`onednn`**, not `x86`
+- [x] **Phase 5 — single-layer compression primitives**, all exit criteria asserted
 - [ ] `python scripts/download_models.py --models pythia-160m`
 - [ ] `python scripts/prepare_data.py --config configs/experiments/pilot.yaml` — first real exercise
       of the WikiText path
 - [ ] `python scripts/run_dense_baseline.py --config configs/experiments/pilot.yaml` — first real
       record, on a real model
-- [ ] Phase 5 — single-layer compression primitives ← **next**
+- [ ] Phase 6 — the five arms through one shared layerwise driver ← **next**

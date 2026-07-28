@@ -137,7 +137,7 @@ single-shape workload; the prefill/decode split remains.*
 > **This is the first vertical slice.** It exercises config → load → evaluate → benchmark →
 > record in one pass. Every bug found here is found once instead of five times.
 
-### Phase 5 — Single-layer compression primitives 🔑 ← **next**
+### Phase 5 — Single-layer compression primitives ✅ *done*
 *Plan: §3.3, §3.4, §3.7, §10.2 · `compression/{pruning,quantisation,reconstruct}.py`*
 
 Work entirely on **one `nn.Linear` with captured activations**, in a notebook, before touching a
@@ -153,9 +153,13 @@ model. This mirrors the plan's own 48-hour checklist and is where the method is 
 
 **Exit test:** on a synthetic layer — reconstruction strictly reduces `‖Y − Ŷ‖²_F` versus naive
 round-to-nearest; realised sparsity is exact; quantised weights take ≤ 2^b distinct values per
-group; pack → unpack is lossless.
+group; pack → unpack is lossless. *All four asserted in `tests/test_compression_primitives.py`.*
 
-### Phase 6 — The five arms via the layerwise driver
+One limitation carried forward deliberately: `solve_masked_rows` does one dense solve per output
+channel (`out_features × |S|³`), which is correct but will not scale to `in_features = 8192`.
+Phase 6 needs mask-grouping or the deferred Hessian column sweep.
+
+### Phase 6 — The five arms via the layerwise driver 🔑 ← **next**
 *Plan: §3.3–3.8*
 
 All arms call the **same** solver, differing only in call order. That is what makes §3.8 ("what

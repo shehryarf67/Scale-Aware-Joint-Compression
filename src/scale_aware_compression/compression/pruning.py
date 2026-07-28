@@ -20,12 +20,57 @@ from scale_aware_compression.logging_utils import get_logger
 from scale_aware_compression.metrics.compression import measure_sparsity
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    import torch
     from torch import nn
     from transformers import PreTrainedTokenizerBase
 
     from scale_aware_compression.compression.masks import MaskSet
 
 LOGGER = get_logger(__name__)
+
+
+class SaliencyError(ValueError):
+    """Raised when saliency inputs are shaped inconsistently."""
+
+
+def activation_weighted_saliency(
+    weight: torch.Tensor,
+    column_norms: torch.Tensor,
+) -> torch.Tensor:
+    """Score weights by ``S_ij = |W_ij| * ||X_j||_2``, the plan's §3.3 criterion.
+
+    A weight is unimportant only if it is *both* small and multiplies a low-energy input. Plain
+    magnitude ignores the second factor and will happily keep a large weight sitting on an input
+    channel that the calibration data never excites, while pruning a smaller weight that carries
+    real signal.
+
+    Which weights are passed in is what separates the arms, and it is the whole of decision
+    **D3**: the joint arm passes fake-quantised weights so the mask is chosen against the grid it
+    will actually live on (§3.7, §3.8), while sequential P->Q passes dense weights because at that
+    point no quantiser exists yet. The function itself is identical for both -- the arms differ in
+    the pipeline, not the criterion.
+
+    Args:
+        weight: Weight of shape ``(out_features, in_features)``.
+        column_norms: Per-input-column norms of shape ``(in_features,)``, from
+            :meth:`~scale_aware_compression.compression.activations.ActivationStatistics.column_norms`.
+
+    Returns:
+        Non-negative scores with the same shape as ``weight``.
+
+    Raises:
+        SaliencyError: If the weight is not 2-D or the norms do not match ``in_features``.
+    """
+    if weight.ndim != 2:
+        raise SaliencyError(
+            f"expected a 2-D (out_features, in_features) weight, got shape {tuple(weight.shape)}"
+        )
+    if column_norms.ndim != 1 or column_norms.shape[0] != weight.shape[1]:
+        raise SaliencyError(
+            f"column_norms must have shape ({weight.shape[1]},) to match in_features, got "
+            f"{tuple(column_norms.shape)}"
+        )
+    return weight.abs() * column_norms.to(weight.dtype).unsqueeze(0)
 
 
 class Pruner(Compressor):

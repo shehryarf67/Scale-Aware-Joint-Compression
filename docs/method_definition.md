@@ -456,13 +456,14 @@ returning a plausible model — a silent no-op would produce an excellent-lookin
 | Component | Status |
 | --- | --- |
 | Module selection (`select_compressible_modules`) | **placeholder** |
-| Activation capture (`H = XᵀX`, `‖X_j‖₂`) | **not started** |
-| Activation-weighted saliency | **not started** |
-| Mask construction (`build_masks`) | **placeholder** |
+| Activation capture (`H = XᵀX`, `‖X_j‖₂`) | implemented |
+| Activation-weighted saliency | implemented |
+| Mask construction, per tensor (`build_mask_from_scores`) | implemented |
+| Mask construction, model-wide (`build_masks`) | **placeholder** — needs the driver's signature |
 | Mask application / folding | **placeholder** |
-| Weight quantiser (symmetric, per-channel / group, W8 + W4) | **placeholder** |
-| Low-bit packing and unpack round-trip | **not started** |
-| Reconstruction solver (damped ALS) | **not started** |
+| Weight quantiser, per tensor (symmetric, per-channel / group, W8 + W4) | implemented |
+| Low-bit packing and unpack round-trip | implemented |
+| Reconstruction solver (damped ALS) | implemented |
 | Layerwise driver | **not started** |
 | Pruning-only arm (`Pruner`) | **placeholder** (statistics implemented) |
 | Quantisation-only arm (`Quantiser`) | **placeholder** (statistics implemented) |

@@ -14,18 +14,383 @@ Status: placeholder. Stage methods raise :class:`NotImplementedError`;
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from scale_aware_compression.compression.base import Compressor
-from scale_aware_compression.constants import FP32_BITS, CompressionMethod, CompressionStage
+from scale_aware_compression.constants import (
+    BITS_PER_BYTE,
+    FP32_BITS,
+    CompressionMethod,
+    CompressionStage,
+    QuantisationGranularity,
+)
 from scale_aware_compression.logging_utils import get_logger
 from scale_aware_compression.metrics.compression import count_parameters, theoretical_size_bytes
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    import torch
     from torch import nn
     from transformers import PreTrainedTokenizerBase
 
 LOGGER = get_logger(__name__)
+
+PACKABLE_BITS: tuple[int, ...] = (2, 4, 8)
+"""Bit widths this module can pack losslessly.
+
+Only widths that divide a byte are supported. A 3-bit code would straddle byte boundaries, and an
+unpacking bug there is exactly the kind of silent corruption §4.8 asks to be verified rather than
+assumed. W8 and W4 are the two the study screens (§3.9), so nothing needed is missing.
+"""
+
+
+class QuantisationError(ValueError):
+    """Raised when a quantisation request is unsatisfiable or a round-trip is inconsistent."""
+
+
+def _symmetric_qmax(bits: int) -> int:
+    """Return the largest representable code magnitude for a symmetric ``bits``-wide grid.
+
+    Args:
+        bits: Bit width.
+
+    Returns:
+        ``2^(bits-1) - 1``. The grid is ``[-qmax, +qmax]``, which is symmetric about zero and
+        therefore holds ``2*qmax + 1 = 2^bits - 1`` distinct values -- one fewer than the full
+        two's-complement range, in exchange for zero being an exact grid point.
+
+    Raises:
+        QuantisationError: If ``bits`` is below 2.
+    """
+    if bits < 2:
+        raise QuantisationError(f"bits must be >= 2, got {bits}")
+    return (1 << (bits - 1)) - 1
+
+
+def _grouped_view(
+    weight: torch.Tensor,
+    granularity: QuantisationGranularity,
+    group_size: int,
+) -> tuple[torch.Tensor, tuple[int, ...]]:
+    """Reshape a weight into ``(num_groups, group_elements)`` so one scale covers each row.
+
+    Collapsing all three granularities onto one shape means the scale computation, the rounding,
+    and the round-trip check are written once rather than three times.
+
+    Args:
+        weight: Weight tensor of shape ``(out_features, in_features)``.
+        granularity: Scope a single scale covers.
+        group_size: Elements per group, used only for ``PER_GROUP``.
+
+    Returns:
+        The reshaped view, and the shape the resulting per-group scales should take.
+
+    Raises:
+        QuantisationError: If the weight is not 2-D, or the group size does not divide
+            ``in_features``.
+    """
+    if weight.ndim != 2:
+        raise QuantisationError(
+            f"expected a 2-D (out_features, in_features) weight, got shape {tuple(weight.shape)}"
+        )
+    out_features, in_features = weight.shape
+
+    if granularity is QuantisationGranularity.PER_TENSOR:
+        return weight.reshape(1, -1), (1,)
+    if granularity is QuantisationGranularity.PER_CHANNEL:
+        return weight.reshape(out_features, in_features), (out_features, 1)
+    if granularity is QuantisationGranularity.PER_GROUP:
+        if group_size <= 0:
+            raise QuantisationError(f"group_size must be > 0, got {group_size}")
+        if in_features % group_size != 0:
+            raise QuantisationError(
+                f"group_size {group_size} does not divide in_features {in_features}; a ragged "
+                "final group would get a scale fitted to fewer weights than every other group"
+            )
+        num_groups = in_features // group_size
+        return weight.reshape(out_features * num_groups, group_size), (
+            out_features * num_groups,
+            1,
+        )
+    raise QuantisationError(f"unsupported granularity {granularity!r}")
+
+
+@dataclass(slots=True)
+class QuantisedWeight:
+    """A weight tensor held as integer codes plus the scales needed to reconstruct it.
+
+    This is the *real* quantised representation, as distinct from fake quantisation: the codes are
+    integers and the storage cost is genuinely ``bits`` per weight plus scale overhead. Only this
+    representation may back a size or latency measurement.
+
+    Attributes:
+        codes: Integer codes in ``[-qmax, +qmax]``, stored as ``int8`` and shaped like the weight.
+        scales: Positive per-group scales, broadcastable against the grouped weight view.
+        bits: Bit width the codes occupy once packed.
+        granularity: Scope each scale covers.
+        group_size: Elements per group; meaningful only for ``PER_GROUP``.
+    """
+
+    codes: torch.Tensor
+    scales: torch.Tensor
+    bits: int
+    granularity: QuantisationGranularity
+    group_size: int
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """Shape of the weight this represents."""
+        return tuple(self.codes.shape)
+
+    def dequantise(self) -> torch.Tensor:
+        """Reconstruct the floating-point weight from codes and scales.
+
+        Returns:
+            A float tensor of the original shape. Equal to what fake quantisation produces, which
+            is what makes the fake and real paths checkable against each other.
+        """
+        grouped, _ = _grouped_view(
+            self.codes.to(self.scales.dtype), self.granularity, self.group_size
+        )
+        return (grouped * self.scales).reshape(self.codes.shape)
+
+    def distinct_values_per_group(self) -> int:
+        """Return the largest number of distinct codes any single group uses.
+
+        §4.8 requires confirming the bit width is real rather than silently dequantised. A group
+        holding more than ``2^bits`` distinct values proves it is not.
+
+        Returns:
+            Maximum distinct code count across groups.
+        """
+        grouped, _ = _grouped_view(self.codes, self.granularity, self.group_size)
+        return max(int(row.unique().numel()) for row in grouped)
+
+    def report(self) -> dict[str, Any]:
+        """Summarise the representation for the run record."""
+        return {
+            "bits": self.bits,
+            "granularity": self.granularity.value,
+            "group_size": self.group_size,
+            "shape": list(self.shape),
+            "num_scales": int(self.scales.numel()),
+            "max_distinct_values_per_group": self.distinct_values_per_group(),
+            "effective_bits_per_weight": effective_bits_per_weight(self),
+        }
+
+
+def compute_symmetric_scales(
+    weight: torch.Tensor,
+    *,
+    bits: int,
+    granularity: QuantisationGranularity = QuantisationGranularity.PER_CHANNEL,
+    group_size: int = 128,
+) -> torch.Tensor:
+    """Fit symmetric quantisation scales to a weight tensor.
+
+    Args:
+        weight: Weight of shape ``(out_features, in_features)``.
+        bits: Target bit width.
+        granularity: Scope a single scale covers.
+        group_size: Elements per group, for ``PER_GROUP``.
+
+    Returns:
+        Positive scales, shaped to broadcast against the grouped view of the weight.
+
+    Raises:
+        QuantisationError: If the shape or granularity is unsupported.
+    """
+    import torch
+
+    qmax = _symmetric_qmax(bits)
+    grouped, scale_shape = _grouped_view(weight, granularity, group_size)
+    amax = grouped.abs().amax(dim=1)
+    # An all-zero group has no scale; leave it at 1.0 so it round-trips to zero rather than NaN.
+    scales = torch.where(amax > 0, amax / qmax, torch.ones_like(amax))
+    return scales.reshape(scale_shape)
+
+
+def quantise_weight(
+    weight: torch.Tensor,
+    *,
+    bits: int,
+    granularity: QuantisationGranularity = QuantisationGranularity.PER_CHANNEL,
+    group_size: int = 128,
+    scales: torch.Tensor | None = None,
+) -> QuantisedWeight:
+    """Quantise a weight onto a symmetric integer grid.
+
+    Args:
+        weight: Weight of shape ``(out_features, in_features)``.
+        bits: Target bit width.
+        granularity: Scope a single scale covers.
+        group_size: Elements per group, for ``PER_GROUP``.
+        scales: Pre-fitted scales. Supplied by the joint arm, which re-estimates scales on the
+            surviving weights after each mask change (§3.8) rather than refitting to the full
+            tensor, whose pruned entries would drag the scale down.
+
+    Returns:
+        The integer representation.
+
+    Raises:
+        QuantisationError: If the shape, bit width, or granularity is unsupported.
+    """
+    import torch
+
+    qmax = _symmetric_qmax(bits)
+    if scales is None:
+        scales = compute_symmetric_scales(
+            weight, bits=bits, granularity=granularity, group_size=group_size
+        )
+    grouped, _ = _grouped_view(weight, granularity, group_size)
+    codes = torch.round(grouped / scales).clamp_(-qmax, qmax)
+    return QuantisedWeight(
+        codes=codes.reshape(weight.shape).to(torch.int8),
+        scales=scales,
+        bits=bits,
+        granularity=granularity,
+        group_size=group_size,
+    )
+
+
+def fake_quantise(
+    weight: torch.Tensor,
+    *,
+    bits: int,
+    granularity: QuantisationGranularity = QuantisationGranularity.PER_CHANNEL,
+    group_size: int = 128,
+    scales: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Snap a weight onto the quantisation grid while keeping float storage.
+
+    This is what the layerwise solver and the joint saliency work with: the *values* are
+    quantised, so the reconstruction objective and the mask ranking both see the grid, but the
+    tensor stays float and differentiable-shaped. It is **not** smaller or faster, and must never
+    back a size or latency measurement -- that is what :meth:`QuantisedWeight.dequantise` after a
+    real conversion is for.
+
+    Args:
+        weight: Weight of shape ``(out_features, in_features)``.
+        bits: Target bit width.
+        granularity: Scope a single scale covers.
+        group_size: Elements per group, for ``PER_GROUP``.
+        scales: Pre-fitted scales; fitted from ``weight`` when omitted.
+
+    Returns:
+        A float tensor of the same shape and dtype, holding only grid values.
+    """
+    quantised = quantise_weight(
+        weight, bits=bits, granularity=granularity, group_size=group_size, scales=scales
+    )
+    return quantised.dequantise().to(weight.dtype)
+
+
+def pack_low_bit(codes: torch.Tensor, *, bits: int) -> torch.Tensor:
+    """Pack signed integer codes into a dense ``uint8`` buffer.
+
+    Codes are offset by ``qmax`` into an unsigned range before packing, so a 4-bit code occupies
+    exactly one nibble and no sign extension is needed on the way out.
+
+    Args:
+        codes: Integer codes in ``[-qmax, +qmax]``, any shape.
+        bits: Bit width; must be in :data:`PACKABLE_BITS`.
+
+    Returns:
+        1-D ``uint8`` tensor of ``ceil(numel * bits / 8)`` bytes.
+
+    Raises:
+        QuantisationError: If ``bits`` is not packable, or a code is out of range.
+    """
+    import torch
+
+    if bits not in PACKABLE_BITS:
+        raise QuantisationError(
+            f"cannot pack {bits}-bit codes; supported widths are {list(PACKABLE_BITS)}"
+        )
+    qmax = _symmetric_qmax(bits)
+    flat = codes.reshape(-1).to(torch.int64)
+    if flat.numel() and (int(flat.min()) < -qmax or int(flat.max()) > qmax):
+        raise QuantisationError(
+            f"codes outside the representable range [-{qmax}, {qmax}] for {bits}-bit packing"
+        )
+
+    per_byte = BITS_PER_BYTE // bits
+    shifted = (flat + qmax).to(torch.uint8)
+    padding = (-shifted.numel()) % per_byte
+    if padding:
+        shifted = torch.cat(
+            [shifted, torch.zeros(padding, dtype=torch.uint8, device=shifted.device)]
+        )
+
+    if bits == BITS_PER_BYTE:
+        return shifted
+    lanes = shifted.reshape(-1, per_byte)
+    packed = torch.zeros(lanes.shape[0], dtype=torch.uint8, device=shifted.device)
+    for lane in range(per_byte):
+        packed |= lanes[:, lane] << (lane * bits)
+    return packed
+
+
+def unpack_low_bit(packed: torch.Tensor, *, bits: int, numel: int) -> torch.Tensor:
+    """Reverse :func:`pack_low_bit`.
+
+    Args:
+        packed: The ``uint8`` buffer produced by :func:`pack_low_bit`.
+        bits: Bit width used to pack.
+        numel: Number of codes to recover, needed because packing may have padded the last byte.
+
+    Returns:
+        1-D ``int8`` tensor of ``numel`` signed codes.
+
+    Raises:
+        QuantisationError: If ``bits`` is not packable, or the buffer is too short for ``numel``.
+    """
+    import torch
+
+    if bits not in PACKABLE_BITS:
+        raise QuantisationError(
+            f"cannot unpack {bits}-bit codes; supported widths are {list(PACKABLE_BITS)}"
+        )
+    qmax = _symmetric_qmax(bits)
+    per_byte = BITS_PER_BYTE // bits
+    required_bytes = -(-numel // per_byte)
+    if packed.numel() < required_bytes:
+        raise QuantisationError(
+            f"buffer holds {packed.numel()} bytes, need {required_bytes} for {numel} "
+            f"{bits}-bit codes"
+        )
+
+    if bits == BITS_PER_BYTE:
+        recovered = packed[:numel].to(torch.int64)
+    else:
+        mask = (1 << bits) - 1
+        lanes = [(packed >> (lane * bits)) & mask for lane in range(per_byte)]
+        recovered = torch.stack(lanes, dim=1).reshape(-1)[:numel].to(torch.int64)
+    return (recovered - qmax).to(torch.int8)
+
+
+def effective_bits_per_weight(quantised: QuantisedWeight) -> float:
+    """Bits per weight including scale overhead.
+
+    §4.5 defines effective bits as including scale and zero-point overhead "where possible".
+    Reporting the nominal bit width alone overstates the compression, and the gap widens as the
+    group size shrinks -- a per-group scheme with a small group can cost meaningfully more than
+    its nominal width.
+
+    Args:
+        quantised: The representation to measure.
+
+    Returns:
+        Bits per weight, counting packed codes plus fp32 scales.
+    """
+    num_weights = 1
+    for dimension in quantised.shape:
+        num_weights *= dimension
+    if num_weights == 0:
+        return 0.0
+    code_bits = num_weights * quantised.bits
+    scale_bits = int(quantised.scales.numel()) * FP32_BITS
+    return (code_bits + scale_bits) / num_weights
 
 
 class Quantiser(Compressor):
