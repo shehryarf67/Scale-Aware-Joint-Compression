@@ -42,7 +42,7 @@ done. **Every arm runs from a config to a run record on real Pythia-160M.**
 
 | | State |
 | --- | --- |
-| Tests | **732 passing** in ~36 s, offline |
+| Tests | **740 passing** in ~37 s, offline |
 | Lint / format | `ruff check .` and `ruff format --check .` both clean |
 | CI | `.github/workflows/ci.yml` — lint, format, tests on push/PR to `main` |
 | Environment | verified end to end: torch 2.13.0+cu126, CUDA available, sm_89 |
@@ -220,18 +220,49 @@ Delivered this session:
 - `ExperimentRunner` draws the calibration set once and injects it, so every arm at a budget sees
   byte-identical data.
 
-### 🔴 Open quality question — resolve before Phase 7 screening
+### ✅ Resolved: the mask comparison group was costing 6.7x perplexity
 
-**Retention is 15%, and that is much worse than it should be.** The pipeline itself checks out:
-sparsity exact, bit width real, reconstruction improving every layer by 27–65%. Calibration size is
-**not** the cause — 8× more data (16 → 128 sequences) moved perplexity only from 231.96 to 227.08.
+The 15% retention was traced by isolating the arms. **Quantisation was never the problem** — W8 alone
+is essentially lossless. All the damage was pruning, and specifically the *comparison group*.
 
-Published one-shot 50% pruning results on comparable-scale models degrade far less than this, so
-something in the configuration is costing more than it should. The leading suspect is the **mask
-comparison group**: the mask is ranked *globally across each tensor*, which permits some output rows
-to be pruned far harder than others — possibly near-entirely. Wanda-style **per-output-row** ranking
-is known to do substantially better for exactly this reason, and §3.10 permits either. Measure it on
-160M before freezing any budget.
+Activation-weighted saliency multiplies every weight in an input column by that column's norm, so
+ranked tensor-wide a low-energy column scores low **everywhere** and gets deleted entirely — removing
+an input feature rather than thinning it. Per-output ranking makes each row keep its own top-k, so no
+column can go wholesale. §3.10 permits either; **per-output is now the default.**
+
+| Arm | Perplexity | Retention |
+| --- | --- | --- |
+| Dense | 34.77 | 100% |
+| Quantisation only (W8) | 34.85 | **99.8%** |
+| Pruning 50%, tensor-wide | 233.94 | 15% |
+| Pruning 50%, **per-output** | **124.32** | 28% |
+| Joint 50% + W8, **per-output** | **122.51** | 28% |
+
+Two checks confirm the rest of the stack is sound: reconstruction buys a real 41% end to end
+(mask-only 209.21 → 124.32), and calibration size is irrelevant (8× more data moved it under 3%).
+
+Also fixed a bug found on the way: `plan_from_config` read `quantisation.bits` directly, so the
+**pruning-only arm** was handed a bit width and `convert` packed it — silently quantising the one
+FP32 arm, the arm that answers RQ4. Now derived from `effective_bits`. The test that should have
+caught it was disabling quantisation in its fixture and masking it; that crutch is gone.
+
+### 🟡 Remaining, and it shapes Phase 7 rather than blocking it
+
+Retention at 50% on 160M is still ~28%, below published one-shot results. Partly protocol (64
+sequences at a 256-token window, not the full test set at 2048) and partly a 160M model having little
+redundancy to give. **Not chased to the ground.** It does not invalidate the design — the study
+measures differences between arms at matched budgets, not absolute quality — but it does decide budget
+selection:
+
+| Joint budget | Perplexity | Retention |
+| --- | --- | --- |
+| **30% + W8** | **42.43** | **82%** |
+| 40% + W8 | 60.46 | 58% |
+| 50% + W8 | 122.51 | 28% |
+
+§5.3 wants budgets "measurably but non-catastrophically" degraded. At 160M that is **30%**, not 50%.
+S1 looks right; S2–S4 look likely catastrophic at this scale — itself scale-relevant, since larger
+models should tolerate more. One seed, one model; screening decides.
 
 Two smaller things noticed in the same runs:
 

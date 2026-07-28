@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from scale_aware_compression.constants import PruningGranularity
+from scale_aware_compression.constants import MaskComparisonGroup, PruningGranularity
 from scale_aware_compression.logging_utils import get_logger
 from scale_aware_compression.metrics.compression import sparsity_percentage
 
@@ -139,6 +139,7 @@ def build_mask_from_scores(
     *,
     sparsity: float,
     granularity: PruningGranularity = PruningGranularity.UNSTRUCTURED,
+    comparison_group: MaskComparisonGroup = MaskComparisonGroup.OUTPUT,
 ) -> torch.Tensor:
     """Build a boolean keep-mask for one weight tensor from its saliency scores.
 
@@ -150,9 +151,15 @@ def build_mask_from_scores(
     Args:
         scores: Non-negative saliency, same shape as the weight. Larger means more important.
         sparsity: Fraction to prune, in ``[0, 1)``.
-        granularity: Sparsity pattern. Unstructured ranks across the whole tensor; the
-            semi-structured patterns rank within fixed groups along the last dimension, which is
-            what admits a sparse kernel if the backend provides one.
+        granularity: Sparsity pattern. Unstructured ranks freely; the semi-structured patterns rank
+            within fixed groups along the last dimension, which is what admits a sparse kernel if
+            the backend provides one.
+        comparison_group: Which weights compete for survival. Applies to unstructured only -- the
+            semi-structured patterns define their own groups. Defaults to
+            :data:`~scale_aware_compression.constants.MaskComparisonGroup.OUTPUT`, which is
+            per-output-channel, on measured grounds: ranking across the whole tensor let
+            activation-weighted saliency delete entire low-energy input columns and cost 6.7x
+            perplexity on Pythia-160M at 50% sparsity.
 
     Returns:
         Boolean tensor, ``True`` meaning keep.
@@ -191,6 +198,22 @@ def build_mask_from_scores(
 
     if granularity is not PruningGranularity.UNSTRUCTURED:
         raise MaskError(f"unsupported granularity {granularity!r}")
+
+    if comparison_group is MaskComparisonGroup.OUTPUT:
+        if scores.ndim != 2:
+            raise MaskError(
+                f"per-output comparison needs a 2-D (out_features, in_features) score tensor, got "
+                f"{tuple(scores.shape)}"
+            )
+        per_row = scores.shape[1]
+        num_kept = per_row - round(per_row * sparsity)
+        mask = torch.zeros_like(scores, dtype=torch.bool)
+        if num_kept:
+            mask.scatter_(1, scores.topk(num_kept, dim=1).indices, True)
+        return mask
+
+    if comparison_group is not MaskComparisonGroup.TENSOR:
+        raise MaskError(f"unsupported comparison group {comparison_group!r}")
 
     flat = scores.reshape(-1)
     num_pruned = round(flat.numel() * sparsity)

@@ -353,6 +353,70 @@ magnitude" is a reportable ablation, not a dead end.
 Every measurement above is pinned by tests in `tests/test_layerwise.py`, so none of it can regress
 silently or be rediscovered during writing-up.
 
+## The Mask Comparison Group Cost 6.7x Perplexity
+
+**Found and fixed 2026-07-28, by isolating the arms on real Pythia-160M.** Recorded because the
+mechanism is subtle, the default was wrong, and the measurement is what settled it.
+
+The first compressed run retained only 15% of dense perplexity. Isolating the two techniques found
+the cause immediately:
+
+| Arm | Perplexity | Retention |
+| --- | --- | --- |
+| Dense | 34.77 | 100% |
+| **Quantisation only (W8)** | **34.85** | **99.8%** — essentially lossless |
+| **Pruning only (50%)** | **233.94** | 15% |
+
+Quantisation was never the problem. All of the damage came from pruning.
+
+### The mechanism
+
+Activation-weighted saliency is `S_ij = |W_ij| · ‖X_j‖₂`, so **every weight in an input column is
+multiplied by that column's norm**. Ranked across the whole tensor, a low-energy column scores low
+*everywhere* and is pruned out entirely — deleting an input feature rather than thinning it. Ranking
+within each output channel makes each row keep its own top-k, so no column can be removed wholesale.
+
+§3.10 permits "global unstructured or fixed blockwise", so both are inside the frozen protocol. The
+default is now per-output.
+
+### Measured effect
+
+| Configuration | Perplexity |
+| --- | --- |
+| Pruning 50%, tensor-wide ranking | 233.94 |
+| Pruning 50%, **per-output ranking** | **124.32** |
+| Joint 50% + W8, tensor-wide | 231.96 |
+| Joint 50% + W8, **per-output** | **122.51** |
+
+Roughly 47% of the loss recovered by a comparison-group change. Two supporting checks confirm the
+rest of the stack is sound rather than merely less broken:
+
+- **Reconstruction is doing real work.** Mask only, no reconstruction: 209.21. With the sweep:
+  124.32. So error compensation buys 41%, end to end, not just on the layer objective.
+- **Calibration size is not a factor.** 8× more calibration data (16 → 128 sequences) moved
+  perplexity by under 3%.
+
+### What remains, and what it means for the study
+
+Retention at 50% on a 160M model is still only ~28%, which is below published one-shot results on
+comparably sized models. Some of that gap is protocol — this evaluates 64 sequences at a 256-token
+window rather than the full test set at 2048 — and some may be Pythia-160M simply having little
+redundancy to give up. It has **not** been chased to the ground.
+
+It does not invalidate the design: the study measures *differences between arms at matched budgets*,
+not absolute quality. What it does change is budget selection. The degradation curve:
+
+| Joint budget | Perplexity | Retention |
+| --- | --- | --- |
+| 30% + W8 | **42.43** | **82%** |
+| 40% + W8 | 60.46 | 58% |
+| 50% + W8 | 122.51 | 28% |
+
+§5.3 requires budgets that are "measurably but non-catastrophically" degraded. At 160M that is
+**30%**, not 50%. The screening grid's S1 (30% + W8) looks right and S2–S4 (50%, 50%+W4, 70%+W4) look
+likely to be catastrophic at this scale — which is itself a scale-relevant observation, since larger
+models should tolerate more. Screening decides it; this is one seed on one model.
+
 ## Summary of unresolved risks
 
 | Risk | Status |
@@ -362,6 +426,8 @@ silently or be rediscovered during writing-up.
 | Whether 4-bit stays in the main study or the INT8 fallback is used | settled — W4 for quality and size, never for latency (D1) |
 | Mask scoring rule not finalised | settled — activation-weighted magnitude on quantised weights (D3) |
 | No automatic check that both arms saw the same module list | closed — `assert_matched_plans` checks coverage, calibration and local steps |
+| Tensor-wide mask ranking deleted whole input columns | **closed** — per-output ranking is now the default; cost was 6.7x perplexity |
+| Absolute retention at 50% on 160M is below published one-shot results | open — not chased down; affects budget choice, not the arm comparison |
 | No automatic check that a sweep's models share training settings | gap in tooling |
 | No pre-registered practically-meaningful effect size | should be set before reading results |
 | Three seeds give a weak variance estimate | accepted; report inconclusive results as inconclusive |

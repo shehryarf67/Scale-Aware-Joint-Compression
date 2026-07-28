@@ -142,6 +142,26 @@ class PruningGranularity(StrEnum):
     STRUCTURED_CHANNEL = "channel"
 
 
+class MaskComparisonGroup(StrEnum):
+    """Which weights compete against each other for survival at a given sparsity.
+
+    §3.10 permits "global unstructured or fixed blockwise", so both are within the frozen protocol.
+    The choice matters far more than it looks: activation-weighted saliency multiplies every weight in
+    an input column by that column's norm, so under ``TENSOR`` a low-energy column scores low
+    *everywhere* and can be pruned out entirely — deleting an input feature rather than thinning it.
+    """
+
+    TENSOR = "tensor"
+    """Rank all weights in the layer against each other. One global threshold per tensor."""
+
+    OUTPUT = "output"
+    """Rank within each output channel, so every row keeps exactly the same fraction.
+
+    No input column can be removed wholesale, because its survival is decided independently in each
+    row. This is the comparison group Wanda uses.
+    """
+
+
 class PruningScheduleName(StrEnum):
     """How sparsity ramps from its initial to its final value."""
 

@@ -37,6 +37,7 @@ from scale_aware_compression.constants import (
     CompressionMethod,
     Device,
     DType,
+    MaskComparisonGroup,
     PruningGranularity,
     PruningScheduleName,
     QuantisationGranularity,
@@ -365,6 +366,12 @@ class ReconstructionConfig:
     """Column block width for the sweep solver. Throughput knob; does not change the result."""
     activation_order: bool = True
     """Visit high-energy columns first in the sweep. Ignored for per-group quantisation."""
+    comparison_group: MaskComparisonGroup = MaskComparisonGroup.OUTPUT
+    """Which weights compete for survival at the target sparsity.
+
+    Per-output by default. Ranking across the whole tensor lets activation-weighted saliency
+    delete entire low-energy input columns, which cost 6.7x perplexity on Pythia-160M at 50%
+    sparsity. §3.10 permits either; see docs/validity_threats.md."""
     scale_search: bool = False
     """Fit scales by minimising pre-reconstruction error instead of matching ``max|W|``.
 

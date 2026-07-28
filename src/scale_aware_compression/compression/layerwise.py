@@ -43,6 +43,7 @@ from scale_aware_compression.compression.quantisation import (
 )
 from scale_aware_compression.compression.reconstruct import reconstruct
 from scale_aware_compression.constants import (
+    MaskComparisonGroup,
     PruningGranularity,
     QuantisationGranularity,
     ReconstructionSolver,
@@ -86,6 +87,9 @@ class LayerPlan:
     granularity: QuantisationGranularity = QuantisationGranularity.PER_CHANNEL
     group_size: int = 128
     pruning_granularity: PruningGranularity = PruningGranularity.UNSTRUCTURED
+    comparison_group: MaskComparisonGroup = MaskComparisonGroup.OUTPUT
+    """Which weights compete for survival. Per-output by default; see the measurement in
+    docs/validity_threats.md."""
     solver: ReconstructionSolver = ReconstructionSolver.SWEEP
     local_steps: int = 1
     joint_iterations: int = 4
@@ -148,6 +152,7 @@ class LayerPlan:
             self.granularity,
             self.group_size,
             self.pruning_granularity,
+            self.comparison_group,
             self.solver,
             self.damping,
             # The quantiser must be identical across arms, so the scale-fitting rule is part of the
@@ -348,6 +353,7 @@ def compress_layer(
             activation_weighted_saliency(scored, column_norms),
             sparsity=plan.sparsity,
             granularity=plan.pruning_granularity,
+            comparison_group=plan.comparison_group,
         )
 
     def quantisation_aware_mask(current: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -373,6 +379,7 @@ def compress_layer(
             keep_benefit_saliency(weight, quantised, column_norms),
             sparsity=plan.sparsity,
             granularity=plan.pruning_granularity,
+            comparison_group=plan.comparison_group,
         )
 
     keep_all = torch.ones_like(weight, dtype=torch.bool)

@@ -47,6 +47,7 @@ from scale_aware_compression.compression.reconstruct import (
     solve_masked_rows,
 )
 from scale_aware_compression.constants import (
+    MaskComparisonGroup,
     PruningGranularity,
     QuantisationGranularity,
     ReconstructionSolver,
@@ -182,15 +183,34 @@ class TestSaliency:
 
 class TestMaskExactness:
     @pytest.mark.parametrize("sparsity", [0.0, 0.1, 0.3, 0.5, 0.7, 0.9])
-    def test_realised_sparsity_is_exact(self, sparsity: float):
+    @pytest.mark.parametrize("group", list(MaskComparisonGroup))
+    def test_realised_sparsity_is_exact(self, sparsity: float, group: MaskComparisonGroup):
+        """Exact *within the comparison group*, which is what the budget is defined over.
+
+        The two groups round differently and both are correct: the tensor group takes
+        ``round(numel * s)`` once, the output group takes ``round(in_features * s)`` in every row. At
+        ``in_features = 32`` and ``s = 0.1`` that is 3 per row -- 9.375%, not 10% -- because a row
+        cannot prune a fractional weight. The guarantee is exactness, not that both land on the same
+        integer.
+        """
         import torch
 
         torch.manual_seed(0)
-        scores = torch.rand(16, 32)
-        mask = build_mask_from_scores(scores, sparsity=sparsity)
+        rows, columns = 16, 32
+        scores = torch.rand(rows, columns)
+        mask = build_mask_from_scores(scores, sparsity=sparsity, comparison_group=group)
 
-        assert int((~mask).sum()) == round(mask.numel() * sparsity)
-        assert realised_sparsity(mask) == pytest.approx(sparsity, abs=1.0 / mask.numel())
+        if group is MaskComparisonGroup.TENSOR:
+            expected_pruned = round(mask.numel() * sparsity)
+            tolerance = 1.0 / mask.numel()
+        else:
+            per_row = round(columns * sparsity)
+            expected_pruned = per_row * rows
+            assert torch.all((~mask).sum(dim=1) == per_row), "a row missed the target"
+            tolerance = 1.0 / columns
+
+        assert int((~mask).sum()) == expected_pruned
+        assert realised_sparsity(mask) == pytest.approx(sparsity, abs=tolerance)
 
     def test_exact_even_when_scores_tie(self):
         """Activation-weighted saliency makes exact ties routine, not pathological.
@@ -204,12 +224,49 @@ class TestMaskExactness:
         mask = build_mask_from_scores(scores, sparsity=0.5)
         assert int((~mask).sum()) == 64
 
-    def test_mask_keeps_the_highest_scores(self):
+    def test_the_tensor_group_keeps_the_globally_highest_scores(self):
         import torch
 
         scores = torch.arange(12, dtype=torch.float32).reshape(3, 4)
-        mask = build_mask_from_scores(scores, sparsity=0.5)
+        mask = build_mask_from_scores(
+            scores, sparsity=0.5, comparison_group=MaskComparisonGroup.TENSOR
+        )
         assert torch.equal(mask.reshape(-1).nonzero(as_tuple=True)[0], torch.arange(6, 12))
+
+    def test_the_output_group_keeps_the_highest_scores_within_each_row(self):
+        """Every row keeps its own top-k, so no row can be emptied by a stronger neighbour."""
+        import torch
+
+        scores = torch.arange(12, dtype=torch.float32).reshape(3, 4)
+        mask = build_mask_from_scores(
+            scores, sparsity=0.5, comparison_group=MaskComparisonGroup.OUTPUT
+        )
+        assert torch.all(mask.sum(dim=1) == 2)
+        assert torch.equal(mask, torch.tensor([[False, False, True, True]] * 3))
+
+    def test_the_tensor_group_can_empty_an_entire_input_column(self):
+        """The mechanism behind the 6.7x perplexity cost, made explicit.
+
+        Activation-weighted saliency multiplies a whole input column by that column's norm, so a
+        low-energy column scores low in *every* row. Ranked globally, it is removed wholesale --
+        deleting an input feature rather than thinning it.
+        """
+        import torch
+
+        scores = torch.ones(8, 4)
+        scores[:, 1] = 0.01  # one low-energy column
+
+        tensor_mask = build_mask_from_scores(
+            scores, sparsity=0.25, comparison_group=MaskComparisonGroup.TENSOR
+        )
+        output_mask = build_mask_from_scores(
+            scores, sparsity=0.25, comparison_group=MaskComparisonGroup.OUTPUT
+        )
+
+        assert not tensor_mask[:, 1].any(), "the whole column should be gone"
+        # Per-output prunes one weight per row, and each row independently drops its own weakest --
+        # which is still column 1 here, but by row-local choice rather than a global sweep.
+        assert torch.all(output_mask.sum(dim=1) == 3)
 
     @pytest.mark.parametrize(
         ("granularity", "group", "kept"),
@@ -590,9 +647,13 @@ class TestJointVersusSequentialScoring:
         assert int(sequential_mask.sum()) == int(joint_mask.sum())
 
     def test_both_scorings_hit_the_same_sparsity(self, synthetic_layer):
+        """Whichever weights the mask is scored on, the budget spent is identical (§3.11)."""
+        import torch
+
         activations, weight, _ = synthetic_layer
         norms = activations.norm(dim=0)
+        expected_per_row = round(IN_FEATURES * 0.7)
 
         for scored in (weight, fake_quantise(weight, bits=4)):
             mask = build_mask_from_scores(activation_weighted_saliency(scored, norms), sparsity=0.7)
-            assert int((~mask).sum()) == round(mask.numel() * 0.7)
+            assert torch.all((~mask).sum(dim=1) == expected_per_row)

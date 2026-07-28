@@ -29,6 +29,7 @@ from scale_aware_compression.compression.layerwise import (
 from scale_aware_compression.compression.packed import convert_model_to_packed
 from scale_aware_compression.config import ExperimentConfig
 from scale_aware_compression.constants import (
+    FP32_BITS,
     SEQUENTIAL_STAGES,
     CompressionMethod,
     CompressionStage,
@@ -59,12 +60,19 @@ def plan_from_config(config: ExperimentConfig) -> LayerPlan:
     """
     compression = config.compression
     reconstruction = compression.reconstruction
+    # Both axes come from the *effective* values, which are method-aware. Reading
+    # `quantisation.bits` directly would hand the pruning-only arm a bit width whenever the shipped
+    # config happened to enable quantisation -- and while its `apply` ignores that, `convert` would
+    # pack the result, quietly turning the one FP32 arm (the arm that answers RQ4) into a quantised
+    # one. FP32 is spelled 32 in `effective_bits` and `None` in a plan.
+    effective_bits = compression.effective_bits
     return LayerPlan(
         sparsity=compression.effective_sparsity,
-        bits=compression.quantisation.bits if compression.quantisation.enabled else None,
+        bits=None if effective_bits >= FP32_BITS else effective_bits,
         granularity=compression.quantisation.granularity,
         group_size=compression.quantisation.group_size,
         pruning_granularity=compression.pruning.granularity,
+        comparison_group=reconstruction.comparison_group,
         solver=reconstruction.solver,
         local_steps=reconstruction.local_steps,
         joint_iterations=reconstruction.joint_iterations,

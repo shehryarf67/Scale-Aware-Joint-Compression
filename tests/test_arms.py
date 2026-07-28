@@ -82,8 +82,9 @@ def config_for(arm_class, config: ExperimentConfig) -> ExperimentConfig:
     """
     matched = copy.deepcopy(config)
     matched.compression.method = arm_class.method
-    if arm_class is PruningArm:
-        matched.compression.quantisation.enabled = False
+    # Deliberately does NOT disable quantisation for the pruning arm. Doing so hid a real bug:
+    # plan_from_config read `quantisation.bits` directly, so the pruning arm was handed a bit width
+    # and `convert` packed it. The method, not the section flag, decides whether an arm quantises.
     return matched
 
 
