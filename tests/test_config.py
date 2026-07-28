@@ -337,6 +337,7 @@ class TestShippedConfigs:
             "main_scale_sweep.yaml",
             "extended_scale_sweep.yaml",
             "qwen_validation.yaml",
+            "screening.yaml",
         }
         for path in files:
             config = load_config(path)

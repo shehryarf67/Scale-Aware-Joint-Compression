@@ -7,11 +7,13 @@ scale. A joint gain is only defined where both arms ran at the same model, budge
 :func:`find_comparison_pairs` locates those pairs explicitly rather than trusting the grid to
 have been complete.
 
-Status: plan construction and pair-matching are implemented; sweep execution is a placeholder.
+Execution orders each model's dense run first, because every compressed arm normalises against
+the dense perplexity *loaded from that model's record* rather than recomputed.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from itertools import product
 from typing import Any
@@ -255,24 +257,158 @@ def run_sweep(
         tracker: Where records go. Defaults to ``<output_dir>/metrics``.
 
     Returns:
-        The completed records, in plan order.
+        The completed records, in execution order. Skipped cells are absent, so the returned list
+        can be shorter than the plan.
 
     Raises:
-        NotImplementedError: Always, in the current scaffold.
+        ExperimentError: If a cell fails and ``sweep.continue_on_error`` is false.
     """
-    # TODO(scale_sweep): iterate the plan and, per cell,
-    #   1. skip when config.sweep.skip_existing and tracker.exists(cell.experiment_id)
-    #   2. build a per-cell ExperimentConfig by deep-merging cell.overrides plus the cell's
-    #      model, method, budget, and seed onto the base config
-    #   3. run it through ExperimentRunner
-    #   4. on failure, honour config.sweep.continue_on_error -- log and continue, or re-raise
-    # Order the runs dense-first per model: every other arm needs that model's dense perplexity
-    # as its retention reference, so running dense last wastes the whole model's sweep.
-    # Then verify with find_comparison_pairs() that each scale has a complete joint/sequential
-    # pair before reporting the sweep as finished.
-    raise NotImplementedError(
-        "run_sweep is not implemented yet; see the TODO in experiments/scale_sweep.py"
+    from scale_aware_compression.experiments.runner import ExperimentRunner
+
+    plan = plan or build_sweep_plan(config)
+    tracker = tracker or ExperimentTracker(config.runtime.output_dir / "metrics")
+
+    ordered = _dense_first(plan.cells)
+    records: list[ExperimentRecord] = []
+    failures: list[tuple[SweepCell, Exception]] = []
+
+    for index, cell in enumerate(ordered, start=1):
+        if config.sweep.skip_existing and tracker.exists(cell.experiment_id):
+            LOGGER.info(
+                "[%d/%d] skip %s (already recorded)", index, len(ordered), cell.experiment_id
+            )
+            continue
+
+        LOGGER.info("[%d/%d] run %s", index, len(ordered), cell.experiment_id)
+        try:
+            cell_config = build_cell_config(config, cell)
+            records.append(ExperimentRunner(cell_config, tracker=tracker).run())
+        except Exception as error:  # noqa: BLE001 - re-raised below unless told to continue
+            if not config.sweep.continue_on_error:
+                raise ExperimentError(f"Sweep cell {cell.experiment_id} failed: {error}") from error
+            LOGGER.error("Cell %s failed, continuing: %s", cell.experiment_id, error)
+            failures.append((cell, error))
+
+    if failures:
+        # §3.11 requires a failed run to stay in the log with its reason, so it is visible rather
+        # than looking like a cell that was never planned.
+        LOGGER.warning(
+            "Sweep finished with %d failed cell(s): %s",
+            len(failures),
+            ", ".join(cell.experiment_id for cell, _ in failures),
+        )
+
+    incomplete = [
+        (cell_a.model_name, cell_a.budget_label)
+        for cell_a, cell_b in find_comparison_pairs(plan)
+        if not (tracker.exists(cell_a.experiment_id) and tracker.exists(cell_b.experiment_id))
+    ]
+    if incomplete:
+        LOGGER.warning(
+            "These model/budget cells have no complete sequential-versus-joint pair, so they "
+            "cannot contribute a joint gain: %s",
+            incomplete,
+        )
+
+    return records
+
+
+def _dense_first(cells: Sequence[SweepCell]) -> list[SweepCell]:
+    """Order cells so each model's dense run happens before its compressed runs.
+
+    Every compressed arm normalises against its model's dense perplexity, which is *loaded from the
+    record* rather than recomputed. Running dense last would leave the whole model's sweep with no
+    retention figure and nothing to compare.
+
+    Also deduplicates dense cells on ``(model, seed)``. A dense run does not depend on the budget,
+    but the budget label is part of the experiment id, so a four-budget grid plans four dense cells
+    with four different ids and identical contents. Left alone that is wasted compute and four
+    near-duplicate records, which §10.4 asks the audit to reject.
+
+    Args:
+        cells: The planned cells.
+
+    Returns:
+        Dense cells first, in model order, then the rest in plan order.
+    """
+    dense: list[SweepCell] = []
+    seen_dense: set[tuple[str, int]] = set()
+    rest: list[SweepCell] = []
+    for cell in cells:
+        if cell.method is CompressionMethod.DENSE:
+            key = (cell.model_name, cell.seed)
+            if key in seen_dense:
+                LOGGER.debug("skipping duplicate dense cell %s", cell.experiment_id)
+                continue
+            seen_dense.add(key)
+            dense.append(cell)
+        else:
+            rest.append(cell)
+    return dense + rest
+
+
+def build_cell_config(config: ExperimentConfig, cell: SweepCell) -> ExperimentConfig:
+    """Materialise one cell as a standalone experiment configuration.
+
+    Args:
+        config: The base config the sweep was built from.
+        cell: The cell to realise.
+
+    Returns:
+        A validated config for exactly this cell.
+    """
+    document = deep_merge(config.to_dict(), cell.overrides)
+    document = deep_merge(
+        document,
+        {
+            "experiment": {"id": cell.experiment_id},
+            "model": {"name": cell.model_name, "size_label": cell.size_label},
+            "runtime": {"seed": cell.seed},
+            "compression": {
+                "method": cell.method.value
+                if isinstance(cell.method, CompressionMethod)
+                else str(cell.method),
+                "budget_label": cell.budget_label,
+            },
+        },
     )
+    # A model's own config file carries its pinned revision, so it has to be re-resolved for the
+    # cell's model rather than inherited from whichever model the base config named.
+    document["model"].pop("hf_id", None)
+    document["model"]["revision"] = _revision_for(cell.model_name, document)
+    return ExperimentConfig.from_mapping(document)
+
+
+def _revision_for(model_name: str, document: dict[str, Any]) -> str | None:
+    """Return the pinned revision for ``model_name`` from its shipped model config.
+
+    §2.7 requires every checkpoint pinned to a commit SHA. A sweep changes model between cells, so
+    inheriting the base config's revision would pin every cell to the *first* model's SHA -- which
+    either fails to load or, worse, silently loads the wrong weights if the SHA happens to exist in
+    both repositories.
+
+    Args:
+        model_name: Registry short name for this cell.
+        document: The merged document, used only for its config directory hint.
+
+    Returns:
+        The pinned revision, or ``None`` when no shipped config names one.
+    """
+    from scale_aware_compression.config import load_document
+    from scale_aware_compression.constants import DEFAULT_CONFIG_DIR
+
+    candidate = (
+        DEFAULT_CONFIG_DIR / "models" / f"{model_name.replace('-', '_').replace('.', '_')}.yaml"
+    )
+    if not candidate.is_file():
+        LOGGER.warning(
+            "No shipped model config for %s at %s; the cell will use whatever revision the base "
+            "config named, which may be the wrong checkpoint.",
+            model_name,
+            candidate,
+        )
+        return document.get("model", {}).get("revision")
+    return load_document(candidate).get("model", {}).get("revision")
 
 
 def scale_trend(

@@ -1,0 +1,140 @@
+# Phase 7 / Stage B: compression-budget screening (research plan §5.3).
+#
+# PURPOSE: select ONE moderate and ONE aggressive budget before the full scale sweep. This is not a
+# results table. Nothing here is published as a finding, and §5.5 therefore allows a single seed --
+# these runs exist to choose two numbers, and the chosen numbers get three seeds later.
+#
+# SELECTION RULE (§5.3), all three required:
+#   1. technically stable        -- the arm completes, hits its budget, and does not collapse
+#   2. measurably but NOT catastrophically degraded
+#   3. enough separation between the two chosen budgets to test whether joint gain changes with
+#      scale
+#
+# The grid runs sequential AND joint at every budget, not just one arm. Screening has to know
+# whether a budget can *distinguish* the arms at all -- a budget where both collapse to noise is
+# useless even if its quality retention looks acceptable.
+#
+# ORDER: 160M first, then confirm the promising budgets on 410M. FREEZE BEFORE 1B (§5.3).
+#
+# ---------------------------------------------------------------------------------------------
+# PRIOR EVIDENCE, from docs/findings_log.md F-08. One seed, pilot evaluation window, per-output
+# masks. Recorded here because it is what motivated screening this grid rather than assuming the
+# configs' original 50%/70% pair:
+#
+#   dense            34.77   100%
+#   30% + W8         42.43    82%      <- measurably but not catastrophically degraded
+#   40% + W8         60.46    58%
+#   50% + W8        122.51    28%      <- arguably already catastrophic at 160M
+#
+# So S2-S4 may all fail rule 2 at this scale. That is a hypothesis for this grid to test, not a
+# conclusion -- the numbers above are a single seed at a 256-token window.
+# ---------------------------------------------------------------------------------------------
+
+include:
+  - ../models/pythia_160m.yaml
+  - ../compression/joint.yaml
+  - ../evaluation/quality.yaml
+  - ../evaluation/cpu_benchmark.yaml
+
+experiment:
+  id: screening_160m
+  name: Budget screening, Pythia-160M
+  description: >
+    Stage B budget screening per research plan §5.3. Selects one moderate and one aggressive
+    compression budget from the S1-S4 grid. Single seed by design; not a results table.
+  tags:
+    - screening
+    - stage-b
+    - not-a-result
+
+data:
+  # The real §4.1 calibration size, not the pilot's 16. F-07 established that calibration size
+  # barely moves quality here (8x more data moved perplexity under 3%), but screening decides
+  # frozen budgets, so it runs the real thing rather than the cheap thing.
+  calibration_samples: 128
+  calibration_split: train
+  # 512-token windows and 256 evaluation sequences: enough that a budget comparison is not decided
+  # by evaluation noise. Still smaller than the main sweep's full window.
+  sequence_length: 512
+  max_eval_samples: 256
+  batch_size: 4
+
+compression:
+  reconstruction:
+    # One local step, sweep solver, per-output masks -- the configuration frozen in
+    # protocol_freeze.md. Screening must not also be tuning the method, or it cannot attribute a
+    # budget's behaviour to the budget.
+    solver: sweep
+    local_steps: 1
+    joint_iterations: 4
+    comparison_group: output
+    scale_search: false
+    keep_benefit_saliency: false
+
+sweep:
+  models:
+    - pythia-160m
+  # Dense supplies the retention reference. Sequential and joint are both needed to check rule 3.
+  # The single-technique control arms (pruning-only, quantisation-only) are NOT screened: they
+  # isolate damage rather than compare pipelines, and they run in the full sweep.
+  methods:
+    - dense
+    - sequential
+    - joint
+  budgets:
+    - s1_30_w8
+    - s2_50_w8
+    - s3_50_w4
+    - s4_70_w4
+  # §5.5: exploratory screening gets ONE seed. Three seeds are for the confirmatory comparison on
+  # the frozen budgets, and spending them here would cost ~3x for numbers that get discarded.
+  seeds:
+    - 1234
+
+  budget_overrides:
+    # S1 -- mild/moderate. The prior evidence above puts this at ~82% retention on 160M.
+    s1_30_w8:
+      compression:
+        budget_label: s1_30_w8
+        pruning:
+          sparsity: 0.3
+        quantisation:
+          bits: 8
+
+    # S2 -- moderate. The configs' original moderate budget. Prior evidence suggests ~28% retention
+    # at 160M, which would fail the selection rule; this run is what decides that properly.
+    s2_50_w8:
+      compression:
+        budget_label: s2_50_w8
+        pruning:
+          sparsity: 0.5
+        quantisation:
+          bits: 8
+
+    # S3 -- aggressive precision. W4 is where F-05 shows the joint mechanism is actually live
+    # (8.86% mask divergence, against 0.46% at W8), so this budget is the one most likely to
+    # satisfy rule 3 even if its absolute quality is poor.
+    #
+    # Per decision D1, W4 contributes quality and size only. It never appears in a latency table.
+    s3_50_w4:
+      compression:
+        budget_label: s3_50_w4
+        pruning:
+          sparsity: 0.5
+        quantisation:
+          bits: 4
+
+    # S4 -- aggressive combined. Expected to be the harshest cell by a wide margin.
+    s4_70_w4:
+      compression:
+        budget_label: s4_70_w4
+        pruning:
+          sparsity: 0.7
+        quantisation:
+          bits: 4
+
+  skip_existing: true
+  # Screening is exploratory and a collapsed cell is informative rather than fatal: "S4 diverged"
+  # is exactly the kind of thing this stage exists to discover. §3.11 requires the failure stay in
+  # the log with its reason, which run_sweep does.
+  continue_on_error: true
