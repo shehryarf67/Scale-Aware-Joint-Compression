@@ -276,65 +276,88 @@ must be made before the main experiments, not after seeing which choice produces
 
 ## The Joint Mechanism May Be Inert at Moderate Precision
 
-**Discovered 2026-07-28, on implementing Phase 6. This is the most serious threat currently known,
-because it predicts a null result for structural reasons rather than empirical ones.**
+**Discovered 2026-07-28 on implementing Phase 6, then investigated on real layers. This is the most
+serious threat currently known, because it predicts a weak result for structural reasons rather than
+empirical ones.**
 
 §3.8 lists two things that make a method joint: the mask is scored under quantised weights, and the
-quantisation scales are re-estimated after the mask changes. Measured on a synthetic layer with
-correlated activations, **both are weak or inert at the precisions the study plans to use.**
+quantisation scales are re-estimated after the mask changes. Both are weak at the precisions the
+study plans to use.
 
-### The mask stops responding to quantisation above about 3 bits
+### Measurements on six real Pythia-160M layers
 
-Scoring saliency on fake-quantised weights only changes the mask when rounding reorders the ranking.
-Mask positions differing from the sequential P→Q arm, same layer and budget:
+Layers 0, 5 and 11, attention and MLP, against the real WikiText calibration set at 50% sparsity.
+An earlier version of this section quoted a synthetic layer; the real numbers replace it.
 
-| Bit width | Positions differing (of 512) |
-| --- | --- |
-| W2 | 206 |
-| W3 | 2 |
-| W4 | **0** |
-| W8 | **0** |
-
-At W4 and W8 the joint arm produces a **bit-identical mask** to the sequential arm. Whatever joint
-gain appears at those budgets cannot come from quantisation-aware mask selection, because there is
-none — it can only come from the order in which reconstruction is applied.
-
-### Symmetric max-abs scales cannot respond to the mask at all
-
-A symmetric per-channel scale is `max|W_row| / qmax`. Saliency pruning removes the *smallest*
-entries, so each row's maximum survives and refitting on the survivors returns the identical number.
-Measured: **100% of output channels unchanged, maximum relative change 0.0000.**
-
-So §3.8's second requirement is satisfied only formally. The re-estimation step runs; it provably
-cannot alter anything.
-
-### Why this matters
-
-Taken together, at the moderate budget (50% + W8) the joint arm reduces to the sequential arm plus a
-different reconstruction ordering. A joint gain of approximately zero there is then close to
-guaranteed *by construction*, and would be misreported as an empirical finding about pipeline design.
-
-Both properties are pinned by tests in `tests/test_layerwise.py` so they cannot regress silently or
-be rediscovered during writing-up.
-
-### Options, none yet taken
-
-| Option | Effect | Cost |
+| Bits | Joint vs sequential mask differs | Channels whose max-abs scale moves on refit |
 | --- | --- | --- |
-| **Change the scale rule** to minimise reconstruction error rather than match the maximum (a clipping or MSE search, standard in PTQ) | Makes scale re-estimation genuinely responsive to the mask, so §3.8's second mechanism becomes live | Changes a §2.7-frozen choice (`observer`). Must be applied to every arm and every scale, and re-recorded |
-| **Screen a lower bit width** so the mask mechanism is active | Keeps the method as frozen; measures joint where it can actually differ | §3.9 names W8 and W4 as the screened widths; adding W2/W3 widens the matrix and W2 quality may be catastrophic |
-| **Report as-is** | Honest, and a null result is publishable (§6.7) | Weak paper: the headline comparison would be structurally incapable of showing a difference at one of the two budgets |
+| W8 | **0.46%** | 0.2% |
+| W4 | **8.86%** | 0.2% |
+| W3 | 15.42% | 0.2% |
+| W2 | 45.54% | 0.2% |
 
-The first is the substantive fix and is the recommendation. It is **not** actioned here because it
-changes a frozen protocol decision with direct consequences for the paper, and §6.3 forbids revising
-such choices after results are seen — which makes now, before any compressed result exists, exactly
-the right time to decide it deliberately.
+**The mask mechanism is live at W4 but effectively inert at W8.** The synthetic layer understated
+this — it showed *zero* divergence at W4, where real layers show 8.86%. Real weights have heavier
+tails and real activations have outlier channels, both of which let rounding reorder the saliency.
+At W8 quantisation error is small enough that the ranking survives intact.
+
+**The scale mechanism is inert everywhere.** A symmetric per-channel scale is `max|W_row| / qmax`,
+and saliency pruning removes the smallest entries, so each row's maximum almost always survives.
+
+One correction, and it matters for how strongly this can be stated: this is **not** a proof. Because
+the saliency is activation-*weighted*, a row's largest weight can be pruned when it sits on a
+low-energy input column — and it does happen, at 1.3% of channels in layer 11's MLP. The claim is
+empirical, not algebraic.
+
+### Two proposed fixes, both measured, both rejected
+
+Layer-objective joint gain, mean over the same six layers, matched budget. Positive means the joint
+arm reconstructs better than sequential:
+
+| Configuration | W8 | W4 |
+| --- | --- | --- |
+| max-abs scales, magnitude scoring (**current default**) | −0.49% | **+1.12%** |
+| + error-minimising clipping scale search | −1.51% | −0.99% |
+| + quantisation-aware keep-benefit scoring | −11.83% | **−16.15%** |
+
+**Error-minimising clipping scale search** does exactly what it promises in isolation: it cuts naive
+quantisation error by 12.8% at W4, and it makes scale re-estimation genuinely mask-dependent — 70%
+of channels move their grid on refit, against 0.2% for max-abs. But the layer gets *worse* after
+reconstruction. The two objectives are different: clipping saturates outliers, and a saturated weight
+cannot be repaired by error compensation. Optimising pre-reconstruction error is the wrong target.
+
+**Keep-benefit scoring** `B_ij = ||X_j||²[W_ij² − (W_ij − Q(W_ij))²]` is worse still, and the reason
+is analytic. For round-to-nearest symmetric quantisation the score is bounded below by zero, and for
+any weight above the step size `(W − Q(W))²` is nearly independent of `W`, leaving
+`B ≈ ||X_j||²·W_ij²` minus a near-constant — a monotone transform of activation-weighted magnitude.
+So it largely *reproduces* the magnitude ranking, and where it deviates it prefers weights that
+happen to sit near a grid point, which is a property of the current scale rather than a statement
+about importance.
+
+Both remain implemented behind `compression.reconstruction.scale_search` and
+`.keep_benefit_saliency`, defaulting to off. "The obvious quantisation-aware criterion is worse than
+magnitude" is a reportable ablation, not a dead end.
+
+### Where this leaves the study
+
+- **W4 is the budget where the mechanism is live** (8.86% mask divergence, +1.12% layer gain). It
+  should carry the headline comparison.
+- **W8 should be read as a control.** Near-zero joint gain there is the expected result when
+  quantisation error is small, not a failure — and reporting it as a scale-independent null would be
+  a misreading.
+- **Do not move to W2 to chase a larger effect.** The mechanism is far more active there, but
+  choosing a precision because it produces a positive result is exactly the selection §6.3 forbids.
+- A criterion that respects error compensation would need the inverse-Hessian term rather than a
+  diagonal approximation. That is a genuine research direction, not a configuration change.
+
+Every measurement above is pinned by tests in `tests/test_layerwise.py`, so none of it can regress
+silently or be rediscovered during writing-up.
 
 ## Summary of unresolved risks
 
 | Risk | Status |
 | --- | --- |
-| **Joint mask identical to sequential at W4/W8; scale re-estimation provably inert** | **open — threatens the headline comparison; see above** |
+| **Joint mechanism weak: mask inert at W8 (0.46% divergence), scale re-estimation inert everywhere (0.2%)** | **characterised — W4 carries the comparison, W8 is a control; two candidate fixes measured and rejected** |
 | CPU quantisation backend undecided | settled — PyTorch native INT8, engine `onednn` (D1) |
 | Whether 4-bit stays in the main study or the INT8 fallback is used | settled — W4 for quality and size, never for latency (D1) |
 | Mask scoring rule not finalised | settled — activation-weighted magnitude on quantised weights (D3) |

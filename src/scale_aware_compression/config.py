@@ -365,6 +365,18 @@ class ReconstructionConfig:
     """Column block width for the sweep solver. Throughput knob; does not change the result."""
     activation_order: bool = True
     """Visit high-energy columns first in the sweep. Ignored for per-group quantisation."""
+    scale_search: bool = False
+    """Fit scales by minimising pre-reconstruction error instead of matching ``max|W|``.
+
+    Off because it measured worse end-to-end: it cuts naive quantisation error by 12.8% at W4 but
+    turns the layer-objective joint gain from +1.12% to -0.99%. Kept as a declared ablation.
+    """
+    keep_benefit_saliency: bool = False
+    """Score the mask by keep-versus-prune benefit instead of quantised magnitude.
+
+    Off because it measured much worse: layer-objective joint gain falls to -16.15% at W4. Kept as
+    a declared ablation. See docs/validity_threats.md.
+    """
     calibration_dtype: str = "float32"
     """Accumulation dtype for ``H = XᵀX``. fp32 keeps the largest layer Hessian at 256 MiB."""
 

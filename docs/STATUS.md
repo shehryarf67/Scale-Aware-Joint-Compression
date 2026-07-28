@@ -42,7 +42,7 @@ settled**. No compression algorithm is implemented yet.
 
 | | State |
 | --- | --- |
-| Tests | **604 passing** in ~30 s, offline |
+| Tests | **687 passing** in ~31 s, offline |
 | Lint / format | `ruff check .` and `ruff format --check .` both clean |
 | CI | `.github/workflows/ci.yml` — lint, format, tests on push/PR to `main` |
 | Environment | verified end to end: torch 2.13.0+cu126, CUDA available, sm_89 |
@@ -141,35 +141,52 @@ flagged in the docstring rather than discovered later.
 
 ---
 
-## 🔴 Found in Phase 6: the joint mechanism may be inert at moderate precision
+## 🔴 Characterised in Phase 6: the joint mechanism is weak, and W4 must carry the comparison
 
 **Read [validity_threats.md](validity_threats.md#the-joint-mechanism-may-be-inert-at-moderate-precision)
-before running any screening.** This is the most serious open issue and it needs a decision.
+before running any screening.** Investigated on **six real Pythia-160M layers** with the real
+calibration set, not the synthetic layer the first pass used.
 
-§3.8 says a method is joint if (a) the mask is scored under quantised weights and (b) the scales are
-re-estimated after the mask moves. Measured on a synthetic layer, **both are weak or inert at the
-planned precisions**:
+| Bits | Joint vs sequential mask differs | Max-abs scale moves on refit | Layer-objective joint gain |
+| --- | --- | --- | --- |
+| W8 | **0.46%** | 0.2% | −0.49% |
+| W4 | **8.86%** | 0.2% | **+1.12%** |
 
-| Bit width | Joint mask positions differing from sequential (of 512) |
-| --- | --- |
-| W2 | 206 |
-| W3 | 2 |
-| W4 | **0** |
-| W8 | **0** |
+- **The mask mechanism is live at W4, inert at W8.** My synthetic measurement said *zero* divergence
+  at W4 and was wrong — real weights have heavier tails and real activations have outlier channels.
+- **The scale mechanism is inert at every width.** Pruning removes the smallest weights so each row's
+  maximum survives. Correction to an earlier claim: this is empirical, not provable — activation
+  weighting *can* prune a row's largest weight, and does at 1.3% of channels in layer 11's MLP.
 
-And symmetric max-abs scales are provably blind to magnitude pruning — the row maximum survives, so
-refitting on survivors returns the identical scale (100% of channels unchanged, max relative change
-0.0000).
+**Two candidate fixes were implemented, measured, and rejected**, both because they made the layer
+objective worse:
 
-So at the moderate budget the joint arm reduces to sequential plus a different reconstruction order,
-and a joint gain near zero there is close to guaranteed *by construction*. Reporting that as an
-empirical finding about pipeline design would be wrong.
+| Configuration | W8 | W4 |
+| --- | --- | --- |
+| max-abs + magnitude (**default**) | −0.49% | **+1.12%** |
+| + clipping scale search | −1.51% | −0.99% |
+| + keep-benefit scoring | −11.83% | **−16.15%** |
 
-Both properties are pinned by tests so they cannot regress or be rediscovered late. Three options
-with costs are laid out in validity_threats.md; the recommendation is to change the scale rule from
-max-abs to an error-minimising search, which makes mechanism (b) live. **Not actioned** — it changes
-a §2.7-frozen choice, and §6.3 forbids revising it once results exist, so it must be decided
-deliberately now.
+The clipping search cuts *naive* quantisation error by 12.8% and does make scale re-estimation live
+(70% of channels move, vs 0.2%) — but clipping saturates outliers, and a saturated weight cannot be
+repaired by error compensation, so the post-reconstruction result degrades. Keep-benefit scoring is
+worse and analytically so: it reduces to a monotone transform of activation-weighted magnitude plus a
+near-constant, so it mostly reproduces the magnitude ranking and where it deviates it favours weights
+that happen to sit near a grid point.
+
+Both are retained as declared ablations behind `compression.reconstruction.scale_search` and
+`.keep_benefit_saliency`, defaulting off.
+
+**Consequences for the experimental design:**
+
+- W4 carries the headline comparison; W8 is a **control**, where a near-zero gain is the expected
+  result rather than a failure.
+- Do **not** move to W2 to chase a larger effect — the mechanism is more active there, but selecting
+  a precision because it yields a positive result is what §6.3 forbids.
+- A criterion that respects error compensation needs the inverse-Hessian term, not a diagonal
+  approximation. Research direction, not a config change.
+
+Every number above is pinned by tests in `tests/test_layerwise.py`.
 
 ---
 

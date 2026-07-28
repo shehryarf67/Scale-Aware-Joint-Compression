@@ -73,6 +73,82 @@ def activation_weighted_saliency(
     return weight.abs() * column_norms.to(weight.dtype).unsqueeze(0)
 
 
+def keep_benefit_saliency(
+    dense_weight: torch.Tensor,
+    quantised_weight: torch.Tensor,
+    column_norms: torch.Tensor,
+) -> torch.Tensor:
+    """Score weights by how much is gained by keeping them *in quantised form* rather than pruning.
+
+    .. code-block:: text
+
+        B_ij = ||X_j||^2 * [  W_ij^2  -  (W_ij - Q(W_ij))^2  ]
+                              ^^^^^^^     ^^^^^^^^^^^^^^^^^^
+                              error if    error if kept but
+                              pruned      quantised
+
+    Under a diagonal approximation to the layer Hessian, the first term is the output error caused by
+    zeroing the weight and the second is the error caused by keeping it on the grid. Their difference
+    is what keeping it actually buys.
+
+    It is **not** a tunable blend -- there is no free coefficient to fit -- so it does not fall under
+    the standing prohibition on ``alpha*|w| + beta*|w - Q(w)|`` scores in
+    ``method_definition.md#mask-scoring``. Both terms are error estimates in the same units.
+
+    **Measured worse than plain activation-weighted magnitude, and off by default.** Layer-objective
+    joint gain on six real Pythia-160M layers falls from +1.12% to -16.15% at W4. Retained as a
+    declared ablation, because the reason it fails is informative:
+
+    For round-to-nearest symmetric quantisation the score is bounded below by zero. If
+    ``|W| < s/2`` then ``Q(W) = 0``, both error terms equal ``W^2``, and ``B = 0`` exactly;
+    otherwise ``|W - Q(W)| <= s/2 <= |W|`` so ``B >= 0``. And for any weight comfortably above the
+    step size, ``(W - Q(W))^2`` is roughly uniform in ``[0, (s/2)^2]`` and nearly independent of
+    ``W``, which leaves
+
+    .. code-block:: text
+
+        B_ij ~= ||X_j||^2 * W_ij^2 - (a near-constant)
+
+    a monotone transform of activation-weighted magnitude. So the criterion mostly *reproduces* the
+    magnitude ranking, and where it deviates it prefers weights that happen to sit near a grid
+    point -- a property of the current scale rather than a statement about importance. That is why
+    it costs quality instead of buying it.
+
+    The sequential arm cannot use this at all: it has no quantiser at mask time. That asymmetry *is*
+    the pipeline difference under study, not an unfair advantage.
+
+    Args:
+        dense_weight: The original weight, shape ``(out_features, in_features)``.
+        quantised_weight: The same weight after fake quantisation, same shape.
+        column_norms: Per-input-column activation norms, shape ``(in_features,)``.
+
+    Returns:
+        Non-negative scores of the same shape, zero wherever the weight quantises to zero.
+
+    Raises:
+        SaliencyError: If the shapes are inconsistent.
+    """
+    if dense_weight.shape != quantised_weight.shape:
+        raise SaliencyError(
+            f"dense and quantised weights must match: {tuple(dense_weight.shape)} vs "
+            f"{tuple(quantised_weight.shape)}"
+        )
+    if dense_weight.ndim != 2:
+        raise SaliencyError(
+            f"expected a 2-D (out_features, in_features) weight, got {tuple(dense_weight.shape)}"
+        )
+    if column_norms.ndim != 1 or column_norms.shape[0] != dense_weight.shape[1]:
+        raise SaliencyError(
+            f"column_norms must have shape ({dense_weight.shape[1]},) to match in_features, got "
+            f"{tuple(column_norms.shape)}"
+        )
+
+    energy = (column_norms.to(dense_weight.dtype) ** 2).unsqueeze(0)
+    pruned_error = dense_weight**2
+    kept_error = (dense_weight - quantised_weight) ** 2
+    return energy * (pruned_error - kept_error)
+
+
 class Pruner(Compressor):
     """Magnitude-based pruning followed by recovery fine-tuning.
 

@@ -32,8 +32,15 @@ from typing import TYPE_CHECKING, Any
 
 from scale_aware_compression.compression.activations import ActivationStatistics
 from scale_aware_compression.compression.masks import build_mask_from_scores, realised_sparsity
-from scale_aware_compression.compression.pruning import activation_weighted_saliency
-from scale_aware_compression.compression.quantisation import fake_quantise
+from scale_aware_compression.compression.pruning import (
+    activation_weighted_saliency,
+    keep_benefit_saliency,
+)
+from scale_aware_compression.compression.quantisation import (
+    compute_symmetric_scales,
+    fake_quantise,
+    search_clipping_scales,
+)
 from scale_aware_compression.compression.reconstruct import reconstruct
 from scale_aware_compression.constants import (
     PruningGranularity,
@@ -85,6 +92,37 @@ class LayerPlan:
     damping: float = 1e-2
     block_size: int = 128
     activation_order: bool = True
+    scale_search: bool = False
+    """Fit scales by minimising *pre-reconstruction* error rather than matching ``max|W|``.
+
+    **Off by default because measurement says it hurts.** It reduces naive quantisation error by
+    12.8% at W4 on real Pythia-160M layers, but the layer objective *after* reconstruction gets
+    worse (joint-vs-sequential gain at W4: +1.12% with max-abs, -0.99% with the search). The two
+    objectives are not the same one: clipping saturates outliers, and a saturated weight cannot be
+    repaired by error compensation afterwards.
+
+    Retained as an ablation. A version that searched the clipping ratio against the *post*-
+    reconstruction objective would be the principled fix, at the cost of one full sweep per
+    candidate ratio.
+
+    When on, it applies to **every** arm -- giving the joint arm a better quantiser than the
+    sequential arm would produce a "joint gain" that was really a quantiser difference (§3.11).
+    """
+    keep_benefit_saliency: bool = False
+    """Score the mask by keep-versus-prune benefit rather than quantised magnitude.
+
+    **Off by default because measurement says it hurts badly.** Layer-objective joint gain on real
+    Pythia-160M layers falls to -11.83% at W8 and -16.15% at W4, with one layer at -62.9%.
+
+    The likely reason is that the criterion assumes the pruned weight's contribution is simply lost.
+    Under error-compensating reconstruction it is not -- the survivors absorb it -- so "this weight
+    quantises badly right now" is a poor predictor of whether removing it will hurt after the solve.
+    A criterion consistent with reconstruction would need the inverse-Hessian term, not a diagonal
+    approximation.
+
+    Retained as an ablation, because "the obvious quantisation-aware criterion is worse than
+    magnitude" is a reportable result rather than a dead end.
+    """
 
     @property
     def prunes(self) -> bool:
@@ -112,6 +150,9 @@ class LayerPlan:
             self.pruning_granularity,
             self.solver,
             self.damping,
+            # The quantiser must be identical across arms, so the scale-fitting rule is part of the
+            # budget rather than a per-arm choice.
+            self.scale_search,
         )
 
 
@@ -253,6 +294,26 @@ def compress_layer(
     first_naive_loss: float | None = None
     last_final_loss = 0.0
 
+    def fit_scales(target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor | None:
+        """Fit the quantisation grid for the current mask. Identical procedure for every arm."""
+        if not plan.quantises:
+            return None
+        if not plan.scale_search:
+            return compute_symmetric_scales(
+                target * mask,
+                bits=plan.bits,
+                granularity=plan.granularity,
+                group_size=plan.group_size,
+            )
+        return search_clipping_scales(
+            target,
+            gram,
+            bits=plan.bits,
+            mask=mask,
+            granularity=plan.granularity,
+            group_size=plan.group_size,
+        )
+
     def solve(
         target: torch.Tensor,
         mask: torch.Tensor,
@@ -271,6 +332,7 @@ def compress_layer(
             granularity=plan.granularity,
             group_size=plan.group_size,
             block_size=plan.block_size,
+            scales=fit_scales(target, mask) if bits is not None else None,
         )
         steps_used += max(1, plan.local_steps)
         if first_naive_loss is None:
@@ -279,10 +341,36 @@ def compress_layer(
         return outcome.weight
 
     def mask_from(scored: torch.Tensor) -> torch.Tensor:
+        """Mask from activation-weighted magnitude -- the criterion with no quantiser."""
         if not plan.prunes:
             return torch.ones_like(scored, dtype=torch.bool)
         return build_mask_from_scores(
             activation_weighted_saliency(scored, column_norms),
+            sparsity=plan.sparsity,
+            granularity=plan.pruning_granularity,
+        )
+
+    def quantisation_aware_mask(current: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        """Mask from keep-versus-prune benefit, which needs a fitted quantiser.
+
+        This is the mechanism §3.8 asks for. Falls back to quantised-magnitude scoring when
+        ``keep_benefit_saliency`` is off, so the weaker criterion stays available as an ablation.
+        """
+        if not plan.prunes or not plan.quantises:
+            return mask_from(current)
+
+        scales = fit_scales(current, mask)
+        quantised = fake_quantise(
+            current * mask,
+            bits=plan.bits,
+            granularity=plan.granularity,
+            group_size=plan.group_size,
+            scales=scales,
+        )
+        if not plan.keep_benefit_saliency:
+            return mask_from(quantised)
+        return build_mask_from_scores(
+            keep_benefit_saliency(weight, quantised, column_norms),
             sparsity=plan.sparsity,
             granularity=plan.pruning_granularity,
         )
@@ -306,29 +394,22 @@ def compress_layer(
 
     elif arm == "sequential_qp":
         # Q->P reverse ablation (§3.6). The quantiser is fitted first, so the mask does see the
-        # grid -- but the scales are never revisited after the mask changes, which is what §3.8
-        # lists as disqualifying it from being joint.
+        # grid -- but the scales are fitted once against the dense tensor and never revisited after
+        # the mask moves, which is what §3.8 lists as disqualifying it from being joint.
         quantised = solve(weight, keep_all, bits=plan.bits)
-        mask = mask_from(quantised)
+        mask = quantisation_aware_mask(quantised, keep_all)
         compressed = solve(quantised, mask, bits=plan.bits)
 
     elif arm == "joint":
+        # §3.7's alternation. Each iteration re-fits the grid for the current mask, rescores the
+        # mask against that grid, and reconstructs -- so mask and quantiser each inform the other.
         mask = mask_from(weight)
         current = weight
         for _ in range(plan.joint_iterations):
-            # §3.8, both requirements, in one loop body: score the mask against the quantised
-            # weights, and re-estimate the scales after the mask moves.
-            scored = (
-                fake_quantise(
-                    current * mask,
-                    bits=plan.bits,
-                    granularity=plan.granularity,
-                    group_size=plan.group_size,
-                )
-                if plan.quantises
-                else current
-            )
-            mask = mask_from(scored)
+            mask = quantisation_aware_mask(current, mask)
+            # Always solve against the ORIGINAL dense weight. Letting the target drift with the
+            # iterate would optimise towards the previous approximation instead of the true layer
+            # output, and the objective would stop being comparable between arms.
             current = solve(weight, mask, bits=plan.bits)
         compressed = current
 

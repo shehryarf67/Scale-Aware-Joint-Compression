@@ -218,6 +218,7 @@ def reconstruct(
     group_size: int = 128,
     block_size: int = 128,
     reestimate_scales: bool = True,
+    scales: torch.Tensor | None = None,
 ) -> ReconstructionResult:
     """Reconstruct a layer's weights under a fixed mask, optionally on a quantisation grid.
 
@@ -239,6 +240,10 @@ def reconstruct(
         group_size: Elements per quantisation group, for per-group granularity.
         block_size: Column block width, used by ``SWEEP`` only.
         reestimate_scales: Refit scales on survivors at each projection, ``ALS`` only.
+        scales: Pre-fitted quantisation scales. Supplied by the layerwise driver, which fits them
+            once per mask by minimising reconstruction error; passing them keeps the grid identical
+            between the naive baseline and the reconstructed result, so the reported improvement
+            isolates reconstruction rather than mixing in a scale change.
 
     Returns:
         The result, including the naive baseline it was measured against.
@@ -256,6 +261,7 @@ def reconstruct(
             granularity=granularity,
             group_size=group_size,
             block_size=block_size,
+            scales=scales,
         )
     if solver is not ReconstructionSolver.ALS:
         raise ReconstructionError(f"unknown solver {solver!r}")
@@ -269,6 +275,7 @@ def reconstruct(
         granularity=granularity,
         group_size=group_size,
         reestimate_scales=reestimate_scales,
+        scales=scales,
     )
 
 
@@ -283,6 +290,7 @@ def als_reconstruct(
     granularity: QuantisationGranularity = QuantisationGranularity.PER_CHANNEL,
     group_size: int = 128,
     reestimate_scales: bool = True,
+    scales: torch.Tensor | None = None,
 ) -> ReconstructionResult:
     """Damped alternating refinement -- the reference solver.
 
@@ -307,9 +315,10 @@ def als_reconstruct(
         bits: Quantisation bit width, or ``None`` for pruning-only reconstruction.
         granularity: Quantisation granularity, when ``bits`` is set.
         group_size: Elements per quantisation group, for per-group granularity.
-        reestimate_scales: Refit scales on the surviving weights at each projection. §3.8 requires
-            this for the joint arm; leaving it on for every arm keeps the solver identical across
-            arms, which is what makes the comparison about pipeline order alone.
+        reestimate_scales: Refit scales on the surviving weights at each projection. Ignored when
+            ``scales`` is supplied.
+        scales: Pre-fitted quantisation scales, used for both the naive baseline and every
+            projection so the reported improvement isolates reconstruction from any scale change.
 
     Returns:
         The result, including the naive baseline it was measured against.
@@ -452,6 +461,7 @@ def sweep_reconstruct(
     group_size: int = 128,
     block_size: int = 128,
     activation_order: bool = True,
+    scales: torch.Tensor | None = None,
 ) -> ReconstructionResult:
     """Error-compensated column sweep -- the solver that makes wide layers tractable.
 
@@ -487,6 +497,9 @@ def sweep_reconstruct(
         group_size: Elements per quantisation group, for per-group granularity.
         block_size: Columns processed before the accumulated error is flushed to the remaining
             columns. Purely a memory/throughput knob; it does not change the result.
+        scales: Pre-fitted quantisation scales. Shared with the naive baseline, so the reported
+            improvement measures reconstruction alone rather than mixing in a change of grid.
+            Per-channel and per-tensor scales are invariant to the activation-order permutation.
         activation_order: Visit columns in descending order of activation energy
             (``diag(H)``) rather than left to right. A one-pass sweep commits early columns before
             it has seen the later ones, so whichever columns go first effectively get the least
@@ -523,21 +536,36 @@ def sweep_reconstruct(
     in_features = dense_weight.shape[1]
     keep = mask.to(dense_weight.dtype)
 
+    # Scales are fitted once and held for the whole sweep. Refitting mid-sweep would move the grid
+    # under columns already committed, so the errors propagated earlier would no longer correspond
+    # to the values finally stored. The joint arm re-estimates between its outer iterations instead,
+    # which is where §3.8 asks for it.
+    #
+    # Per-channel and per-tensor scales are invariant to the activation-order permutation, which
+    # reorders columns only; per-group ordering is disabled above precisely because it is not.
+    grid_scales = scales
+    if bits is not None and grid_scales is None:
+        grid_scales = _scales_for(dense_weight * keep, bits, granularity, group_size)
+
     def quantise_all(candidate: torch.Tensor) -> torch.Tensor:
+        """Snap to the grid using the *same* scales the sweep will use.
+
+        Sharing the grid is what makes ``naive_loss`` a fair reference: if the baseline fitted its
+        own max-abs scales while the sweep used searched ones, the reported improvement would be
+        part reconstruction and part scale change, and neither could be attributed.
+        """
         if bits is None:
             return candidate
-        return fake_quantise(candidate, bits=bits, granularity=granularity, group_size=group_size)
+        return fake_quantise(
+            candidate,
+            bits=bits,
+            granularity=granularity,
+            group_size=group_size,
+            scales=grid_scales,
+        )
 
     naive = quantise_all(dense_weight * keep) * keep
     naive_loss = reconstruction_loss(gram, dense_weight, naive)
-
-    # Scales are fitted once, to the masked dense weight, and held for the sweep. Refitting them
-    # mid-sweep would move the grid under columns already committed, so the errors propagated
-    # earlier would no longer correspond to the values finally stored. The joint arm re-estimates
-    # scales between its outer iterations instead, which is where §3.8 asks for it.
-    grid_scales = None
-    if bits is not None:
-        grid_scales = _scales_for(dense_weight * keep, bits, granularity, group_size)
 
     inverse = _inverse_cholesky(gram.to(torch.float32), damping)
     working = dense_weight.to(torch.float32).clone()

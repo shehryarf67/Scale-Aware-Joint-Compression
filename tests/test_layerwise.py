@@ -319,6 +319,121 @@ class TestJointIsGenuinelyJoint:
         assert not torch.equal(coarse.mask, fine.mask)
 
 
+class TestMeasuredAblations:
+    """Two proposed fixes for the weak joint mechanism, both measured and both rejected.
+
+    Documented here because a negative result that lives only in a commit message gets re-proposed.
+    Numbers are means over six real Pythia-160M layers at 50% sparsity, matched budget, measuring
+    layer-objective joint gain (positive = joint reconstructs better than sequential):
+
+    ==========================  ========  ========
+    Configuration                     W8        W4
+    ==========================  ========  ========
+    max-abs, magnitude score      -0.49%    +1.12%
+    + clipping scale search       -1.51%    -0.99%
+    + keep-benefit scoring       -11.83%   -16.15%
+    ==========================  ========  ========
+    """
+
+    def test_both_ablations_are_off_by_default(self):
+        """The defaults must be the configuration that measured best, not the newest idea."""
+        plan = LayerPlan()
+        assert plan.scale_search is False
+        assert plan.keep_benefit_saliency is False
+
+    def test_the_scale_rule_is_part_of_the_matched_budget(self):
+        """Two arms with different quantisers are not comparable, whichever rule is chosen."""
+        with pytest.raises(LayerwiseError, match="budget"):
+            assert_matched_plans(
+                [
+                    LayerwiseReport(arm="sequential", module_names=["a"], total_local_steps=1),
+                    LayerwiseReport(arm="joint", module_names=["a"], total_local_steps=1),
+                ],
+                [moderate_plan(scale_search=False), moderate_plan(scale_search=True)],
+            )
+
+    def test_the_clipping_search_still_reduces_naive_quantisation_error(self, layer_inputs):
+        """The search is not broken -- it optimises a different objective than the one that matters.
+
+        It genuinely minimises error *before* reconstruction. That it degrades the result *after*
+        reconstruction is the finding, and the reason it stays off.
+        """
+        from scale_aware_compression.compression.quantisation import (
+            compute_symmetric_scales,
+            fake_quantise,
+            search_clipping_scales,
+        )
+        from scale_aware_compression.compression.reconstruct import reconstruction_loss
+
+        weight, statistics = layer_inputs
+        gram = statistics.gram()
+        mask = build_mask_from_scores_for(weight, statistics)
+
+        max_abs = compute_symmetric_scales(weight * mask, bits=3)
+        searched = search_clipping_scales(weight, gram, bits=3, mask=mask)
+
+        def loss(scales):
+            candidate = fake_quantise(weight * mask, bits=3, scales=scales) * mask
+            return reconstruction_loss(gram, weight, candidate)
+
+        assert loss(searched) <= loss(max_abs)
+
+    def test_keep_benefit_can_rank_a_large_weight_below_a_smaller_one(self, layer_inputs):
+        """Confirms the criterion does what it claims, even though it measures worse overall.
+
+        This is the property magnitude ranking cannot express, and it is why the idea was worth
+        testing rather than dismissing.
+        """
+        import torch
+
+        from scale_aware_compression.compression.pruning import keep_benefit_saliency
+        from scale_aware_compression.compression.quantisation import fake_quantise
+
+        weight, statistics = layer_inputs
+        norms = statistics.column_norms()
+        quantised = fake_quantise(weight, bits=2)
+
+        benefit = keep_benefit_saliency(weight, quantised, norms)
+        magnitude = weight.abs() * norms.unsqueeze(0)
+
+        # Ranking disagreements exist: the two criteria are not monotone in each other.
+        benefit_order = benefit.reshape(-1).argsort()
+        magnitude_order = magnitude.reshape(-1).argsort()
+        assert not torch.equal(benefit_order, magnitude_order)
+
+    def test_keep_benefit_is_non_negative_and_zero_where_weights_vanish(self, layer_inputs):
+        """Explains *why* the criterion underperforms, rather than just recording that it does.
+
+        For round-to-nearest symmetric quantisation the score cannot go below zero. If
+        ``|W| < s/2`` then ``Q(W) = 0``, both error terms equal ``W^2``, and the benefit is exactly
+        zero; otherwise ``|W - Q(W)| <= s/2 <= |W|``. So it can never express "this weight is
+        actively harmful to keep", which was the property that motivated trying it.
+        """
+        import torch
+
+        from scale_aware_compression.compression.pruning import keep_benefit_saliency
+        from scale_aware_compression.compression.quantisation import fake_quantise
+
+        weight, statistics = layer_inputs
+        quantised = fake_quantise(weight, bits=2)
+        benefit = keep_benefit_saliency(weight, quantised, statistics.column_norms())
+
+        assert bool((benefit >= 0).all())
+        # Exactly zero wherever the weight rounded away entirely.
+        vanished = quantised == 0
+        assert torch.allclose(benefit[vanished], torch.zeros_like(benefit[vanished]))
+
+
+def build_mask_from_scores_for(weight, statistics):
+    """Helper: the sequential arm's mask for a layer, at 50% sparsity."""
+    from scale_aware_compression.compression.masks import build_mask_from_scores
+    from scale_aware_compression.compression.pruning import activation_weighted_saliency
+
+    return build_mask_from_scores(
+        activation_weighted_saliency(weight, statistics.column_norms()), sparsity=0.5
+    )
+
+
 class TestFairnessInvariants:
     """§3.11 as machine-checkable assertions rather than documented intent."""
 
