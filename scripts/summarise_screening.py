@@ -98,16 +98,17 @@ def _window(quality: dict[str, Any], key: str) -> int | None:
 
 
 def _retention(quality: dict[str, Any]) -> float | None:
-    """Pull perplexity retention as a percentage, whichever key the record used."""
-    for key in ("perplexity_retention_percentage", "quality_retention_percentage", "retention"):
-        value = quality.get(key)
+    """Pull perplexity retention as a percentage from a record's quality payload.
+
+    The record nests it as ``quality.retention.perplexity_retention``. Read from the record rather
+    than recomputed from perplexities, so this reports the same number the run itself recorded
+    against its own dense reference.
+    """
+    nested = quality.get("retention")
+    if isinstance(nested, dict):
+        value = nested.get("perplexity_retention")
         if value is not None:
             return float(value)
-    nested = quality.get("retention") or {}
-    if isinstance(nested, dict):
-        for key in ("perplexity_retention_percentage", "percentage"):
-            if nested.get(key) is not None:
-                return float(nested[key])
     return None
 
 

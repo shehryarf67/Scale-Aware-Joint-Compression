@@ -575,6 +575,39 @@ class ExperimentConfig:
     benchmark: BenchmarkConfig = field(default_factory=BenchmarkConfig)
     sweep: SweepConfig = field(default_factory=SweepConfig)
 
+    def __post_init__(self) -> None:
+        """Validate facts that span more than one section.
+
+        Section dataclasses can only see their own fields, so a contradiction *between* sections
+        goes unnoticed until a run behaves unexpectedly.
+        """
+        # `evaluation.max_samples` overrides `data.max_eval_samples` for the evaluation loader, which
+        # is deliberate. But `data.max_eval_samples` has a second job: when calibration is drawn from
+        # the same split as evaluation, it is the size of the prefix reserved for evaluation, and
+        # calibration is drawn only from beyond it. Evaluating *more* sequences than were reserved
+        # therefore walks into the calibration set, and §4.1 requires the two be disjoint.
+        #
+        # Only checked when the splits coincide. With calibration on train and evaluation on
+        # validation the sets cannot overlap however the caps are set.
+        data_cap = self.data.max_eval_samples
+        evaluation_cap = self.evaluation.max_samples
+        shared_split = self.data.calibration_split == self.data.eval_split
+        if shared_split and evaluation_cap is not None:
+            if data_cap is None:
+                raise ConfigError(
+                    "data.calibration_split equals data.eval_split, so data.max_eval_samples sets "
+                    "the prefix reserved for evaluation. It cannot be null, or calibration and "
+                    "evaluation would be drawn from the same sequences (§4.1 requires disjoint)."
+                )
+            if evaluation_cap > data_cap:
+                raise ConfigError(
+                    f"evaluation.max_samples={evaluation_cap} exceeds "
+                    f"data.max_eval_samples={data_cap} while calibration and evaluation share the "
+                    f"{self.data.eval_split!r} split. Only {data_cap} sequences are reserved for "
+                    "evaluation, so the run would evaluate on sequences the calibration set was "
+                    "drawn from. §4.1 requires them disjoint."
+                )
+
     @classmethod
     def from_mapping(cls, document: Mapping[str, Any]) -> ExperimentConfig:
         """Build a config from an already-merged mapping.

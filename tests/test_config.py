@@ -330,6 +330,60 @@ class TestShippedConfigs:
             config = ExperimentConfig.from_mapping(load_document(path))
             assert config.benchmark.device is Device.CPU
 
+    def test_shared_split_cannot_evaluate_past_the_reserved_prefix(
+        self, minimal_config_document: dict
+    ):
+        """§4.1 requires calibration and evaluation disjoint.
+
+        When both are drawn from the same split, ``data.max_eval_samples`` is the prefix reserved for
+        evaluation and calibration comes only from beyond it. Evaluating more sequences than were
+        reserved therefore walks straight into the calibration set -- silently, and in a way that
+        inflates the evaluation score for every arm equally, so no comparison looks wrong.
+        """
+        import copy
+
+        document = copy.deepcopy(minimal_config_document)
+        document["data"].update(
+            {"calibration_split": "validation", "eval_split": "validation", "max_eval_samples": 32}
+        )
+        document.setdefault("evaluation", {})["max_samples"] = 64
+
+        with pytest.raises(ConfigError, match="disjoint"):
+            ExperimentConfig.from_mapping(document)
+
+    def test_shared_split_requires_a_reserved_prefix(self, minimal_config_document: dict):
+        """A null cap on a shared split means nothing is reserved at all."""
+        import copy
+
+        document = copy.deepcopy(minimal_config_document)
+        document["data"].update(
+            {
+                "calibration_split": "validation",
+                "eval_split": "validation",
+                "max_eval_samples": None,
+            }
+        )
+        document.setdefault("evaluation", {})["max_samples"] = 16
+
+        with pytest.raises(ConfigError, match="cannot be null"):
+            ExperimentConfig.from_mapping(document)
+
+    def test_separate_splits_may_set_the_caps_independently(self, minimal_config_document: dict):
+        """With calibration on train and evaluation on validation the sets cannot overlap.
+
+        The guard must not fire here, or it would forbid the arrangement every shipped config uses.
+        """
+        import copy
+
+        document = copy.deepcopy(minimal_config_document)
+        document["data"].update(
+            {"calibration_split": "train", "eval_split": "validation", "max_eval_samples": 32}
+        )
+        document.setdefault("evaluation", {})["max_samples"] = 512
+
+        config = ExperimentConfig.from_mapping(document)
+        assert config.evaluation.max_samples == 512
+
     def test_experiment_configs_parse(self, configs_dir: Path):
         files = self._yaml_files(configs_dir / "experiments")
         assert {path.name for path in files} == {

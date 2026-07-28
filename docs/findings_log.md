@@ -77,10 +77,20 @@ Resolved with `HfApi().model_info(repo_id, revision="main").sha`. All **standard
 | Calibration (pilot) | 16 sequences + 3 held-out, seed 1234 | indices `20bf57e6b08ed60d`, tokens `4914adc5531d4aad` |
 | Calibration (128-sample probe) | 128 sequences | `60fc1307e7c7e0ac` |
 
-> **Every perplexity in §3 uses the pilot evaluation window: 64 sequences × 256 tokens = 16,320
-> tokens.** This is *not* the protocol published papers use (full test set at a 2048-token context),
-> so these numbers are **not** directly comparable with the literature. They are internally
-> comparable with each other, which is what the arm comparison needs.
+### ⚠ Two evaluation windows exist. Never mix them.
+
+| Window | Used by | Sequences × tokens | Total tokens | Dense reference |
+| --- | --- | --- | --- | --- |
+| **Pilot** | §3 exploratory table, [F-07](#f-07), [F-08](#f-08) | 64 × 256 | 16,320 | **34.77** |
+| **Screening** | [F-10](#f-10) | 493 × 512 (whole validation split) | 252,416 | **36.97** |
+
+Retention is computed against the dense run *in the same window*, so a retention figure is meaningful
+only within its own window and a perplexity is meaningless without one.
+`scripts/summarise_screening.py` refuses to print a table spanning both.
+
+Neither window is the protocol published papers use (full test set at a 2048-token context), so
+**none** of these numbers is directly comparable with the literature. They are internally comparable,
+which is what the arm comparison needs.
 
 ---
 
@@ -312,12 +322,77 @@ quality — but the paper must not present these absolute numbers as comparable 
 This is the evidence that the pipeline is sound independently of the quality question in F-08: the
 budget is exactly hit, the precision is real, and every layer's objective improves.
 
+### F-10 — Phase 7 screening: only one of the four planned budgets is usable at 160M {#f-10}
+
+*2026-07-28 · Pythia-160M `50f5173d` · **493 sequences × 512 tokens** (the whole WikiText-2 validation
+split, 252,416 tokens) · calibration 128 sequences · seed 1234 · per-output masks, sweep solver, one
+local step, 4 joint iterations · dense reference **36.97***
+
+The §5.3 grid, sequential and joint at every budget. Evidence table also written to
+`outputs/tables/screening_summary.md` by `scripts/summarise_screening.py`.
+
+| Budget | Sparsity | Bits | Sequential ppl | Joint ppl | Seq ret. | Joint ret. | Joint gain (pp) | Verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| S1 `s1_30_w8` | 30% | W8 | 45.97 | 45.93 | **80.4%** | **80.5%** | +0.06 | **ELIGIBLE** |
+| S2 `s2_50_w8` | 50% | W8 | 161.46 | 163.85 | 22.9% | 22.6% | −0.33 | CATASTROPHIC |
+| S3 `s3_50_w4` | 50% | W4 | 250.25 | 256.74 | 14.8% | 14.4% | −0.37 | CATASTROPHIC |
+| S4 `s4_70_w4` | 70% | W4 | 4663.88 | 4802.72 | 0.8% | 0.8% | −0.02 | CATASTROPHIC |
+
+Thresholds applied: "measurably degraded" below 99% retention, "catastrophic" below 50%. Neither bound
+is a number in the plan, so both are stated in the tool's output rather than hidden inside a verdict.
+
+**The finding is that §5.3's grid does not contain two usable budgets at this scale.** Only S1
+survives. S2 at 22.9% retention and S3 at 14.8% are broken models, and S4 at 0.8% — perplexity 4664
+against a dense 36.97 — is a collapsed one. This supersedes the assumption behind the shipped
+`main_scale_sweep.yaml`, whose moderate/aggressive pair was 50% + W8 and 70% + W4: **both of those are
+catastrophic at 160M.**
+
+Consistent with [F-08](#f-08), which found the same shape at the pilot window, and with much less
+compute. The absolute numbers differ because the window differs (dense 36.97 here versus 34.77 at
+64 × 256) and are not comparable between the two; the ordering and the verdicts are.
+
+**Joint did not beat sequential at any budget.** The gains are +0.06, −0.33, −0.37 and −0.02
+percentage points of retention. **No sign here is interpretable.** §5.5 gives screening one seed and
+§6.3 requires a gain to exceed the seed spread before it counts, and the seed spread is unmeasured.
+What can be said is that nothing in this grid contradicts [F-05](#f-05)'s prediction that the joint
+mechanism is close to inert at W8.
+
+Cost: 9 cells, ~9 minutes each, ~80 minutes wall-clock on the Omen.
+
+**Consequence: the two budgets §5.3 requires cannot both be chosen from this grid.** Options are set
+out in [STATUS.md](STATUS.md); the choice is a human one and is not recorded here until made.
+
+### F-11 — Two config traps found while setting screening up {#f-11}
+
+*2026-07-28 · neither affected the F-10 numbers, both would have later*
+
+**The evaluation window was not the one the config asked for.** `screening.yaml` set
+`data.max_eval_samples: 256`; the run evaluated 493. Two keys cap the evaluation set and
+`evaluation.max_samples` is the one the evaluation path honours — it was inherited as 512 from an
+included config, and the validation split holds only 493 blocks at 512 tokens. Every shipped config
+happened to keep the two equal, so the trap had never fired.
+
+Harmless here: all nine cells used the same window, so the comparison is internally valid, and 493 is
+the *whole* split rather than a subsample. The config now states 512 and explains why.
+
+**The real hazard was adjacent, and worse.** `data.max_eval_samples` is not a duplicate — when
+calibration is drawn from the *same* split as evaluation, it is the size of the prefix reserved for
+evaluation, and calibration comes only from beyond it. So an `evaluation.max_samples` larger than
+`data.max_eval_samples` on a shared split evaluates on sequences the calibration set was drawn from,
+which §4.1 forbids. It would inflate every arm's score equally, so no comparison would look wrong.
+
+`ExperimentConfig.__post_init__` now rejects that combination, and only that combination — an earlier
+attempt required the two keys to be equal always, which was wrong because their defaults differ and it
+would have forbidden the arrangement every shipped config uses. Three tests cover it.
+
 ---
 
 ## 3. All end-to-end perplexities in one table
 
-Pythia-160M at `50f5173d`, `Salesforce/wikitext` validation, **64 sequences × 256 tokens (16,320
-tokens)**, seed 1234, calibration `20bf57e6b08ed60d`, CPU evaluation, one seed each.
+**Pilot window only.** Pythia-160M at `50f5173d`, `Salesforce/wikitext` validation, **64 sequences ×
+256 tokens (16,320 tokens)**, seed 1234, calibration `20bf57e6b08ed60d`, CPU evaluation, one seed each.
+The Phase 7 screening numbers are in [F-10](#f-10) and belong to a different window — do not read the
+two tables side by side.
 
 | # | Arm | Sparsity | Bits | Comparison group | Reconstruction | Perplexity | Retention |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -357,6 +432,9 @@ recording.
 | B-08 | `tiny_causal_lm` is session-scoped and compression is destructive | Driver tests leaked compressed weights into every later test in the suite, including other files |
 | B-09 | Tensor-wide mask comparison group | 6.7× perplexity ([F-07](#f-07)) |
 | B-10 | Packed metadata returned from `get_extra_state` as a dict | `save_pretrained` walks the state dict expecting tensors; the first full run crashed at save |
+| B-11 | `evaluation.max_samples` may exceed `data.max_eval_samples` on a shared split | Evaluates on sequences the calibration set was drawn from, violating §4.1. Inflates every arm equally, so no comparison looks wrong ([F-11](#f-11)) |
+| B-12 | Four identical dense cells planned per four-budget grid | Wasted compute plus near-duplicate records §10.4 asks the audit to reject |
+| B-13 | Sweep cells inherited the base config's model revision | Every cell pinned to the *first* model's SHA — fails to load, or silently loads the wrong weights if the SHA exists in both repos |
 
 Two of these were **masked by tests that should have caught them**: B-07 (the test disabled
 quantisation in its fixture) and B-09 (the synthetic layer was too well-behaved). Both crutches have

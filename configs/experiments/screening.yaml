@@ -53,10 +53,15 @@ data:
   # frozen budgets, so it runs the real thing rather than the cheap thing.
   calibration_samples: 128
   calibration_split: train
-  # 512-token windows and 256 evaluation sequences: enough that a budget comparison is not decided
-  # by evaluation noise. Still smaller than the main sweep's full window.
+  # 512-token windows over the WHOLE validation split (493 blocks), so a budget comparison is not
+  # decided by evaluation noise.
+  #
+  # This must equal evaluation.max_samples below. Only the evaluation section's value is honoured by
+  # the evaluation path; the first version of this file set 256 here, inherited 512 from the
+  # evaluation include, and evaluated all 493 blocks -- self-consistent across all nine cells, but
+  # not the window it claimed. ExperimentConfig now rejects the disagreement at load time.
   sequence_length: 512
-  max_eval_samples: 256
+  max_eval_samples: 512
   batch_size: 4
 
 compression:
