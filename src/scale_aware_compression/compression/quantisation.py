@@ -172,7 +172,8 @@ class Quantiser(Compressor):
             NotImplementedError: Always, in the current scaffold.
         """
         # TODO(quantisation): for 8-bit, use torch.ao.quantization.convert with the backend
-        # from config.backend ('x86' / 'fbgemm' / 'qnnpack'). For sub-8-bit, pack weights into
+        # from config.backend. On the pinned torch the only supported engine is 'onednn'; the
+        # familiar 'x86' / 'fbgemm' / 'qnnpack' names raise. For sub-8-bit, pack weights into
         # int8 storage with the scales kept alongside and swap in a custom linear module.
         # Set self.is_converted = True, and verify the checkpoint shrank as expected: a
         # conversion that silently no-ops is the failure mode this whole arm is exposed to.

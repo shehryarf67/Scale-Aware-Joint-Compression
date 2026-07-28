@@ -47,10 +47,13 @@ compression:
     # matters for validity is that the setting is identical across arms, not which one wins.
     granularity: per_channel
     group_size: 128
-    # 'x86' is the modern CPU backend; 'fbgemm' is its predecessor and 'qnnpack' targets ARM.
+    # Verified against the pinned torch 2.13.0+cu126 on the Omen: supported_engines is
+    # ['onednn'] ONLY. Setting 'x86', 'fbgemm' or 'qnnpack' raises "quantized engine is not
+    # supported" at runtime, so the older names are not usable here despite appearing in most
+    # PyTorch documentation. Re-probe after any torch upgrade before trusting a latency number.
     # The backend affects measured latency, so it is recorded in every run record -- and both arms
     # must use the same one for their latencies to be comparable.
-    backend: x86
+    backend: onednn
     observer: min_max
     calibration_samples: 128
     # Weight-only quantisation. Activation quantisation would change the latency picture

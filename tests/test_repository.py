@@ -9,6 +9,7 @@ Nothing here downloads a model, imports torch, or needs CUDA.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 
@@ -330,6 +331,49 @@ class TestCpuOnlyPolicyAcrossConfigs:
         for path in sorted(configs_dir.rglob("*.yaml")):
             config = ExperimentConfig.from_mapping(load_document(path))
             assert config.benchmark.num_threads >= 1
+
+    @pytest.mark.requires_torch
+    def test_shipped_quantisation_backend_exists_in_the_installed_torch(self, configs_dir: Path):
+        """A backend name torch does not recognise fails at conversion, after the compute is spent.
+
+        The configs originally shipped ``x86``, which every PyTorch tutorial names but which this
+        build rejects -- its only engine is ``onednn``. Asserting against the installed torch
+        turns a torch upgrade that renames engines into a failed test rather than a failed run.
+        """
+        import torch
+
+        supported = set(torch.backends.quantized.supported_engines)
+        for path in sorted(configs_dir.rglob("*.yaml")):
+            config = ExperimentConfig.from_mapping(load_document(path))
+            if not config.compression.quantisation.enabled:
+                continue
+            backend = config.compression.quantisation.backend
+            assert backend in supported, (
+                f"{path.name} requests quantisation backend {backend!r}, but the installed "
+                f"torch {torch.__version__} supports only {sorted(supported)}"
+            )
+
+
+class TestFrozenProtocolMatchesTheConfigs:
+    """§2.7 decisions must hold in the configs, not only in the freeze document."""
+
+    def test_every_model_config_pins_a_commit_sha(self, configs_dir: Path):
+        """A branch name is not a pin: a Hub repo can be updated in place under it."""
+        for path in sorted((configs_dir / "models").glob("*.yaml")):
+            config = ExperimentConfig.from_mapping(load_document(path))
+            revision = config.model.revision
+            assert revision is not None, f"{path.name} has an unpinned revision"
+            assert re.fullmatch(r"[0-9a-f]{40}", revision), (
+                f"{path.name} revision {revision!r} is not a 40-character commit SHA"
+            )
+
+    def test_no_pythia_config_uses_the_deduplicated_variant(self, configs_dir: Path):
+        """§2.7 forbids mixing standard and deduplicated Pythia across sizes."""
+        for path in sorted((configs_dir / "models").glob("*.yaml")):
+            config = ExperimentConfig.from_mapping(load_document(path))
+            assert "deduped" not in config.model.hf_id, (
+                f"{path.name} points at a deduplicated checkpoint: {config.model.hf_id}"
+            )
 
 
 class TestNoRunArtefactsCommitted:

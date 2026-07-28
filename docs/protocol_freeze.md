@@ -22,7 +22,7 @@ the plan section it follows from.
 
 | | |
 | --- | --- |
-| Latency backend | PyTorch native CPU INT8 (`x86` / fbgemm), one pinned thread count |
+| Latency backend | PyTorch native CPU INT8, engine **`onednn`**, one pinned thread count |
 | W8 | quality **and** size **and** latency |
 | W4 | quality **and** size only — **never** in a latency table |
 | Artefact | both arms convert through the same code path; `is_converted` proves it |
@@ -51,6 +51,44 @@ round-trip.
 
 **Cost, to be stated in the write-up:** no latency row for a combined W4 cell. Precision is a
 compression axis for quality and size, not for latency.
+
+#### Backend probe, 2026-07-28 — the engine is `onednn`, not `x86`
+
+Probed directly against the pinned torch rather than taken from documentation:
+
+```
+torch.__version__                          2.13.0+cu126
+torch.backends.quantized.supported_engines ['onednn']
+  engine = 'x86'      -> RuntimeError: quantized engine X86 is not supported
+  engine = 'fbgemm'   -> RuntimeError: quantized engine FBGEMM is not supported
+  engine = 'qnnpack'  -> RuntimeError: quantized engine QNNPACK is not supported
+  engine = 'onednn'   -> ok
+```
+
+An end-to-end check confirms the path is functional: `quantize_dynamic` on an `nn.Linear`
+produces a module whose stored weight dtype is genuinely `torch.qint8`, and its forward pass
+runs. So INT8 CPU deployment works — under the engine name `onednn` only.
+
+The shipped configs said `backend: x86`, which would have failed at conversion time. Corrected in
+[`quantisation.yaml`](../configs/compression/quantisation.yaml) and the `QuantisationConfig`
+default. A `requires_torch` test now asserts the shipped backend is one the installed torch
+actually reports, so a future torch upgrade that renames engines fails a test instead of a run.
+
+**Two deprecation warnings worth recording**, because they set a ceiling on how far the torch pin
+can move:
+
+1. `torch.ao.quantization` is deprecated, with `torchao` named as the migration target.
+2. The quantised dtypes `qint8` / `quint8` / `qint32` are deprecated
+   (pytorch/pytorch#184982).
+
+Neither blocks this study: §2.7 requires the environment pinned for its whole duration, so a
+deprecated-but-working path is acceptable and reproducible. It does mean **the torch version must
+not be upgraded mid-study**, and that a follow-on project should target `torchao` instead.
+
+Open question deferred to Phase 6, not resolved here: `torchao` advertises weight-only int4 CPU
+support. If that proves usable by *both* arms under one artefact format, the "no W4 latency row"
+limitation above could be lifted. That claim needs measuring, not assuming, and it is not on the
+Phase 5 path — the primitives are backend-independent.
 
 ### D2 — Reconstruction solver · **damped ALS first, Hessian sweep as a later drop-in**
 
@@ -132,7 +170,7 @@ that can manufacture a joint gain.
 | Decision | Frozen value | Source |
 | --- | --- | --- |
 | Pythia variant | **standard**, never deduped, all sizes | §2.7 |
-| Model revisions | ⛔ **not yet pinned** — see [Open](#still-open) | §2.7 |
+| Model revisions | **pinned**, see the SHA table below | §2.7 |
 | Target layers | decoder-block linears only, per the adapter table below | §2.6, §3.10 |
 | Layer exclusions | embeddings, LM head, LayerNorm, all biases | §3.10 |
 | Quantisation | weight-only, symmetric, per-channel; W8 and W4; group size 128 when per-group | §3.9 |
@@ -140,10 +178,29 @@ that can manufacture a joint gain.
 | Pruning granularity | global unstructured, identical across all sizes | §3.10 |
 | Saliency | activation-weighted magnitude; under `Q_b(W)` for joint (**D3**) | §3.3, §3.7 |
 | Screening sparsities | 30% / 50% / 70% of targeted weights | §3.10 |
-| Benchmark runtime | PyTorch native CPU INT8, `x86`; latency at W8 only (**D1**) | §2.7, §4.7 |
+| Benchmark runtime | PyTorch native CPU INT8, engine `onednn`; latency at W8 only (**D1**) | §2.7, §4.7 |
 | Scale x-axis | targeted non-embedding parameter count | §2.6 |
 | Seeds | 1 screening · 1 first pass · 3 confirmatory | §5.5 |
 | Run IDs | `<family>_<size>_<method>_<sparsity>_<bits>_<seed>` | §5.6 |
+
+### Pinned model revisions
+
+Resolved from the Hub on **2026-07-28** with
+`HfApi().model_info(repo_id, revision="main").sha` and written into the five model configs. A
+branch name is not a pin — a Hub repository can be updated in place, so an unpinned run may
+silently load different weights months later.
+
+| Config | Repository | Commit SHA |
+| --- | --- | --- |
+| `pythia_160m.yaml` | `EleutherAI/pythia-160m` | `50f5173d932e8e61f858120bcb800b97af589f46` |
+| `pythia_410m.yaml` | `EleutherAI/pythia-410m` | `9879c9b5f8bea9051dcb0e68dff21493d67e9d4f` |
+| `pythia_1b.yaml` | `EleutherAI/pythia-1b` | `f73d7dcc545c8bd326d8559c8ef84ffe92fea6b2` |
+| `pythia_1_4b.yaml` | `EleutherAI/pythia-1.4b` | `fedc38a16eea3bd36a96b906d78d11d2ce18ed79` |
+| `qwen2_5_0_5b.yaml` | `Qwen/Qwen2.5-0.5B` | `060db6499f32faf8b98477b0a26969ef7d8b9987` |
+
+Note every Pythia repository above is the **standard** variant. None carries a `-deduped` suffix,
+which is what §2.7's "never mix standard and deduplicated variants" requires — and it is checkable
+at a glance from this table.
 
 ### Targeted modules
 
@@ -177,13 +234,58 @@ Recorded per §10.2. **The HP Omen is the only machine that produces numbers.**
 | GPU | NVIDIA GeForce RTX 4050 Laptop — **6.0 GiB** VRAM, sm_89 (Ada) |
 | NVIDIA driver | 592.82 |
 | OS | Windows 11 Home 10.0.26200 |
-| Power profile | ⛔ **Balanced** — §4.7 requires a fixed performance mode; must be changed and re-recorded before any benchmark |
+| Power profile | **High performance** (`ad8e16f4-0e1d-4811-9f3b-165752347277`), set 2026-07-28 |
 | Python | 3.11.9 (`winget` user-scope install) |
 | torch | 2.13.0+cu126 |
 | transformers | 5.14.1 |
 | datasets | 5.0.0 |
 | numpy | 2.4.6 |
-| Thread count for benchmarks | ⛔ not yet pinned |
+| Thread count for benchmarks | **4** (`benchmark.num_threads`), in every shipped config |
+
+### Power profile, set 2026-07-28
+
+§4.7 requires "a fixed performance mode". The machine was on **Balanced**, whose processor
+throttle floor on AC was 5% against a 100% ceiling — the CPU was free to clock up and down
+between repetitions, which is variance injected directly into the quantity being measured.
+
+Windows 11 had hidden the legacy schemes on this laptop, so High performance was restored with
+`powercfg -duplicatescheme 8c5e7fda-…` and made active. Verified after the change:
+
+| Setting | AC value | Meaning |
+| --- | --- | --- |
+| `SUB_PROCESSOR PROCTHROTTLEMIN` | `0x64` = 100% | no downclocking |
+| `SUB_PROCESSOR PROCTHROTTLEMAX` | `0x64` = 100% | full frequency available |
+| `SUB_SLEEP STANDBYIDLE` | `0` | never sleeps — was 600 s, which would have killed a long sweep |
+| `SUB_SLEEP HIBERNATEIDLE` | `0` | never hibernates |
+
+Fully reversible: `powercfg /setactive 381b4222-f694-41f0-9685-ff5bb260df2e` restores Balanced.
+
+This pins *frequency policy*, not temperature. §4.7's other requirements still apply and are not
+optional: plug into power, close heavy applications, allow the machine to cool between benchmark
+blocks, run warm-up iterations, take 20–30 timed repetitions, report median / IQR / p95, and
+rotate model order. Thermal throttling under sustained load is exactly what the IQR and the
+cooldown rule exist to expose.
+
+### Thread count, and why 4
+
+Already pinned at **4** across every shipped config; recorded here with the reasoning, which was
+missing.
+
+The i7-13620H is **heterogeneous**: 6 performance cores (12 threads with SMT) plus 4 efficiency
+cores, 10 physical / 16 logical. That matters for a latency benchmark. A thread count above 6
+forces work onto E-cores or onto SMT siblings, and which one the scheduler picks can vary between
+repetitions — so the *same* model measured twice can differ for reasons that have nothing to do
+with compression.
+
+Four threads sits inside the P-core budget, so all four can be scheduled on physical performance
+cores with no E-core or SMT contention. It is also batch-size-1 realistic, which §4.7 names as the
+primary deployment setting.
+
+The absolute value matters less than that it never changes: §4.7 forbids comparing models measured
+under different thread counts, and `hardware` metadata is recorded per run so a violation is
+detectable after the fact. `configs/evaluation/cpu_benchmark.yaml` notes that a single-thread
+sweep is available as a *separate, self-consistent* comparison for the sparsity-scaling question —
+its numbers must not be mixed into a 4-thread table.
 
 ### ⛔ Blocker: Smart App Control
 
@@ -218,12 +320,14 @@ cannot be re-enabled without reinstalling Windows — so it is deliberately not 
 
 | Item | Why it is not frozen yet |
 | --- | --- |
-| Model revision SHAs | Requires querying the Hub. **Must** be pinned before any run whose numbers reach the paper (§2.7). Null revisions are acceptable only for a throwaway pilot. |
-| Calibration sample indices, token count, sequence length | Frozen by the config once `prepare_data.py` has run for real. Blocked on the environment. |
-| The two final budgets | Output of Phase 7 screening (S1–S4 on 160M). §5.3 requires them frozen **before** 1B. |
+| Calibration sample indices, token count, sequence length | Frozen by the config once `prepare_data.py` has run for real. The WikiText load path has still never been executed. |
+| The two final budgets | Output of Phase 7 screening (S1–S4 on 160M, confirmed on 410M). §5.3 requires them frozen **before** 1B. |
 | 1.4B go/no-go | §5.2 needs measured peak VRAM against 85% of 6.0 GiB — a 5.1 GiB ceiling, which is tight. Decide after Phase 5 profiling. |
-| Benchmark thread count | Pin once the environment runs; record here. |
-| Power profile | Change from Balanced to a fixed performance mode, then re-record. |
+| W4 latency via `torchao` | Deferred to Phase 6. Would lift D1's "no W4 latency row" limitation if a single 4-bit CPU path serves both arms. Needs measuring. |
+
+Closed since this file was opened: Smart App Control (disabled 2026-07-28, environment verified),
+the power profile (High performance), the benchmark thread count (4), the model revision SHAs (all
+five pinned), and the quantisation engine name (`onednn`, not `x86`).
 
 ---
 

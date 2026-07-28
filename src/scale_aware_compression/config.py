@@ -226,7 +226,7 @@ class QuantisationConfig:
     granularity: QuantisationGranularity = QuantisationGranularity.PER_CHANNEL
     group_size: int = 128
     """Only used when ``granularity`` is ``per_group``."""
-    backend: str = "x86"
+    backend: str = "onednn"
     """PyTorch quantised-kernel backend used for the CPU deployment model."""
     observer: str = "min_max"
     calibration_samples: int = 128

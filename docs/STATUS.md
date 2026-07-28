@@ -1,7 +1,7 @@
 # Project status
 
-**Last updated:** 2026-07-28 · first session on the HP Omen · Phase 0 decisions settled,
-environment blocked
+**Last updated:** 2026-07-28 · first session on the HP Omen · **Phase 0 complete**, environment
+verified and frozen
 
 > Read this first. It is the handoff between sessions and between machines. If it looks stale,
 > check `git log` — the truth is the commit history, this file is a summary of it.
@@ -13,45 +13,25 @@ environment blocked
 
 ---
 
-## 🛑 Blocker: Smart App Control is breaking the environment
+## ✅ Resolved: the Smart App Control blocker
 
-**Nothing numerical runs on the Omen right now.** Windows Smart App Control is enabled
-(`VerifiedAndReputablePolicyState = 1`, user-mode code integrity enforced) and is blocking the
-unsigned native extension modules the stack depends on.
+Smart App Control was enforcing user-mode code integrity and blocking the unsigned native
+extensions the stack depends on — `shm.dll` and `torch_cuda.dll` (torch), three pandas `.pyd`
+files, and `_regex` (a transformers dependency). It appeared *progressively*: the suite passed 502
+tests right after install, then torch stopped importing about thirty minutes later as the policy
+caught up with the newly written binaries.
 
-Confirmed blocked, from `Microsoft-Windows-CodeIntegrity/Operational` event 3077:
+**Turned off on 2026-07-28 and the machine rebooted.** Verified afterwards:
+`VerifiedAndReputablePolicyState = 0`, user-mode code integrity enforcement `0`, and `torch`,
+`pandas`, `regex` and `datasets` all import. The suite now runs in ~32 s rather than ~108 s,
+because torch is no longer retrying blocked loads.
 
-```
-shm.dll                           torch, core  -- blocks `import torch` outright
-torch_cuda.dll                    torch, CUDA
-ccalendar.cp311-win_amd64.pyd     pandas
-interval.cp311-win_amd64.pyd      pandas
-lib.cp311-win_amd64.pyd           pandas
-_regex.cp311-win_amd64.pyd        regex, a transformers dependency
-```
+This is **irreversible** — Smart App Control cannot be re-enabled without reinstalling Windows.
+Consequence worth remembering: this machine no longer screens unsigned executables, so be
+deliberate about what gets installed on it.
 
-**The blocks appeared progressively.** The full suite passed **502 tests** immediately after
-install; torch stopped importing roughly thirty minutes later as the policy caught up with the
-newly written binaries. So a green run is not evidence the environment is stable — re-check before
-trusting any result.
-
-What this takes out: torch (so all compression, evaluation, benchmarking), and separately pandas,
-which also takes out `datasets` (the WikiText load path) and the CSV/table writers.
-
-### The options
-
-| Option | Effect | Cost |
-| --- | --- | --- |
-| **A. Turn Smart App Control off** | Unblocks everything natively; cleanest measurement environment for §4.7 | **Irreversible** — SAC cannot be re-enabled without reinstalling Windows. Lowers the machine's security posture. |
-| **B. Move to WSL2** | Linux binaries are not subject to SAC; CUDA works via the existing 592.82 driver | Adds a virtualisation layer under the CPU benchmark. Acceptable only if *every* number comes from it, and it must be recorded as the runtime per §2.7. |
-| **C. Avoid the blocked packages** | Not viable — torch is the blocker, and it is not optional. | — |
-
-**Recommendation: A**, because §4.7 wants one pinned, unvirtualised runtime and the Omen is already
-designated the only machine that produces numbers. B is the fallback if turning SAC off is
-unacceptable. Either way, record the choice in
-[protocol_freeze.md](protocol_freeze.md#environment).
-
-This is a system-wide, irreversible setting, so it is deliberately **not** actioned here.
+If the environment ever appears to break again, re-check that state value first — a green test run
+is not by itself evidence the environment is stable.
 
 ---
 
@@ -62,11 +42,11 @@ settled**. No compression algorithm is implemented yet.
 
 | | State |
 | --- | --- |
-| Tests | **508** (502 + 6 new doc guards); last full green run was before the SAC blocks landed |
+| Tests | **511 passing** in ~32 s, offline |
 | Lint / format | `ruff check .` and `ruff format --check .` both clean |
 | CI | `.github/workflows/ci.yml` — lint, format, tests on push/PR to `main` |
-| Runnable today | **nothing** — see the blocker above |
-| Runnable once unblocked | dense baseline, end to end, producing a full run record |
+| Environment | verified end to end: torch 2.13.0+cu126, CUDA available, sm_89 |
+| Runnable today | dense baseline, end to end, producing a full run record |
 | Not yet implemented | pruning, quantisation, sequential, joint |
 
 ### What works
@@ -108,7 +88,7 @@ Fixed:
 
 | # | Decision | Settled as |
 | --- | --- | --- |
-| **D1** | CPU quantisation backend | PyTorch native CPU **INT8** (`x86`) is the sole latency backend. W4 keeps quality + size, never appears in a latency table. **RQ4 survives** — the sparsity→latency curve comes free from the pruning-only arm, whose weights stay FP32. |
+| **D1** | CPU quantisation backend | PyTorch native CPU **INT8**, engine **`onednn`**, is the sole latency backend. W4 keeps quality + size, never appears in a latency table. **RQ4 survives** — the sparsity→latency curve comes free from the pruning-only arm, whose weights stay FP32. |
 | **D2** | Reconstruction solver depth | **Damped ALS first**, Hessian sweep as a later drop-in behind the same interface. §3.3 makes second-order optional, not expected. `H = XᵀX` accumulated from the start regardless. Memory is *not* the constraint: the worst-case layer Hessian is 256 MiB. |
 | **D3** | Mask scoring rule | **Activation-weighted magnitude, scored on the quantised weights** in the joint arm — `S_ij = \|Q_b(W_ij)\| · ‖X_j‖₂`. This **overrides** the old Option B recommendation, which would have failed §3.8's definition of joint. |
 
@@ -153,21 +133,34 @@ Then Phase 6 (the five arms through one shared solver), Phase 7 (budget screenin
 Reduced to the items that genuinely cannot be settled yet. Tracked in
 [protocol_freeze.md](protocol_freeze.md#still-open).
 
-- **Smart App Control** — the blocker above. Needs a decision.
-- **Power profile** — currently **Balanced**; §4.7 requires a fixed performance mode. Change and
-  re-record before any benchmark.
-- **Benchmark thread count** — pin once the environment runs.
-- **Model revision SHAs** — still `revision: null`. Fine for a pilot; **must** be pinned before any
-  run whose numbers reach the paper (§2.7).
+- **Calibration indices, token count, sequence length** — frozen by config once `prepare_data.py`
+  has run for real. The WikiText load path has still never been executed anywhere.
 - **The two final budgets** — output of Phase 7 screening on 160M/410M. §5.3 requires them frozen
   before 1B.
+- **W4 latency via `torchao`** — deferred to Phase 6. Would lift D1's "no W4 latency row"
+  limitation if one 4-bit CPU path can serve both arms. Needs measuring, not assuming.
 - **1.4B go/no-go** — §5.2 needs peak VRAM under ~85% of 6.0 GiB, a **5.1 GiB ceiling**. Tight.
   Decide after Phase 5 profiling.
 
-Settled since the last revision, no longer open: the backend, the solver, the mask scoring rule, the
-Pythia variant (**standard**), lm-eval-harness (**yes, pinned**), and the practical-importance
-threshold (**≥ 1.0 pp retention, consistent in sign across all three confirmatory seeds, exceeding
-the seed spread**).
+Settled since the last revision, no longer open: the backend (**`onednn`** — see below), the
+solver, the mask scoring rule, the Pythia variant (**standard**), lm-eval-harness (**yes, pinned**),
+the practical-importance threshold (**≥ 1.0 pp retention, consistent in sign across all three
+confirmatory seeds, exceeding the seed spread**), Smart App Control, the power profile (**High
+performance**, no downclocking, never sleeps), the benchmark thread count (**4**, inside the P-core
+budget), and all five **model revision SHAs**.
+
+### One correction found by probing rather than reading docs
+
+D1 originally froze the latency backend as `x86`, the name every PyTorch tutorial uses. On the
+pinned torch 2.13.0+cu126 `supported_engines` is **`['onednn']` only** — `x86`, `fbgemm` and
+`qnnpack` all raise "quantized engine is not supported". The shipped configs said `x86`, so
+conversion would have failed *after* the compression compute was spent. Corrected everywhere, and a
+`requires_torch` test now asserts the shipped backend against the installed torch so a future
+upgrade that renames engines fails a test instead of a run.
+
+Also recorded: `torch.ao.quantization` and the `qint8`/`quint8`/`qint32` dtypes are both deprecated
+in favour of `torchao`. Neither blocks the study — §2.7 pins the environment for its duration — but
+**the torch version must not be upgraded mid-study**.
 
 ---
 
@@ -217,13 +210,14 @@ Full record in [protocol_freeze.md](protocol_freeze.md#environment). Summary:
 - [x] `pytest` → 502 passing (before the SAC blocks landed)
 - [x] Record GPU and VRAM for §5.2 — **RTX 4050, 6.0 GiB**
 - [x] Settle the three open decisions → [protocol_freeze.md](protocol_freeze.md)
-- [ ] **Resolve the Smart App Control blocker** ← everything below waits on this
-- [ ] Re-run `pytest` and confirm it is *stably* green
-- [ ] Switch the power profile off Balanced; pin the benchmark thread count
+- [x] Resolve the Smart App Control blocker — **off, rebooted, verified**
+- [x] Re-run `pytest` → **511 passing in ~32 s**, stably green
+- [x] Power profile → **High performance**; thread count pinned at **4**
+- [x] Pin model revision SHAs in all five model configs
+- [x] Probe the real quantisation backend → **`onednn`**, not `x86`
 - [ ] `python scripts/download_models.py --models pythia-160m`
-- [ ] Pin model revision SHAs in all five model configs
 - [ ] `python scripts/prepare_data.py --config configs/experiments/pilot.yaml` — first real exercise
       of the WikiText path
 - [ ] `python scripts/run_dense_baseline.py --config configs/experiments/pilot.yaml` — first real
       record, on a real model
-- [ ] Start Phase 5
+- [ ] Phase 5 — single-layer compression primitives ← **next**

@@ -19,7 +19,8 @@ model:
   #   final paper results      : MUST be a 40-character commit SHA
   # Look the SHA up with the snippet in docs/reproducibility.md and paste it here. Do not copy a
   # SHA from documentation and do not guess one; a branch name or tag is not a pin.
-  revision: null
+  # Resolved from the Hub on 2026-07-28 via HfApi().model_info(..., revision="main").sha
+  revision: 060db6499f32faf8b98477b0a26969ef7d8b9987
   device: auto
   dtype: float32
   trust_remote_code: false
