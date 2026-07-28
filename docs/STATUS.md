@@ -1,28 +1,73 @@
 # Project status
 
-**Last updated:** 2026-07-27 · after implementing Steps 1–3 (data, evaluation, dense baseline)
+**Last updated:** 2026-07-28 · first session on the HP Omen · Phase 0 decisions settled,
+environment blocked
 
 > Read this first. It is the handoff between sessions and between machines. If it looks stale,
 > check `git log` — the truth is the commit history, this file is a summary of it.
 >
 > **This file = where we are now.** For the durable roadmap (all ten phases, exit tests, the
-> testing plan) see [implementation_plan.md](implementation_plan.md). For the authoritative
-> source, [research_plan.pdf](research_plan.pdf).
+> testing plan) see [implementation_plan.md](implementation_plan.md). For the frozen decisions and
+> the environment record, [protocol_freeze.md](protocol_freeze.md). For the authoritative source,
+> [research_plan.pdf](research_plan.pdf).
+
+---
+
+## 🛑 Blocker: Smart App Control is breaking the environment
+
+**Nothing numerical runs on the Omen right now.** Windows Smart App Control is enabled
+(`VerifiedAndReputablePolicyState = 1`, user-mode code integrity enforced) and is blocking the
+unsigned native extension modules the stack depends on.
+
+Confirmed blocked, from `Microsoft-Windows-CodeIntegrity/Operational` event 3077:
+
+```
+shm.dll                           torch, core  -- blocks `import torch` outright
+torch_cuda.dll                    torch, CUDA
+ccalendar.cp311-win_amd64.pyd     pandas
+interval.cp311-win_amd64.pyd      pandas
+lib.cp311-win_amd64.pyd           pandas
+_regex.cp311-win_amd64.pyd        regex, a transformers dependency
+```
+
+**The blocks appeared progressively.** The full suite passed **502 tests** immediately after
+install; torch stopped importing roughly thirty minutes later as the policy caught up with the
+newly written binaries. So a green run is not evidence the environment is stable — re-check before
+trusting any result.
+
+What this takes out: torch (so all compression, evaluation, benchmarking), and separately pandas,
+which also takes out `datasets` (the WikiText load path) and the CSV/table writers.
+
+### The options
+
+| Option | Effect | Cost |
+| --- | --- | --- |
+| **A. Turn Smart App Control off** | Unblocks everything natively; cleanest measurement environment for §4.7 | **Irreversible** — SAC cannot be re-enabled without reinstalling Windows. Lowers the machine's security posture. |
+| **B. Move to WSL2** | Linux binaries are not subject to SAC; CUDA works via the existing 592.82 driver | Adds a virtualisation layer under the CPU benchmark. Acceptable only if *every* number comes from it, and it must be recorded as the runtime per §2.7. |
+| **C. Avoid the blocked packages** | Not viable — torch is the blocker, and it is not optional. | — |
+
+**Recommendation: A**, because §4.7 wants one pinned, unvirtualised runtime and the Omen is already
+designated the only machine that produces numbers. B is the fallback if turning SAC off is
+unacceptable. Either way, record the choice in
+[protocol_freeze.md](protocol_freeze.md#environment).
+
+This is a system-wide, irreversible setting, so it is deliberately **not** actioned here.
 
 ---
 
 ## Where we are
 
-The **infrastructure is done and the dense baseline runs end to end.** No compression algorithm
-is implemented yet.
+Infrastructure is done, the dense baseline runs end to end, and **the Phase 0 decisions are now
+settled**. No compression algorithm is implemented yet.
 
 | | State |
 | --- | --- |
-| Tests | **494 passing**, offline, ~11 s |
+| Tests | **508** (502 + 6 new doc guards); last full green run was before the SAC blocks landed |
 | Lint / format | `ruff check .` and `ruff format --check .` both clean |
 | CI | `.github/workflows/ci.yml` — lint, format, tests on push/PR to `main` |
-| Runnable today | dense baseline, end to end, producing a full run record |
-| Not yet runnable | pruning, quantisation, sequential, joint |
+| Runnable today | **nothing** — see the blocker above |
+| Runnable once unblocked | dense baseline, end to end, producing a full run record |
+| Not yet implemented | pruning, quantisation, sequential, joint |
 
 ### What works
 
@@ -43,56 +88,59 @@ bug lands nowhere near it. Dense retention computes as exactly 100% (it is its o
 
 ---
 
-## ⚠️ The most important thing to know
+## ✅ Settled this session: the method family and the three open decisions
 
-**The research plan specifies a different method family than the scaffold's config assumes.**
+The repo carried **two generations of plan** that contradicted each other. The older markdown
+specified full-model quantisation-aware fine-tuning; `research_plan.pdf` §3.1 specifies **layerwise
+post-training reconstruction**, which is what actually fits on a 6 GB laptop GPU. The markdown was
+still labelled "the spec", so it was quietly overriding the plan on real choices — D3 below was a
+direct casualty.
 
-`Research Plan §3.1` requires **layerwise post-training reconstruction**: for each linear layer,
-capture calibration activations `X` and choose the compressed weights to minimise
-`‖XW − X(M ∘ Q(W))‖²_F`. It explicitly avoids full-model fine-tuning, because that will not fit
-at 1B on a laptop.
+Fixed:
 
-The scaffold was built assuming **full-model quantisation-aware fine-tuning** — a `Trainer`,
-global optimiser steps, gradual sparsity ramps across training, mask-freeze ratios.
+- [method_definition.md](method_definition.md) **rewritten** against §3.1–3.12 — layerwise
+  objective, the five arms through one shared solver, `local steps` as the fairness unit, Q→P
+  reverse ablation, best-of-sequential. The fine-tuning material survives only as the optional
+  recovery ablation.
+- [protocol_freeze.md](protocol_freeze.md) **created** — the §2.7 freeze table, the environment
+  record, and the three decisions below with the plan sections they follow from.
+- Six new doc-guard tests, so the superseded design cannot creep back silently.
 
-**These are not variations of each other.** The unit of optimisation differs: *local steps per
-layer*, not *global optimiser steps*.
+| # | Decision | Settled as |
+| --- | --- | --- |
+| **D1** | CPU quantisation backend | PyTorch native CPU **INT8** (`x86`) is the sole latency backend. W4 keeps quality + size, never appears in a latency table. **RQ4 survives** — the sparsity→latency curve comes free from the pruning-only arm, whose weights stay FP32. |
+| **D2** | Reconstruction solver depth | **Damped ALS first**, Hessian sweep as a later drop-in behind the same interface. §3.3 makes second-order optional, not expected. `H = XᵀX` accumulated from the start regardless. Memory is *not* the constraint: the worst-case layer Hessian is 256 MiB. |
+| **D3** | Mask scoring rule | **Activation-weighted magnitude, scored on the quantised weights** in the joint arm — `S_ij = \|Q_b(W_ij)\| · ‖X_j‖₂`. This **overrides** the old Option B recommendation, which would have failed §3.8's definition of joint. |
 
-What this means in practice:
-
-- The infrastructure survives — config, registry, records, benchmark, metrics, tests.
-- `training/` (trainer, recovery, callbacks) **drops off the critical path**. Keep the files;
-  they become the optional fine-tune ablation.
-- The `Compressor` ABC still fits, with reinterpreted stages: `prepare` = select modules +
-  install activation capture, `apply` = **the layerwise loop**, `recover` = no-op in the core
-  method, `convert` = pack to real low-bit storage.
-- Config needs a `compression.reconstruction` section (`local_steps`, `damping`, `block_size`)
-  and `local_steps` becomes the fairness unit in place of `max_steps`.
-
-The full reconciliation list (A1–A9), with sizes and the reinterpreted `Compressor` stage
-semantics, is in [implementation_plan.md](implementation_plan.md#reconciliation-plan-versus-scaffold).
-A summary is repeated below for convenience.
+Full reasoning for each is in
+[protocol_freeze.md](protocol_freeze.md#the-three-decisions-that-were-open).
 
 ---
 
-## Next: Step 4 — single-layer compression primitives
+## Next: Phase 5 — single-layer compression primitives
 
-**Do not start by compressing a model.** Work on one `nn.Linear` with captured activations, in a
-notebook, until each piece is provably right. This mirrors the plan's own 48-hour checklist
-(§10.2) and is where the method is actually validated.
+**Blocked on the environment.** Nothing below can be written *and verified*, and unverified
+numerical code is exactly what this project must not accumulate.
 
-| Primitive | What it does |
-| --- | --- |
-| Activation capture | hook a layer, accumulate `H = XᵀX` and per-column `‖X_j‖₂` |
-| Saliency | activation-weighted magnitude: `S_ij = \|W_ij\| · ‖X_j‖₂` |
-| Mask | global-unstructured or blockwise at a target sparsity |
-| Quantiser | symmetric weight-only, per-channel / groupwise, W8 and W4 |
-| Packing | int4/int8 storage + scales, bit-exact unpack round-trip |
-| Reconstruct | error-compensated column sweep with ridge damping `(H + λI)` |
+**Do not start by compressing a model.** Work on one `nn.Linear` with captured activations until
+each piece is provably right. This mirrors the plan's own 48-hour checklist (§10.2).
+
+| Primitive | What it does | Target file |
+| --- | --- | --- |
+| Activation capture | hook a layer, accumulate `H = XᵀX` and per-column `‖X_j‖₂` | `compression/activations.py` (new) |
+| Saliency | activation-weighted magnitude, `S_ij = \|W_ij\| · ‖X_j‖₂` | `compression/pruning.py` |
+| Mask | global-unstructured or blockwise at exact target sparsity | `compression/masks.py` |
+| Quantiser | symmetric weight-only, per-channel / groupwise, W8 and W4 | `compression/quantisation.py` |
+| Packing | int4/int8 storage + scales, bit-exact unpack round-trip | `compression/quantisation.py` |
+| Reconstruct | damped ALS on `(H + λI)`, per **D2** | `compression/reconstruct.py` (new) |
 
 **Exit test:** on a synthetic layer — reconstruction strictly reduces `‖Y − Ŷ‖²_F` versus naive
 rounding; realised sparsity is exact; quantised weights take ≤ 2^b distinct values per group;
 pack → unpack is lossless.
+
+Also outstanding from Phase 0: config needs a `reconstruction` section (`local_steps`, `damping`,
+`block_size`) with `local_steps` replacing `max_steps` as the fairness unit, and
+`CompressionMethod` needs `SEQUENTIAL_PQ` / `SEQUENTIAL_QP` (A2).
 
 Then Phase 6 (the five arms through one shared solver), Phase 7 (budget screening), Phase 8
 (sweep). Full detail and exit tests for every phase:
@@ -100,44 +148,26 @@ Then Phase 6 (the five arms through one shared solver), Phase 7 (budget screenin
 
 ---
 
-## 🔴 Open decisions — settle before implementing Step 4
+## 🔴 Still open
 
-None of these can be resolved from the code, and none should be resolved after seeing results.
+Reduced to the items that genuinely cannot be settled yet. Tracked in
+[protocol_freeze.md](protocol_freeze.md#still-open).
 
-### 1. CPU quantisation backend — decide first, it constrains everything
+- **Smart App Control** — the blocker above. Needs a decision.
+- **Power profile** — currently **Balanced**; §4.7 requires a fixed performance mode. Change and
+  re-record before any benchmark.
+- **Benchmark thread count** — pin once the environment runs.
+- **Model revision SHAs** — still `revision: null`. Fine for a pilot; **must** be pinned before any
+  run whose numbers reach the paper (§2.7).
+- **The two final budgets** — output of Phase 7 screening on 160M/410M. §5.3 requires them frozen
+  before 1B.
+- **1.4B go/no-go** — §5.2 needs peak VRAM under ~85% of 6.0 GiB, a **5.1 GiB ceiling**. Tight.
+  Decide after Phase 5 profiling.
 
-PyTorch's native CPU quantisation targets **INT8**. There is no equally mature built-in 4-bit
-weight-only CPU kernel, so W4 deployment generally needs a separate backend.
-
-Options: (a) report W4 quality and size but benchmark latency only at W8, stating the limitation;
-(b) find one 4-bit CPU runtime usable by **both** arms; (c) INT8-only fallback throughout.
-
-**Recommendation: (a).** Layerwise PTQ makes the *compression* side of W4 straightforward; only
-deployment is the problem. This keeps W4 in the study for quality claims while avoiding an
-incomparable latency table.
-
-### 2. Reconstruction solver depth
-
-Full GPTQ/SparseGPT-style error-compensated Hessian sweep (stronger, ~2–3 days, what reviewers
-will expect given refs [4][5][6]) versus simpler alternating least squares (faster, weaker).
-
-**Recommendation:** build ALS first as a working fallback, upgrade to the Hessian sweep if the
-schedule allows. This is the largest single implementation risk in the 2–3 week plan.
-
-### 3. Mask scoring rule
-
-Rank by fake-quantised magnitude, or by FP32 shadow-weight magnitude with fake quantisation
-active? `docs/method_definition.md#mask-scoring` recommends the latter, with reasons. Confirm or
-override. **Do not** invent a combined α·β score unless it is implemented and separately ablated.
-
-### Also unresolved
-
-- **Pythia variant** — standard or deduped. Must be one, consistently (plan §2.7). Registry
-  currently points at standard.
-- **lm-eval-harness** as a dependency, or three tasks implemented in-repo? Plan cites the harness.
-- **Practical-importance threshold** (§6.3) — must be predefined *before* results are viewed.
-- **Model revisions** — still unpinned (`revision: null`). Fine for the pilot; **must** be pinned
-  commit SHAs before any run whose numbers reach the paper.
+Settled since the last revision, no longer open: the backend, the solver, the mask scoring rule, the
+Pythia variant (**standard**), lm-eval-harness (**yes, pinned**), and the practical-importance
+threshold (**≥ 1.0 pp retention, consistent in sign across all three confirmatory seeds, exceeding
+the seed spread**).
 
 ---
 
@@ -157,32 +187,43 @@ Known gaps, not yet implemented. Roughly in priority order.
 | A8 | Budget **screening** stage S1–S4 on 160M, freeze 2 budgets before 1B (§5.3) | small |
 | A9 | Record fields: per-layer reconstruction loss, compression time, peak GPU memory, effective bits, tokenizer revision | small |
 
+A3 and D3 interact: `CompressionMethod` gains `SEQUENTIAL_QP`, and joint gain must be computed
+against best-of-sequential with the winning order recorded (§6.1).
+
 ---
 
 ## Environment notes
 
-- **Omen is the only machine that runs code.** `outputs/`, `results/`, and `data/` are
-  git-ignored and exist only there.
-- On the Omen, install the **CUDA** torch build (compression); benchmarks still force CPU.
-- The other laptop has no NVIDIA GPU, no Python by default (`python` is a Store stub), and its
-  `datasets` import fails on a pandas DLL blocked by an Application Control policy. Every data
-  test stubs the corpus, so this does not affect the suite — but it does mean **the real
-  WikiText load path has never been executed**. Treat the first `prepare_data.py` run on the
-  Omen as its first real test.
+Full record in [protocol_freeze.md](protocol_freeze.md#environment). Summary:
+
+- **Omen is the only machine that runs code.** `outputs/`, `results/`, and `data/` are git-ignored
+  and exist only there.
+- CPU i7-13620H (10P/16L) · 13.7 GiB RAM · **RTX 4050 Laptop, 6.0 GiB VRAM**, sm_89 · driver 592.82
+- Python 3.11.9 · torch **2.13.0+cu126** · transformers 5.14.1 · datasets 5.0.0 · numpy 2.4.6
+- Installed from scratch this session: the Omen had **no Python at all** (`python` was the Microsoft
+  Store stub, and there was no uv or conda).
+- **13.7 GiB system RAM is worth watching.** CPU-only evaluation of Pythia-1.4B in FP32 is ~5.6 GiB
+  of weights before activations, and the benchmark is CPU-bound by design.
+- The real **WikiText load path has still never been executed** — every data test stubs the corpus.
+  Treat the first `prepare_data.py` run as its first real test, and note `datasets` is currently
+  blocked independently of torch.
 
 ---
 
 ## Immediate checklist for the Omen
 
-- [ ] `git clone` (after this work is pushed)
-- [ ] Python 3.11 + venv; CUDA torch from pytorch.org; `pip install -e . -r requirements-dev.txt`
-- [ ] `pytest` → expect 494 passing
-- [ ] `python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"`
-      — record the GPU and VRAM; the plan's §5.2 go/no-go for 1.4B needs it
+- [x] `git clone`
+- [x] Python 3.11 + venv; CUDA torch (`cu126`); `pip install -e . -r requirements-dev.txt`
+- [x] `pytest` → 502 passing (before the SAC blocks landed)
+- [x] Record GPU and VRAM for §5.2 — **RTX 4050, 6.0 GiB**
+- [x] Settle the three open decisions → [protocol_freeze.md](protocol_freeze.md)
+- [ ] **Resolve the Smart App Control blocker** ← everything below waits on this
+- [ ] Re-run `pytest` and confirm it is *stably* green
+- [ ] Switch the power profile off Balanced; pin the benchmark thread count
 - [ ] `python scripts/download_models.py --models pythia-160m`
-- [ ] `python scripts/prepare_data.py --config configs/experiments/pilot.yaml` — first real
-      exercise of the WikiText path
-- [ ] `python scripts/run_dense_baseline.py --config configs/experiments/pilot.yaml` — first
-      real record, on a real model
-- [ ] Settle the three open decisions above
-- [ ] Start Step 4
+- [ ] Pin model revision SHAs in all five model configs
+- [ ] `python scripts/prepare_data.py --config configs/experiments/pilot.yaml` — first real exercise
+      of the WikiText path
+- [ ] `python scripts/run_dense_baseline.py --config configs/experiments/pilot.yaml` — first real
+      record, on a real model
+- [ ] Start Phase 5

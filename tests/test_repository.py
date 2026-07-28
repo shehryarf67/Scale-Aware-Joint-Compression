@@ -22,6 +22,7 @@ REQUIRED_DOCS = (
     "research_question.md",
     "method_definition.md",
     "implementation_plan.md",
+    "protocol_freeze.md",
     "methodology.md",
     "experiment_protocol.md",
     "benchmarking_protocol.md",
@@ -125,6 +126,53 @@ class TestDocumentation:
         """Until the algorithms exist, the document must say so."""
         text = (project_root / "docs" / "method_definition.md").read_text(encoding="utf-8")
         assert "placeholder" in text.lower()
+
+    def test_method_definition_specifies_the_layerwise_method(self, project_root: Path):
+        """Plan §3.1 selects layerwise post-training reconstruction.
+
+        The spec previously described full-model quantisation-aware fine-tuning, which is a
+        different method family: the unit of optimisation is local steps per layer, not global
+        optimiser steps. A regression here means the superseded design crept back in.
+        """
+        text = (project_root / "docs" / "method_definition.md").read_text(encoding="utf-8")
+        lowered = text.lower()
+        assert "layerwise" in lowered
+        assert "local steps" in lowered
+        assert "reconstruction" in lowered
+
+    def test_mask_scoring_is_settled_and_scored_under_quantisation(self, project_root: Path):
+        """Plan §3.8 makes scoring under quantised weights the definition of joint.
+
+        Ranking on untouched FP32 weights is the "prune fully then plain PTQ" failure case that
+        §3.8 lists as *not* qualifying as joint, so the spec must not drift back to it.
+        """
+        text = (project_root / "docs" / "method_definition.md").read_text(encoding="utf-8")
+        section = text.split("## Mask Scoring", 1)[1].split("\n## ", 1)[0]
+        assert "activation-weighted magnitude" in section.lower()
+        assert "quantised weights" in section.lower()
+        assert "Q_b(W_ij)" in section
+
+    def test_protocol_freeze_settles_the_previously_open_decisions(self, project_root: Path):
+        """§2.7 requires these frozen before the experiments, and §6.3 before seeing results."""
+        text = (project_root / "docs" / "protocol_freeze.md").read_text(encoding="utf-8")
+        for decision in ("### D1", "### D2", "### D3"):
+            assert decision in text, f"protocol_freeze.md is missing {decision!r}"
+        for item in (
+            "Pythia variant",
+            "Benchmark runtime",
+            "Practical-importance rule",
+            "Scale x-axis",
+            "Seeds",
+        ):
+            assert item in text, f"protocol_freeze.md does not freeze {item!r}"
+
+    def test_protocol_freeze_records_the_hardware_the_numbers_come_from(self, project_root: Path):
+        """§10.2 requires the machine recorded; §4.7 forbids mixing machines in one table."""
+        text = (project_root / "docs" / "protocol_freeze.md").read_text(encoding="utf-8")
+        for field in ("CPU", "RAM", "GPU", "VRAM", "driver"):
+            assert field in text or field.lower() in text, (
+                f"protocol_freeze.md does not record {field!r}"
+            )
 
     def test_promotion_checklist_is_documented(self, project_root: Path):
         text = (project_root / "docs" / "reproducibility.md").read_text(encoding="utf-8")
