@@ -203,6 +203,28 @@ class LayerPlan:
 
 
 @dataclass(slots=True)
+class SolvedLayer:
+    """One reconstruction result, with everything about it kept together.
+
+    The four fields must describe the *same* model. Carrying them separately is how the joint arm came
+    to accept a proposal on one weight and store a different one: acceptance compared a pre-canonical
+    weight while conversion packed a post-canonical one, and re-deriving codes is not idempotent in
+    floating point.
+
+    Attributes:
+        weight: The canonical weight, exactly ``codes x scales`` under the mask when quantised.
+        codes: Integer codes, or ``None`` when the arm does not quantise.
+        scales: The grid, or ``None`` when the arm does not quantise.
+        loss: Objective against the dense weight, measured on :attr:`weight`.
+    """
+
+    weight: torch.Tensor
+    codes: torch.Tensor | None
+    scales: torch.Tensor | None
+    loss: float
+
+
+@dataclass(slots=True)
 class LayerResult:
     """What happened to one layer."""
 
@@ -435,20 +457,53 @@ def compress_layer(
             group_size=plan.group_size,
         )
 
-    final_scales: torch.Tensor | None = None
-
     def solve(
-        target: torch.Tensor,
         mask: torch.Tensor,
         *,
         bits: int | None,
-    ) -> torch.Tensor:
-        nonlocal steps_used, first_naive_loss, last_final_loss, final_scales
-        grid = fit_scales(target, mask) if bits is not None else None
-        final_scales = grid
+        scales: torch.Tensor | None = None,
+        scale_source: torch.Tensor | None = None,
+    ) -> SolvedLayer:
+        """Reconstruct against the **dense** weight, under ``mask`` and optionally a bit width.
+
+        The objective is always ``‖X·W_dense^T − X·Ŵ^T‖²_F`` (§3.1). It is deliberately not a
+        parameter: an earlier version passed each arm's *intermediate* weight here, so sequential
+        P->Q's second stage minimised distance to the pruned approximation and Q->P's minimised
+        distance to the quantised one, while the joint arm minimised distance to dense. The arms were
+        optimising three different objectives, and the direction disadvantaged the sequential arms --
+        each treated its own intermediate as ground truth and so could not recover the error that
+        intermediate already contained. That inflates joint gain, which is exactly the failure §3.11
+        exists to prevent.
+
+        What an arm *may* vary is where the quantisation grid comes from, which is a real pipeline
+        difference rather than a different objective:
+
+        * ``scales`` -- use this grid exactly, without refitting. Q->P needs it, because fitting once
+          on the dense tensor and never revisiting it is what §3.8 says disqualifies an arm from
+          being joint.
+        * ``scale_source`` -- fit the grid on these weights. P->Q passes its pruned reconstruction, so
+          quantisation is "calibrated on the post-pruning distribution" as the method specifies. The
+          joint arm passes its current iterate, which is §3.8's re-estimation requirement.
+        * neither -- fit on the dense weight under the mask.
+
+        Args:
+            mask: Keep-mask for this solve.
+            bits: Bit width, or ``None`` for pruning-only reconstruction.
+            scales: An exact grid to reuse.
+            scale_source: Weights to fit the grid on.
+
+        Returns:
+            The canonicalised result: weight, integer codes, scales and objective, all mutually
+            consistent.
+        """
+        nonlocal steps_used, first_naive_loss
+        grid = scales
+        if bits is not None and grid is None:
+            grid = fit_scales(scale_source if scale_source is not None else weight, mask)
+
         outcome = reconstruct(
             gram,
-            target,
+            weight,
             mask,
             solver=plan.solver,
             local_steps=plan.local_steps,
@@ -462,8 +517,31 @@ def compress_layer(
         steps_used += max(1, plan.local_steps)
         if first_naive_loss is None:
             first_naive_loss = outcome.naive_loss
-        last_final_loss = outcome.final_loss
-        return outcome.weight
+
+        # Canonicalise HERE, before the objective is measured, so the number used for acceptance is
+        # the number describing the model that actually gets stored and packed. Canonicalising after
+        # the joint loop meant a proposal was accepted on one weight and a different one was saved:
+        # re-deriving codes is not idempotent in floating point, so a value on a rounding boundary
+        # flips between the two.
+        canonical = outcome.weight
+        codes = None
+        if bits is not None and grid is not None:
+            quantised = quantise_weight(
+                canonical,
+                bits=bits,
+                granularity=plan.granularity,
+                group_size=plan.group_size,
+                scales=grid,
+            )
+            codes = quantised.codes
+            canonical = quantised.dequantise() * mask
+
+        return SolvedLayer(
+            weight=canonical,
+            codes=codes,
+            scales=grid,
+            loss=reconstruction_loss(gram, weight, canonical),
+        )
 
     def mask_from(scored: torch.Tensor) -> torch.Tensor:
         """Mask from activation-weighted magnitude -- the criterion with no quantiser."""
@@ -506,26 +584,32 @@ def compress_layer(
 
     if arm == "pruning":
         mask = mask_from(weight)
-        compressed = solve(weight, mask, bits=None)
+        solved = solve(mask, bits=None)
 
     elif arm == "quantisation":
         mask = keep_all
-        compressed = solve(weight, mask, bits=plan.bits)
+        solved = solve(mask, bits=plan.bits)
 
     elif arm == "sequential":
-        # P->Q. The mask is chosen on the dense weights because at this point no quantiser exists
-        # -- that ignorance is what makes the arm sequential (§3.5).
+        # P->Q. The mask is chosen on the dense weights because at this point no quantiser exists --
+        # that ignorance is what makes the arm sequential (§3.5).
+        #
+        # Stage 2 reconstructs against the DENSE weight, not against stage 1's output, so its
+        # objective matches every other arm's. What stage 1 contributes is the distribution the
+        # quantisation grid is fitted to: "quantisation is calibrated on the altered post-pruning
+        # distribution", which is the pipeline property the arm is meant to have.
         mask = mask_from(weight)
-        pruned = solve(weight, mask, bits=None)
-        compressed = solve(pruned, mask, bits=plan.bits)
+        pruned = solve(mask, bits=None)
+        solved = solve(mask, bits=plan.bits, scale_source=pruned.weight)
 
     elif arm == "sequential_qp":
-        # Q->P reverse ablation (§3.6). The quantiser is fitted first, so the mask does see the
-        # grid -- but the scales are fitted once against the dense tensor and never revisited after
-        # the mask moves, which is what §3.8 lists as disqualifying it from being joint.
-        quantised = solve(weight, keep_all, bits=plan.bits)
-        mask = quantisation_aware_mask(quantised, keep_all)
-        compressed = solve(quantised, mask, bits=plan.bits)
+        # Q->P reverse ablation (§3.6). The quantiser is fitted first, so the mask does see the grid.
+        # The grid is then reused **exactly** -- passed as `scales` rather than refitted -- because
+        # not revisiting the scales after the mask moves is precisely what §3.8 says disqualifies an
+        # arm from being joint. Refitting here would quietly turn this into a second joint arm.
+        quantised = solve(keep_all, bits=plan.bits)
+        mask = quantisation_aware_mask(quantised.weight, keep_all)
+        solved = solve(mask, bits=plan.bits, scales=quantised.scales)
 
     elif arm == "joint":
         # §3.7's alternation. Each iteration re-fits the grid for the current mask, rescores the
@@ -542,39 +626,30 @@ def compress_layer(
         # discarding a solution it had already reached, which is a property of the optimiser, not an
         # extra optimisation budget -- the step count is unchanged.
         mask = mask_from(weight)
-        current = solve(weight, mask, bits=plan.bits)
-        best_weight, best_mask = current, mask
-        best_scales = final_scales
-        best_loss = reconstruction_loss(gram, weight, current)
+        incumbent = solve(mask, bits=plan.bits)
+        best_mask = mask
 
         for iteration in range(1, plan.joint_iterations):
-            proposed_mask = quantisation_aware_mask(best_weight, best_mask)
-            # Always solve against the ORIGINAL dense weight. Letting the target drift with the
-            # iterate would optimise towards the previous approximation instead of the true layer
-            # output, and the objective would stop being comparable between arms.
-            proposed = solve(weight, proposed_mask, bits=plan.bits)
-            proposed_loss = reconstruction_loss(gram, weight, proposed)
-            accepted = proposed_loss < best_loss
+            proposed_mask = quantisation_aware_mask(incumbent.weight, best_mask)
+            # §3.8's re-estimation: the grid is refitted on the current iterate for the new mask.
+            proposed = solve(proposed_mask, bits=plan.bits, scale_source=incumbent.weight)
+            accepted = proposed.loss < incumbent.loss
 
             joint_trace.append(
                 {
                     "iteration": iteration,
-                    "loss_before": best_loss,
-                    "loss_proposed": proposed_loss,
+                    "loss_before": incumbent.loss,
+                    "loss_proposed": proposed.loss,
                     "accepted": accepted,
                     "mask_divergence": float((proposed_mask != best_mask).float().mean()),
                 }
             )
+            # The whole SolvedLayer moves together -- weight, codes, scales and loss. Keeping them
+            # separate is how the accepted candidate and the stored artefact came to disagree.
             if accepted:
-                best_weight, best_mask, best_loss = proposed, proposed_mask, proposed_loss
-                best_scales = final_scales
+                incumbent, best_mask = proposed, proposed_mask
 
-        mask, compressed = best_mask, best_weight
-        # The incumbent is not necessarily the last solve, so its grid has to follow it. Shipping the
-        # rejected iteration's scales with the accepted iteration's weights would quantise a second
-        # time at conversion.
-        final_scales = best_scales
-        last_final_loss = best_loss
+        mask, solved = best_mask, incumbent
 
     else:
         raise LayerwiseError(
@@ -582,20 +657,12 @@ def compress_layer(
             "sequential_qp, joint"
         )
 
-    # One canonicalisation, so the stored weight IS its codes times its scales. Without it the
-    # weight, the codes and the scales are three nearly-consistent descriptions of the same layer,
-    # and conversion has to guess which one is authoritative.
-    final_codes: torch.Tensor | None = None
-    if plan.quantises and final_scales is not None:
-        canonical = quantise_weight(
-            compressed,
-            bits=plan.bits,
-            granularity=plan.granularity,
-            group_size=plan.group_size,
-            scales=final_scales,
-        )
-        final_codes = canonical.codes
-        compressed = canonical.dequantise() * mask
+    # Already canonical: solve() quantises before it measures, so the weight, codes, scales and loss
+    # in `solved` all describe one model. Nothing is re-derived here.
+    compressed = solved.weight
+    final_codes = solved.codes
+    final_scales = solved.scales
+    last_final_loss = solved.loss
 
     result = LayerResult(
         name="",

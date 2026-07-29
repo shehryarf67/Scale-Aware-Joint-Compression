@@ -524,6 +524,99 @@ class TestArmsGetEqualSolverBudgets:
             assert outcome.result.local_steps == plan.reconstruction_passes(arm), arm
 
 
+class TestEveryArmMinimisesTheSameObjective:
+    """§3.11's deepest requirement, and the one that was silently broken.
+
+    `reconstruct`'s second argument is both the objective target and the swept matrix. The sequential
+    arms passed their own *intermediate* weight, so P->Q's second stage minimised distance to the
+    pruned approximation and Q->P's to the quantised one, while the joint arm minimised distance to
+    dense. Three arms, three objectives — and the direction disadvantaged the sequential arms, because
+    each treated its own intermediate as ground truth and so could not recover the error that
+    intermediate already carried. That inflates joint gain.
+    """
+
+    @pytest.mark.parametrize("arm", ARMS)
+    def test_the_reported_loss_is_measured_against_the_dense_weight(self, arm: str, layer_inputs):
+        """Recomputing the objective from scratch must reproduce what the arm reported."""
+        from scale_aware_compression.compression.reconstruct import reconstruction_loss
+
+        weight, statistics = layer_inputs
+        outcome = compress_layer(weight, statistics, moderate_plan(), arm=arm)
+
+        against_dense = reconstruction_loss(statistics.gram(), weight, outcome.weight)
+        assert outcome.result.final_loss == pytest.approx(against_dense, rel=1e-6)
+
+    def test_sequential_reduces_the_dense_objective_not_its_own_intermediate(self, layer_inputs):
+        """The regression test for the bug.
+
+        Stage 2 must improve on masking-and-rounding *as measured against the dense weight*. When it
+        targeted its own pruned intermediate it was optimising towards something already wrong, so it
+        could not recover the error that intermediate carried — and its dense-measured loss could sit
+        above the naive baseline while its own reported loss looked fine.
+        """
+        from scale_aware_compression.compression.quantisation import fake_quantise
+        from scale_aware_compression.compression.reconstruct import reconstruction_loss
+
+        weight, statistics = layer_inputs
+        plan = moderate_plan()
+        gram = statistics.gram()
+
+        outcome = compress_layer(weight, statistics, plan, arm="sequential")
+
+        keep = outcome.mask.to(weight.dtype)
+        naive = fake_quantise(weight * keep, bits=plan.bits) * keep
+        naive_loss = reconstruction_loss(gram, weight, naive)
+        final_loss = reconstruction_loss(gram, weight, outcome.weight)
+
+        assert final_loss <= naive_loss, (
+            f"sequential ended worse than mask-and-round against the dense weight "
+            f"({final_loss:.6g} vs {naive_loss:.6g})"
+        )
+
+    def test_the_joint_incumbent_describes_the_weight_that_is_stored(self, layer_inputs):
+        """Acceptance, the recorded loss, and the packed artefact must all be one model.
+
+        Canonicalisation used to happen *after* the joint loop, so a proposal was accepted on a
+        pre-canonical weight while conversion packed a post-canonical one. Re-deriving codes is not
+        idempotent in floating point, so the two could differ.
+        """
+        import torch
+
+        from scale_aware_compression.compression.reconstruct import reconstruction_loss
+
+        weight, statistics = layer_inputs
+        outcome = compress_layer(weight, statistics, moderate_plan(joint_iterations=4), arm="joint")
+
+        # The stored weight is exactly its codes times its scales.
+        assert outcome.codes is not None and outcome.scales is not None
+        rebuilt = outcome.codes.to(torch.float32) * outcome.scales.reshape(-1, 1) * outcome.mask
+        assert torch.equal(rebuilt, outcome.weight)
+
+        # And the recorded loss is that weight's loss, not an earlier candidate's.
+        assert outcome.result.final_loss == pytest.approx(
+            reconstruction_loss(statistics.gram(), weight, outcome.weight), rel=1e-6
+        )
+
+    def test_the_reverse_arm_reuses_its_grid_rather_than_refitting(self, layer_inputs):
+        """Not revisiting the scales after the mask moves is what keeps Q->P out of joint territory.
+
+        If it refitted, it would satisfy §3.8's second requirement and become a second joint arm.
+        """
+        weight, statistics = layer_inputs
+        plan = moderate_plan()
+
+        qp = compress_layer(weight, statistics, plan, arm="sequential_qp")
+        # The grid it ships is the one fitted on the dense tensor with everything kept, so it must
+        # match a fresh dense fit rather than a fit on the survivors.
+        from scale_aware_compression.compression.quantisation import compute_symmetric_scales
+
+        dense_grid = compute_symmetric_scales(weight, bits=plan.bits)
+        assert qp.scales is not None
+        import torch
+
+        assert torch.allclose(qp.scales, dense_grid)
+
+
 class TestSparsityIsReportedSeparately:
     """A zero has two possible causes and only one of them is the pruning budget.
 
