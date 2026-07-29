@@ -663,6 +663,66 @@ sequences than this run's cap.
 [F-14](#f-14) were produced by the pre-fix pipeline and must be re-run before the budgets are treated
 as frozen on current code.
 
+### F-17 - Screening re-run on the corrected pipeline. The -4.55 pp result was a bug. {#f-17}
+
+*2026-07-29 - Pythia-160M `50f5173d` - 493 x 512 window - dense **36.97** - one seed - matched solver
+budgets (96 passes both arms, verified) - **supersedes [F-10](#f-10) and [F-13](#f-13)***
+
+Every earlier screening number was produced before the three algorithmic fixes in
+[F-16](#f-16). All records were deleted and the full grid re-run.
+
+| Budget | Sparsity | Bits | Sequential | Joint | Seq ret. | Joint ret. | Joint gain | Verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **S1** | 30% | W8 | 46.06 | 46.08 | **80.3%** | 80.2% | -0.03 pp | **ELIGIBLE** |
+| S2 | 50% | W8 | 175.41 | 173.34 | 21.1% | 21.3% | +0.25 pp | catastrophic |
+| S3 | 50% | W4 | 259.64 | 255.50 | 14.2% | 14.5% | +0.23 pp | catastrophic |
+| S4 | 70% | W4 | 5238.87 | 5847.58 | 0.7% | 0.6% | -0.07 pp | catastrophic |
+| **S5** | 30% | W4 | 64.70 | **63.56** | **57.1%** | **58.2%** | **+1.03 pp** | **ELIGIBLE** |
+| **S6** | 40% | W8 | 68.12 | 68.04 | **54.3%** | 54.3% | +0.06 pp | **ELIGIBLE** |
+
+**The frozen budgets survive.** The same three budgets are eligible and the same two are frozen, so
+the [protocol freeze](protocol_freeze.md) stands unchanged. That is worth stating plainly: the method
+fixes did not move the budget decision.
+
+#### The headline correction
+
+**S5's joint gain moved from -4.55 pp to +1.03 pp.** The negative result was an artefact of the
+missing incumbent guard: the joint arm was discarding good solutions, and once it stops, joint comes
+out marginally *ahead* rather than 4.55 points behind.
+
+Two consequences, and the second is the important one.
+
+**The 160M half of [F-14](#f-14)'s sign flip is void.** That finding's headline was joint negative at
+160M and positive at 410M. The 160M negative was a bug, so "the joint gain changes sign with scale" is
+**no longer supported** by the 160M data. If the 410M re-run also comes out positive, the story becomes
+"joint is marginally ahead at 4-bit at both scales" -- far less dramatic, and correspondingly less
+likely to be an artefact.
+
+**+1.03 pp sits exactly on the pre-registered threshold** of >= 1.0 pp, which is uncomfortably close to
+read anything from. And per [F-15](#f-15) there are still no error bars, because the run seed is inert.
+So this is "consistent with a small positive effect at W4", not evidence of one.
+
+#### Other movements worth noting
+
+The harsh budgets got *worse* under the corrected pipeline: S2 sequential 161.46 -> 175.41, S4
+4663.88 -> 5238.87. That is the expected direction from the dependency-group recapture. Each layer is
+now fitted against activations carrying the accumulated error of earlier layers in its own block, and
+at severe compression that error is larger. The old numbers flattered the harsh budgets by fitting
+every layer against artificially clean inputs.
+
+The mild budgets moved the other way or not at all: S5 sequential 66.03 -> 64.70, S1 45.97 -> 46.06.
+
+#### A fifth bug, found while checking this grid
+
+`mask_sparsity` and `zero_code_fraction` read **0.0000** in every record. The fields were added to
+`LayerResult` but never to `to_dict()`, so the whole point of the separation -- reporting the pruning
+budget apart from quantisation-induced zeros -- never reached the records. Fixed, with a test that the
+three quantities reach the record and that they add up.
+
+The distinction is real and visible now: at W4 the numeric sparsity exceeds the mask sparsity by
+roughly 1.8 percentage points (0.3176 against 0.30 at S5), all of it survivors that rounding collapsed
+to zero. **The pruning budget must be verified against `mask_sparsity`.**
+
 ---
 
 ## 3. All end-to-end perplexities in one table
@@ -717,6 +777,7 @@ recording.
 | B-17 | Joint outer loop accepted every proposal, including worse ones ([F-16](#f-16)) | An alternating optimiser that discards a better solution it already found; explains four iterations scoring worse than two |
 | B-18 | Conversion refit the quantisation grid instead of reusing the solver's | Packed a different model from the one evaluated; `verify_packing` existed and was never called |
 | B-19 | Activations captured once per block, not per dependency group | MLP down-projections fitted against inputs the dense up-projection produced -- blockwise reconstruction described as layerwise |
+| B-21 | `mask_sparsity` and `zero_code_fraction` were never serialised ([F-17](#f-17)) | Both read 0.0000 in every record, so the pruning budget could only be checked against the conflated numeric sparsity |
 | B-20 | Dense-reference lookup ignored the evaluation window | Normalised a 64x256 run against a 493x512 baseline and reported the resulting ratio as retention |
 | B-16 | Three-seed confirmatory protocol produces three identical numbers ([F-15](#f-15)) | The paper would report a seed spread of zero as though the protocol had been followed, and §6.3's practical-importance rule would be vacuous |
 | B-13 | Sweep cells inherited the base config's model revision | Every cell pinned to the *first* model's SHA — fails to load, or silently loads the wrong weights if the SHA exists in both repos |

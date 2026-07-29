@@ -524,6 +524,58 @@ class TestArmsGetEqualSolverBudgets:
             assert outcome.result.local_steps == plan.reconstruction_passes(arm), arm
 
 
+class TestSparsityIsReportedSeparately:
+    """A zero has two possible causes and only one of them is the pruning budget.
+
+    `realised_sparsity` counts every zero, including survivors that quantisation rounded away. Using
+    it to verify the budget overstates how much pruning was applied — measurably at W4, where a 30%
+    mask produced 31.4% numeric zeros on Pythia-410M.
+    """
+
+    def test_the_three_quantities_are_distinguished_at_low_precision(self, layer_inputs):
+        weight, statistics = layer_inputs
+
+        outcome = compress_layer(weight, statistics, moderate_plan(bits=2), arm="sequential")
+        result = outcome.result
+
+        assert result.mask_sparsity == pytest.approx(0.5, abs=1e-9), "the budget must be exact"
+        assert result.realised_sparsity > result.mask_sparsity, "rounding should add zeros at W2"
+        assert result.zero_code_fraction > 0.0
+
+    def test_they_add_up(self, layer_inputs):
+        """Numeric zeros are mask zeros plus rounded-away survivors, and nothing else."""
+        weight, statistics = layer_inputs
+
+        result = compress_layer(weight, statistics, moderate_plan(bits=4), arm="joint").result
+
+        assert result.realised_sparsity == pytest.approx(
+            result.mask_sparsity + result.zero_code_fraction, abs=1e-6
+        )
+
+    def test_pruning_only_has_no_rounded_zeros(self, layer_inputs):
+        """With precision untouched there is no second source of zeros to attribute."""
+        weight, statistics = layer_inputs
+
+        result = compress_layer(
+            weight, statistics, LayerPlan(sparsity=0.5, bits=None), arm="pruning"
+        ).result
+
+        assert result.zero_code_fraction == 0.0
+        assert result.realised_sparsity == pytest.approx(result.mask_sparsity, abs=1e-9)
+
+    def test_all_three_reach_the_run_record(self, layer_inputs):
+        """The distinction is worthless if it does not survive serialisation."""
+        weight, statistics = layer_inputs
+
+        payload = compress_layer(
+            weight, statistics, moderate_plan(bits=2), arm="sequential"
+        ).result.to_dict()
+
+        for key in ("realised_sparsity", "mask_sparsity", "zero_code_fraction"):
+            assert key in payload, f"{key} missing from the record"
+        assert payload["mask_sparsity"] > 0.0
+
+
 class TestActivationsAreRecapturedWithinABlock:
     """The reconstruction must be layerwise, not blockwise.
 

@@ -245,12 +245,19 @@ class LayerResult:
         return {
             "name": self.name,
             "target_sparsity": self.target_sparsity,
+            # Three separate quantities, deliberately. `realised_sparsity` counts every zero,
+            # including survivors that quantisation rounded away, so it overstates how much pruning
+            # was applied -- by 1.4 percentage points at W4. The pruning budget is defined on
+            # `mask_sparsity` and must be verified against that.
             "realised_sparsity": self.realised_sparsity,
+            "mask_sparsity": self.mask_sparsity,
+            "zero_code_fraction": self.zero_code_fraction,
             "naive_loss": self.naive_loss,
             "final_loss": self.final_loss,
             "relative_improvement": self.relative_improvement,
             "local_steps": self.local_steps,
             "num_weights": self.num_weights,
+            "joint_trace": self.joint_trace,
         }
 
 
