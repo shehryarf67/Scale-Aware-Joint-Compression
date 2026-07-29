@@ -41,8 +41,28 @@ class ArchitectureAdapter:
     attention_projections: tuple[str, ...]
     mlp_projections: tuple[str, ...]
     embedding_names: tuple[str, ...]
+    dependency_groups: tuple[tuple[str, ...], ...] = ()
+    """Suffixes grouped by what their *inputs* depend on, in the order they must be compressed.
+
+    Modules inside one group read tensors that no other module in that group produces, so they can
+    be compressed against a single activation capture. A later group reads something an earlier group
+    writes, so its activations must be **recaptured** after the earlier group is compressed.
+
+    Without this the driver captures once per block and compresses every module in it against those
+    activations -- so an MLP down-projection is fitted against inputs the *dense* up-projection
+    produced, inputs that never occur once the up-projection is compressed. That is blockwise
+    reconstruction described as layerwise.
+    """
     tied_embeddings: bool = False
     notes: str = ""
+
+    def grouped_suffixes(self) -> tuple[tuple[str, ...], ...]:
+        """Dependency groups, falling back to one group containing everything.
+
+        The fallback preserves the old behaviour for an architecture whose dependency structure has
+        not been worked out, rather than silently guessing at it.
+        """
+        return self.dependency_groups or (self.compressible_suffixes,)
 
     @property
     def compressible_suffixes(self) -> tuple[str, ...]:
@@ -58,8 +78,18 @@ GPT_NEOX_ADAPTER = ArchitectureAdapter(
     attention_projections=("attention.query_key_value", "attention.dense"),
     mlp_projections=("mlp.dense_h_to_4h", "mlp.dense_4h_to_h"),
     embedding_names=("gpt_neox.embed_in", "embed_out"),
+    # Pythia uses a PARALLEL residual: x <- x + attn(ln1(x)) + mlp(ln2(x)). So the attention and MLP
+    # entry projections both read a layernorm of the same block input and are independent of each
+    # other, while each exit projection reads what its own entry projection produced.
+    #
+    #   group 1   query_key_value, dense_h_to_4h   -- both read the block input
+    #   group 2   attention.dense, dense_4h_to_h   -- read group 1's outputs
+    dependency_groups=(
+        ("attention.query_key_value", "mlp.dense_h_to_4h"),
+        ("attention.dense", "mlp.dense_4h_to_h"),
+    ),
     tied_embeddings=False,
-    notes="Pythia suite. Fused QKV projection; untied input/output embeddings.",
+    notes="Pythia suite. Fused QKV projection; untied input/output embeddings; parallel residual.",
 )
 
 QWEN2_ADAPTER = ArchitectureAdapter(
@@ -73,6 +103,20 @@ QWEN2_ADAPTER = ArchitectureAdapter(
     ),
     mlp_projections=("mlp.gate_proj", "mlp.up_proj", "mlp.down_proj"),
     embedding_names=("model.embed_tokens", "lm_head"),
+    # Qwen2 uses a SEQUENTIAL residual: h <- x + attn(ln1(x)); out <- h + mlp(ln2(h)). The MLP
+    # therefore reads a layernorm of the *post-attention* hidden state, so it depends on the whole
+    # attention block -- four groups rather than Pythia's two.
+    #
+    #   group 1   q_proj, k_proj, v_proj   -- all read ln1(x)
+    #   group 2   o_proj                   -- reads the attention output
+    #   group 3   gate_proj, up_proj       -- read ln2(h), which depends on o_proj
+    #   group 4   down_proj                -- reads the gated hidden state
+    dependency_groups=(
+        ("self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj"),
+        ("self_attn.o_proj",),
+        ("mlp.gate_proj", "mlp.up_proj"),
+        ("mlp.down_proj",),
+    ),
     tied_embeddings=True,
     notes=(
         "Qwen2.5-0.5B. Separate q/k/v with grouped-query attention, gated MLP, and tied "

@@ -18,10 +18,16 @@ the order it is called. That is what this module provides.
                        reconstruct for a fixed local-step budget
                      freeze M and Q
 
-Blocks are visited in depth order and activations are captured **through the already-compressed
-prefix**, so each layer is fitted against the inputs it will really see at inference rather than the
-inputs the dense model would have produced. Compressing out of order, or capturing against the dense
-model throughout, would understate the accumulated error.
+Blocks are visited in depth order, and within a block the targeted modules are compressed in
+**dependency-group order** with activations recaptured between groups. So each layer is fitted against
+the inputs it will really see at inference, including the effect of modules compressed earlier in its
+own block.
+
+Capturing once per block -- which is what this did originally -- fits an MLP down-projection against
+activations the *dense* up-projection produced, inputs that never occur once the up-projection is
+compressed. That is blockwise reconstruction, and describing it as layerwise overstates it. The groups
+are declared per architecture in ``models/adapters.py``, because the dependency structure differs:
+Pythia's parallel residual gives two groups per block, Qwen2's sequential residual gives four.
 """
 
 from __future__ import annotations
@@ -728,9 +734,8 @@ def compress_model_layerwise(
     Raises:
         LayerwiseError: If nothing was selected, or a targeted module is not 2-D.
     """
-    import torch
-
     from scale_aware_compression.models.adapters import (
+        get_adapter,
         get_decoder_blocks,
         get_linear_modules,
         select_compressible_modules,
@@ -756,8 +761,7 @@ def compress_model_layerwise(
         calibration_fingerprint=calibration_fingerprint,
     )
 
-    # Group the targeted modules by which block they live in, so a block's activations are captured
-    # once and used for all of its layers.
+    # Group the targeted modules by the block they live in, then within a block by dependency order.
     by_block: list[list[str]] = [[] for _ in blocks]
     block_prefixes = [f"{name}." for name, _ in _named_blocks(model, blocks)]
     for name in module_names:
@@ -768,66 +772,147 @@ def compress_model_layerwise(
         else:
             raise LayerwiseError(f"{name!r} does not belong to any decoder block")
 
+    # Capture once per DEPENDENCY GROUP, not once per block. A module whose input is produced by
+    # another module in the same block has to be fitted against the inputs it will really see -- that
+    # is, after that producer is compressed. Capturing once per block fits an MLP down-projection
+    # against activations the *dense* up-projection produced, inputs that never occur at inference.
+    # That is blockwise reconstruction described as layerwise.
+    #
+    # Cost is one extra forward pass over the calibration set per group beyond the first: two passes
+    # per block for Pythia's parallel residual, four for Qwen2's sequential one.
+    groups = get_adapter(model).grouped_suffixes()
     total = len(module_names)
-    completed = 0
+    state = {"completed": 0}
 
     for block_index, names in enumerate(by_block):
         if not names:
             continue
-        captures = {
-            name: ActivationStatistics(
-                modules[name].in_features,
-                dtype=torch.float32,
-                device=device or modules[name].weight.device,
-            )
-            for name in names
-        }
-        handles = [
-            modules[name].register_forward_pre_hook(_make_hook(captures[name])) for name in names
-        ]
-        try:
-            with torch.inference_mode():
-                for batch in batches:
-                    model(batch.to(next(model.parameters()).device))
-        finally:
-            for handle in handles:
-                handle.remove()
-
-        for name in names:
-            module = modules[name]
-            weight = module.weight
-            if weight.ndim != 2:
-                raise LayerwiseError(f"{name!r} weight is {weight.ndim}-D; expected 2-D")
-
-            outcome = compress_layer(
-                weight.detach().to(torch.float32),
-                captures[name],
-                plan,
+        remaining = list(names)
+        for group in groups:
+            in_group = [name for name in remaining if name.endswith(tuple(group))]
+            if not in_group:
+                continue
+            _compress_group(
+                model,
+                modules,
+                in_group,
+                batches=batches,
+                plan=plan,
                 arm=arm,
+                report=report,
+                device=device,
+                block_index=block_index,
+                total=total,
+                state=state,
+                progress=progress,
             )
-            result = outcome.result
-            result.name = name
-            with torch.no_grad():
-                weight.copy_(outcome.weight.to(weight.dtype))
-
-            report.layers.append(result)
-            report.total_local_steps += outcome.local_steps
-            if outcome.scales is not None and outcome.codes is not None:
-                report.grids_by_module[name] = (
-                    outcome.codes.detach().clone(),
-                    outcome.scales.detach().clone(),
-                )
-            completed += 1
-            if progress is not None:
-                progress(name, completed, total)
-            LOGGER.debug(
-                "block %d: compressed %s to %.4f sparsity",
-                block_index,
-                name,
-                result.realised_sparsity,
+            remaining = [name for name in remaining if name not in set(in_group)]
+        if remaining:
+            # A targeted module the adapter's groups do not mention. Compressing it silently against
+            # stale activations is the failure this whole change exists to remove, so refuse instead.
+            raise LayerwiseError(
+                f"block {block_index}: {remaining} are targeted but appear in no dependency group "
+                f"for {type(model).__name__}. Add them to the adapter's dependency_groups, or they "
+                "would be fitted against activations captured before their inputs were compressed."
             )
 
     return report
+
+
+def _compress_group(  # noqa: PLR0913 - one call site; grouping the arguments would hide the flow
+    model: nn.Module,
+    modules: dict[str, nn.Module],
+    names: list[str],
+    *,
+    batches: list[torch.Tensor],
+    plan: LayerPlan,
+    arm: str,
+    report: LayerwiseReport,
+    device: str | None,
+    block_index: int,
+    total: int,
+    state: dict[str, int],
+    progress: Callable[[str, int, int], None] | None,
+) -> None:
+    """Capture activations for one dependency group, then compress every module in it.
+
+    The modules in a group read tensors none of the others produce, so a single capture serves all of
+    them. Groups are compressed in order, and each group's capture happens *after* the previous one
+    has been written back -- which is what makes the reconstruction genuinely layerwise rather than
+    blockwise.
+
+    Args:
+        model: The model, modified in place.
+        modules: Resolved modules by name.
+        names: The group's module names.
+        batches: Calibration batches, reused verbatim for every group and arm (§3.11).
+        plan: Shared compression settings.
+        arm: Which pipeline to run.
+        report: Accumulates per-layer results, grids and the step total.
+        device: Device for capture and compression.
+        block_index: Block ordinal, for logging.
+        total: Total modules in the run, for progress.
+        state: Mutable completion counter shared across groups.
+        progress: Optional progress callback.
+
+    Raises:
+        LayerwiseError: If a weight is not 2-D.
+    """
+    import torch
+
+    captures = {
+        name: ActivationStatistics(
+            modules[name].in_features,
+            dtype=torch.float32,
+            device=device or modules[name].weight.device,
+        )
+        for name in names
+    }
+    handles = [
+        modules[name].register_forward_pre_hook(_make_hook(captures[name])) for name in names
+    ]
+    try:
+        with torch.inference_mode():
+            for batch in batches:
+                model(batch.to(next(model.parameters()).device))
+    finally:
+        for handle in handles:
+            handle.remove()
+
+    for name in names:
+        module = modules[name]
+        weight = module.weight
+        if weight.ndim != 2:
+            raise LayerwiseError(f"{name!r} weight is {weight.ndim}-D; expected 2-D")
+
+        outcome = compress_layer(
+            weight.detach().to(torch.float32),
+            captures[name],
+            plan,
+            arm=arm,
+        )
+        result = outcome.result
+        result.name = name
+        with torch.no_grad():
+            weight.copy_(outcome.weight.to(weight.dtype))
+
+        report.layers.append(result)
+        report.total_local_steps += outcome.local_steps
+        if outcome.scales is not None and outcome.codes is not None:
+            report.grids_by_module[name] = (
+                outcome.codes.detach().clone(),
+                outcome.scales.detach().clone(),
+            )
+
+        state["completed"] += 1
+        if progress is not None:
+            progress(name, state["completed"], total)
+        LOGGER.debug(
+            "block %d: compressed %s to %.4f mask sparsity",
+            block_index,
+            name,
+            result.mask_sparsity,
+        )
 
 
 def _named_blocks(model: nn.Module, blocks: list[nn.Module]) -> list[tuple[str, nn.Module]]:

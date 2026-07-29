@@ -703,6 +703,32 @@ class ExperimentRunner:
             LOGGER.debug("Could not resolve the cached snapshot: %s", error)
             return None
 
+    def _window_mismatch(self, payload: dict[str, Any]) -> str | None:
+        """Why a candidate dense record is not comparable with this run, or ``None`` if it is.
+
+        Args:
+            payload: The candidate's ``quality.perplexity`` mapping.
+
+        Returns:
+            A short reason, or ``None`` when the windows agree.
+        """
+        expected_length = self.config.data.sequence_length
+        expected_count = self.config.evaluation.max_samples or self.config.data.max_eval_samples
+        actual_length = payload.get("sequence_length")
+        actual_count = payload.get("num_sequences")
+
+        if actual_length is not None and int(actual_length) != int(expected_length):
+            return f"sequence_length {actual_length} != {expected_length}"
+        # The count is a *cap*, so a dense run may legitimately have evaluated fewer sequences than
+        # the cap when the split ran out. Only a genuine excess is disqualifying.
+        if (
+            expected_count is not None
+            and actual_count is not None
+            and int(actual_count) > int(expected_count)
+        ):
+            return f"num_sequences {actual_count} exceeds the cap {expected_count}"
+        return None
+
     def _load_dense_reference(self) -> Any:
         """Load this model's dense-baseline perplexity from its recorded run.
 
@@ -730,6 +756,17 @@ class ExperimentRunner:
                 continue
             payload = candidate.get("quality", {}).get("perplexity")
             if not payload:
+                continue
+            # The window and the corpus must match, not just the model and seed. Retention is a ratio
+            # against a dense run, and a dense run evaluated over a different window is a different
+            # number: 34.77 at 64x256 against 36.97 at 493x512 on the same model. Matching on
+            # model+seed alone silently normalised a pilot-window run against a screening-window
+            # baseline, which is the kind of error that shows up as a plausible retention figure.
+            mismatch = self._window_mismatch(payload)
+            if mismatch:
+                LOGGER.debug(
+                    "Skipping dense record %s: %s", candidate.get("experiment_id"), mismatch
+                )
                 continue
             LOGGER.info(
                 "Using dense reference from %s (perplexity %.4f)",

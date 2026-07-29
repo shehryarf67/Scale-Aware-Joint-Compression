@@ -561,6 +561,108 @@ seed policy, and §6.3 forbids revisiting protocol choices after seeing results.
 must be justified on the *mechanism* - seeds provably do nothing - and not on wanting error bars around
 a number we like.
 
+### F-16 - External review found three real bugs; fixing them improved quality by 9.7% {#f-16}
+
+*2026-07-29 - every claim verified against the code before being accepted*
+
+An external review of the repository raised eight technical issues. All eight were checked against the
+source and **all eight were correct**. Three were algorithmic and are fixed here; the rest are recorded
+below as outstanding.
+
+Combined effect on Pythia-160M at 30% + W4, pilot window: perplexity **65.15 -> 58.85**, a 9.7%
+improvement. All three fixes are quality-neutral-or-better by construction, so the direction is not a
+surprise; the magnitude is.
+
+#### (a) The joint outer loop had no acceptance test
+
+Every iteration replaced the working state unconditionally. The solver has an accept-only-if-better
+rule for a *fixed* mask, but nothing protected the outer loop across mask *changes*, so an iteration
+choosing a worse mask discarded a better feasible solution the loop had already found.
+
+This explains the unexplained anomaly in [F-12](#f-12): four alternations scoring worse than two
+(73.17 against 71.87). An alternating optimiser going backwards as it runs longer is wandering, not
+converging.
+
+Now tracks an incumbent and accepts only on improvement, measured against the original dense target.
+**Accept rates, six real Pythia-160M layers at 30% sparsity, K=4:**
+
+| Bits | Proposals | Accepted | Rate | Mean gain when accepted |
+| --- | --- | --- | --- | --- |
+| W8 | 18 | 8 | 44.4% | 0.012% |
+| W4 | 18 | 13 | **72.2%** | **1.353%** |
+| W3 | 18 | 7 | 38.9% | 2.964% |
+| W2 | 18 | 13 | 72.2% | 3.457% |
+
+The guard has not neutered the mechanism: the final mask still differs from the sequential arm's in 5
+or 6 of 6 layers at every width, so the arm remains joint by §3.8's definition. And the benefit when a
+proposal wins rises monotonically with how aggressive the quantisation is, which is what
+[F-05](#f-05) predicts. Between 28% and 61% of proposals were rejected -- every one of which the old
+loop accepted and was degraded by.
+
+#### (b) Conversion re-quantised the model it was supposed to pack
+
+`pack_linear` recomputed max-abs scales from the reconstructed weight instead of reusing the grid the
+solver worked on. The sweep can move a row's maximum, so the refitted grid need not be the same grid --
+conversion would round a second time and ship a different model from the one evaluated for quality.
+`verify_packing` was written to catch exactly this and **was never called**, the same failure mode as
+[F-12](#f-12)'s unwired fairness assertion.
+
+Passing the scales alone turned out to be insufficient. Re-deriving codes from an already-quantised
+weight is **not idempotent in floating point**: a value sitting on a rounding boundary flips. Measured
+deviation 3.7e-03, with the weight itself on-grid to 4.8e-07 (fp32 epsilon). So the driver now carries
+the integer **codes** as well and canonicalises once per layer, so the stored weight is exactly
+`codes x scales`. Conversion packs those codes -- a pure re-encoding, exact by construction rather
+than by tolerance. Verification now runs by default inside `pack_linear`.
+
+#### (c) Reconstruction was blockwise, not layerwise
+
+The driver captured activations **once per block** and compressed every module in that block against
+them. So an MLP down-projection was fitted against activations the *dense* up-projection produced --
+inputs that never occur once the up-projection is compressed. The code comment admitted it: *"a
+block's activations are captured once and used for all of its layers."* The docstring claimed
+layerwise.
+
+Fixed with per-architecture **dependency groups**, recapturing between groups:
+
+| Architecture | Residual | Groups per block |
+| --- | --- | --- |
+| Pythia (GPT-NeoX) | parallel | **2** - {QKV, h_to_4h} then {attn.dense, 4h_to_h} |
+| Qwen2 | sequential | **4** - {q,k,v}, {o_proj}, {gate,up}, {down} |
+
+Pythia's parallel residual means attention and MLP entry projections both read a layernorm of the same
+block input, so they are independent; Qwen2's sequential residual makes the MLP depend on the whole
+attention sub-block. Cost is one extra forward pass over the calibration set per group beyond the
+first. A targeted module belonging to no group now raises rather than being compressed against stale
+activations.
+
+#### (d) A fourth bug, found while measuring the fix
+
+The dense-reference lookup matched on **model and seed only**, not on the evaluation window. So a
+pilot-window run (64 x 256) was silently normalised against the screening-window dense baseline
+(493 x 512) -- 34.77 against 36.97 on the same model. It produced a plausible retention figure from
+two incomparable numbers. Now checks the sequence length and rejects a baseline that evaluated more
+sequences than this run's cap.
+
+#### Still outstanding from the same review
+
+| Item | Why it matters |
+| --- | --- |
+| **W8 latency is not native INT8** | Every quantised layer runs through `PackedLinear`, whose forward unpacks, dequantises and calls a dense FP32 matmul. A W8 latency number today measures unpacking, not oneDNN INT8. **Do not publish W8 latency until a native runtime path exists.** |
+| Resumability | `ExperimentTracker.exists()` returns true whenever the JSON file exists, regardless of `status`, config hash, code revision or dataset fingerprint. |
+| CSV duplicates | Rows are appended, not upserted, so re-running a cell adds a second row for the same experiment id even though its JSON is overwritten. |
+| `scale_trend()` unimplemented | Needed, and tested, *before* the main sweep -- otherwise a missing record field is discovered after the compute is spent. |
+| Excess NLL as the primary metric | Perplexity is exponential, so a fixed perplexity gap means different things at different baselines. `delta NLL` is additive and comparable across scales. |
+| Targeted parameters on the scale axis | The sweep populates `parameter_count` from the registry's *total*; §2.6 wants targeted non-embedding parameters, which the layerwise report already records. |
+| Test-split separation | Budgets were selected after observing **validation** results, so reusing validation for the headline scale study is selection bias. Final results should move to the WikiText-2 **test** split. |
+| Calibration replicates | See [F-15](#f-15). Also proposed: paired block bootstrap over evaluation windows, not over tokens, because neighbouring tokens are dependent. |
+| Sequential baseline policy | `method_definition.md` promises best-of {P->Q, Q->P}; the main sweep runs only P->Q. Pick one and make the documents and the grid agree. |
+| S6 as an auxiliary control | 40% + W8 has almost the same retention as 30% + W4, so running it across scales would separate "compression severity" from "low-bit quantisation changes the mask". |
+| External sanity anchor | One limited comparison against a reference Wanda / SparseGPT / GPTQ implementation at matched settings, to confirm the custom solver sits in a plausible quality range. This is the check that would settle [review question 7.4](review_brief.md). |
+
+**Every screening number now predates a method change.** [F-10](#f-10), [F-13](#f-13) and
+[F-14](#f-14) were produced by the pre-fix pipeline and must be re-run before the budgets are treated
+as frozen on current code.
+
 ---
 
 ## 3. All end-to-end perplexities in one table
@@ -612,6 +714,10 @@ recording.
 | B-12 | Four identical dense cells planned per four-budget grid | Wasted compute plus near-duplicate records §10.4 asks the audit to reject |
 | B-14 | Joint arm ran on 2x the sequential arm's solver budget; the fairness guard was never called ([F-12](#f-12)) | Every joint-gain number before 2026-07-29 was non-attributable under §3.11 |
 | B-15 | `LayerPlan` and `ReconstructionConfig` carried separate `joint_iterations` defaults | Changing the config default silently left the plan default in place, which is what runs |
+| B-17 | Joint outer loop accepted every proposal, including worse ones ([F-16](#f-16)) | An alternating optimiser that discards a better solution it already found; explains four iterations scoring worse than two |
+| B-18 | Conversion refit the quantisation grid instead of reusing the solver's | Packed a different model from the one evaluated; `verify_packing` existed and was never called |
+| B-19 | Activations captured once per block, not per dependency group | MLP down-projections fitted against inputs the dense up-projection produced -- blockwise reconstruction described as layerwise |
+| B-20 | Dense-reference lookup ignored the evaluation window | Normalised a 64x256 run against a 493x512 baseline and reported the resulting ratio as retention |
 | B-16 | Three-seed confirmatory protocol produces three identical numbers ([F-15](#f-15)) | The paper would report a seed spread of zero as though the protocol had been followed, and §6.3's practical-importance rule would be vacuous |
 | B-13 | Sweep cells inherited the base config's model revision | Every cell pinned to the *first* model's SHA — fails to load, or silently loads the wrong weights if the SHA exists in both repos |
 

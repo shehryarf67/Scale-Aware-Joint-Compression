@@ -524,6 +524,79 @@ class TestArmsGetEqualSolverBudgets:
             assert outcome.result.local_steps == plan.reconstruction_passes(arm), arm
 
 
+class TestActivationsAreRecapturedWithinABlock:
+    """The reconstruction must be layerwise, not blockwise.
+
+    The driver originally captured once per block and compressed every module in it against that one
+    capture. So an MLP down-projection was fitted against activations the *dense* up-projection
+    produced — inputs that never occur once the up-projection is compressed. The dependency groups in
+    ``models/adapters.py`` fix this by recapturing between groups.
+    """
+
+    def test_pythia_declares_two_dependency_groups(self):
+        """Parallel residual: entry projections read the block input, exit projections read them."""
+        from scale_aware_compression.models.adapters import GPT_NEOX_ADAPTER
+
+        groups = GPT_NEOX_ADAPTER.grouped_suffixes()
+        assert len(groups) == 2
+        assert "attention.query_key_value" in groups[0]
+        assert "mlp.dense_h_to_4h" in groups[0]
+        assert "attention.dense" in groups[1]
+        assert "mlp.dense_4h_to_h" in groups[1]
+
+    def test_qwen_declares_four_dependency_groups(self):
+        """Sequential residual: the MLP reads a layernorm of the post-attention hidden state."""
+        from scale_aware_compression.models.adapters import QWEN2_ADAPTER
+
+        groups = QWEN2_ADAPTER.grouped_suffixes()
+        assert len(groups) == 4
+        assert set(groups[0]) == {"self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj"}
+        assert groups[1] == ("self_attn.o_proj",)
+        assert set(groups[2]) == {"mlp.gate_proj", "mlp.up_proj"}
+        assert groups[3] == ("mlp.down_proj",)
+
+    @pytest.mark.parametrize("adapter_name", ["GPT_NEOX_ADAPTER", "QWEN2_ADAPTER"])
+    def test_every_compressible_module_belongs_to_exactly_one_group(self, adapter_name: str):
+        """A module in no group would be compressed against stale activations, or not at all."""
+        from scale_aware_compression.models import adapters
+
+        adapter = getattr(adapters, adapter_name)
+        flat = [suffix for group in adapter.grouped_suffixes() for suffix in group]
+        assert sorted(flat) == sorted(adapter.compressible_suffixes)
+        assert len(flat) == len(set(flat)), "a suffix appears in two groups"
+
+    def test_a_targeted_module_outside_every_group_is_refused(self, fresh_causal_lm):
+        """Silently compressing it against stale activations is the failure being removed."""
+        from scale_aware_compression.compression.layerwise import compress_model_layerwise
+
+        with pytest.raises(LayerwiseError, match="no dependency group"):
+            compress_model_layerwise(
+                fresh_causal_lm,
+                calibration_batches(fresh_causal_lm.config.vocab_size),
+                moderate_plan(),
+                arm="pruning",
+                # Inside a decoder block, so it clears the block check, but named by no dependency
+                # group. Exactly the case that would otherwise be compressed against activations
+                # captured before its inputs were compressed.
+                module_names=["gpt_neox.layers.0.input_layernorm"],
+            )
+
+    def test_exit_projections_are_compressed_after_their_entry_projections(self, fresh_causal_lm):
+        """Group order is what makes the recapture meaningful."""
+        report = compress_model_layerwise(
+            fresh_causal_lm,
+            calibration_batches(fresh_causal_lm.config.vocab_size),
+            moderate_plan(),
+            arm="sequential",
+        )
+
+        order = [layer.name for layer in report.layers]
+        for block in range(fresh_causal_lm.config.num_hidden_layers):
+            entry = order.index(f"gpt_neox.layers.{block}.mlp.dense_h_to_4h")
+            exit_ = order.index(f"gpt_neox.layers.{block}.mlp.dense_4h_to_h")
+            assert entry < exit_, f"block {block}: exit projection compressed before its input"
+
+
 class TestFairnessInvariants:
     """§3.11 as machine-checkable assertions rather than documented intent."""
 
