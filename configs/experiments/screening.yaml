@@ -71,7 +71,11 @@ compression:
     # budget's behaviour to the budget.
     solver: sweep
     local_steps: 1
-    joint_iterations: 4
+    # Two, not four. The joint arm makes one solver call per iteration and the sequential
+    # pipeline makes two (mask->reconstruct, quantise->reconstruct), so K=4 handed joint twice
+    # the optimisation budget -- a §3.11 violation that invalidated round 1's joint-gain column.
+    # With the sweep solver each call is one deterministic pass, so passes are the fairness unit.
+    joint_iterations: 2
     comparison_group: output
     scale_search: false
     keep_benefit_saliency: false

@@ -268,6 +268,12 @@ def run_sweep(
     plan = plan or build_sweep_plan(config)
     tracker = tracker or ExperimentTracker(config.runtime.output_dir / "metrics")
 
+    # Check the arms will get equal solver budgets BEFORE spending the compute. §3.11's critical
+    # fairness point is that a score obtained with more optimisation cannot be attributed to the
+    # method, and a sweep is hours long -- discovering the mismatch from the records afterwards means
+    # discovering it after the whole grid is invalid.
+    _assert_grid_is_fair(config, plan)
+
     ordered = _dense_first(plan.cells)
     records: list[ExperimentRecord] = []
     failures: list[tuple[SweepCell, Exception]] = []
@@ -311,6 +317,28 @@ def run_sweep(
         )
 
     return records
+
+
+def _assert_grid_is_fair(config: ExperimentConfig, plan: SweepPlan) -> None:
+    """Pre-flight fairness check for a sweep grid.
+
+    Args:
+        config: The base config, for its reconstruction settings.
+        plan: The expanded plan, for the arms it will run.
+
+    Raises:
+        LayerwiseError: If the grid pits arms with unequal solver budgets against each other.
+    """
+    from scale_aware_compression.compression.arms import plan_from_config
+    from scale_aware_compression.compression.layerwise import assert_arms_can_be_matched
+
+    arms = sorted(
+        {cell.method.value for cell in plan.cells if cell.method is not CompressionMethod.DENSE}
+    )
+    if not arms:
+        return
+    assert_arms_can_be_matched(plan_from_config(config), arms)
+    LOGGER.info("Fairness pre-flight passed: arms %s share one solver budget", arms)
 
 
 def _dense_first(cells: Sequence[SweepCell]) -> list[SweepCell]:

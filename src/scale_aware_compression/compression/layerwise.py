@@ -92,7 +92,14 @@ class LayerPlan:
     docs/validity_threats.md."""
     solver: ReconstructionSolver = ReconstructionSolver.SWEEP
     local_steps: int = 1
-    joint_iterations: int = 4
+    joint_iterations: int = 2
+    """Outer alternations in the joint arm, and the count that makes it comparable.
+
+    Two, matching the sequential pipeline's two solver calls. This default and
+    ``ReconstructionConfig.joint_iterations`` must agree -- they were 2 and 4 for a while, which is
+    how a whole screening grid ran with the joint arm on twice the optimisation budget.
+    :func:`assert_arms_can_be_matched` now refuses such a grid before it starts.
+    """
     damping: float = 1e-2
     block_size: int = 128
     activation_order: bool = True
@@ -127,6 +134,33 @@ class LayerPlan:
     Retained as an ablation, because "the obvious quantisation-aware criterion is worse than
     magnitude" is a reportable result rather than a dead end.
     """
+
+    def reconstruction_passes(self, arm: str) -> int:
+        """How many times ``arm`` calls the solver, per layer.
+
+        The single source of truth for the fairness unit, kept next to the driver that makes the
+        calls so the two cannot drift. With the sweep solver ``local_steps`` does not control any
+        work -- a sweep is one deterministic pass -- so the meaningful count is *passes*, not steps.
+
+        Args:
+            arm: Arm name, as passed to :func:`compress_layer`.
+
+        Returns:
+            Solver calls per layer.
+
+        Raises:
+            LayerwiseError: If the arm is unknown.
+        """
+        passes = {
+            "pruning": 1,
+            "quantisation": 1,
+            "sequential": 2,  # mask -> reconstruct, then quantise -> reconstruct
+            "sequential_qp": 2,  # quantise -> reconstruct, then mask -> reconstruct
+            "joint": self.joint_iterations,
+        }
+        if arm not in passes:
+            raise LayerwiseError(f"unknown arm {arm!r}; expected one of {sorted(passes)}")
+        return passes[arm]
 
     @property
     def prunes(self) -> bool:
@@ -436,6 +470,43 @@ def compress_layer(
         num_weights=weight.numel(),
     )
     return LayerOutcome(weight=compressed, mask=mask, result=result, local_steps=steps_used)
+
+
+def assert_arms_can_be_matched(plan: LayerPlan, arms: Sequence[str]) -> None:
+    """Check *before running* that the arms in a grid will consume equal solver budgets.
+
+    :func:`assert_matched_plans` catches a mismatch after the fact, from the records. This catches it
+    from the configuration, which is the only useful moment: a sweep is hours of compute, and §3.11's
+    critical fairness point is that a score obtained with more optimisation cannot be attributed to
+    the method.
+
+    The default ``joint_iterations = 4`` against sequential's two passes is exactly this failure, and
+    it went unnoticed through a whole screening grid because nothing called either assertion during a
+    real run.
+
+    Args:
+        plan: The shared plan every arm will use.
+        arms: Arm names that will run against each other.
+
+    Raises:
+        LayerwiseError: If two arms that both prune *and* quantise would get different budgets.
+    """
+    # Only arms doing both techniques are compared for joint gain. A pruning-only arm legitimately
+    # does one pass, and comparing its budget against a two-stage pipeline is meaningless.
+    comparable = [arm for arm in arms if arm in {"sequential", "sequential_qp", "joint"}]
+    if len(comparable) < 2:
+        return
+
+    budgets = {arm: plan.reconstruction_passes(arm) for arm in comparable}
+    if len(set(budgets.values())) > 1:
+        detail = ", ".join(f"{arm}={count}" for arm, count in sorted(budgets.items()))
+        raise LayerwiseError(
+            f"arms would receive unequal solver budgets ({detail}), violating §3.11. With the sweep "
+            "solver each call is one deterministic pass, so passes are the fairness unit. Set "
+            f"compression.reconstruction.joint_iterations to "
+            f"{plan.reconstruction_passes('sequential')} to match the sequential pipeline's two "
+            "stages, or give the sequential arm the same budget explicitly (§3.5 step 6)."
+        )
 
 
 def assert_matched_plans(

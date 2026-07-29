@@ -25,6 +25,7 @@ from scale_aware_compression.compression.layerwise import (
     LayerResult,
     LayerwiseError,
     LayerwiseReport,
+    assert_arms_can_be_matched,
     assert_matched_plans,
     compress_layer,
     compress_model_layerwise,
@@ -432,6 +433,61 @@ def build_mask_from_scores_for(weight, statistics):
     return build_mask_from_scores(
         activation_weighted_saliency(weight, statistics.column_norms()), sparsity=0.5
     )
+
+
+class TestArmsGetEqualSolverBudgets:
+    """§3.11's critical fairness point, checked from the configuration rather than the records.
+
+    This is the invariant that actually failed in practice. The default `joint_iterations = 4` gave
+    the joint arm four solver calls per layer against the sequential pipeline's two, so joint ran on
+    twice the optimisation budget through an entire screening grid -- and nothing noticed, because
+    `assert_matched_plans` existed, was exported, and was never called during a real run.
+    """
+
+    def test_the_default_matches_the_sequential_pipeline(self):
+        plan = LayerPlan()
+        assert plan.reconstruction_passes("joint") == plan.reconstruction_passes("sequential")
+
+    def test_the_plan_default_and_the_config_default_agree(self):
+        """They diverged once -- 2 in the config, 4 in the plan -- and the plan is what runs."""
+        from scale_aware_compression.config import ReconstructionConfig
+
+        assert LayerPlan().joint_iterations == ReconstructionConfig().joint_iterations
+
+    @pytest.mark.parametrize(
+        ("arm", "expected"),
+        [
+            ("pruning", 1),
+            ("quantisation", 1),
+            ("sequential", 2),
+            ("sequential_qp", 2),
+        ],
+    )
+    def test_pass_counts_match_the_driver(self, arm: str, expected: int):
+        """The counts must track what compress_layer actually calls, or the check is decorative."""
+        assert LayerPlan().reconstruction_passes(arm) == expected
+
+    def test_unequal_budgets_are_refused_before_the_compute_is_spent(self):
+        plan = LayerPlan(joint_iterations=4)
+        with pytest.raises(LayerwiseError, match="unequal solver budgets"):
+            assert_arms_can_be_matched(plan, ["sequential", "joint"])
+
+    def test_equal_budgets_pass(self):
+        assert_arms_can_be_matched(LayerPlan(joint_iterations=2), ["sequential", "joint"])
+
+    def test_a_single_arm_grid_needs_no_matching(self):
+        """A pruning-only run legitimately does one pass; there is nothing to compare it against."""
+        assert_arms_can_be_matched(LayerPlan(joint_iterations=4), ["joint"])
+        assert_arms_can_be_matched(LayerPlan(joint_iterations=4), ["pruning", "quantisation"])
+
+    def test_the_recorded_totals_agree_with_the_predicted_ones(self, layer_inputs):
+        """Ties the prediction to reality: what the plan promises is what the driver spends."""
+        weight, statistics = layer_inputs
+        plan = LayerPlan(sparsity=0.5, bits=4, local_steps=1, joint_iterations=2)
+
+        for arm in ("sequential", "joint", "pruning", "quantisation"):
+            outcome = compress_layer(weight, statistics, plan, arm=arm)
+            assert outcome.result.local_steps == plan.reconstruction_passes(arm), arm
 
 
 class TestFairnessInvariants:

@@ -49,6 +49,9 @@ class Cell:
     experiment_id: str
     eval_sequences: int | None = None
     eval_sequence_length: int | None = None
+    local_steps: int | None = None
+    """Solver budget this arm actually consumed. Two arms with different totals are not a fair
+    comparison however good the numbers look (§3.11)."""
 
     @property
     def window(self) -> tuple[int | None, int | None]:
@@ -85,6 +88,9 @@ def load_cells(metrics_dir: Path, model: str | None) -> list[Cell]:
                 experiment_id=record.get("experiment_id", path.stem),
                 eval_sequences=_window(quality, "num_sequences"),
                 eval_sequence_length=_window(quality, "sequence_length"),
+                local_steps=((record.get("compression") or {}).get("statistics") or {}).get(
+                    "total_local_steps"
+                ),
             )
         )
     return cells
@@ -125,12 +131,30 @@ def verdict(sequential: Cell | None, joint: Cell | None) -> tuple[str, str]:
     if sequential.retention is None or joint.retention is None:
         return "NO REFERENCE", "no dense baseline recorded for this model and seed"
 
+    # Eligibility first. A budget that breaks the model is rejected whether or not the arms were
+    # matched, so an unmatched-budget note must not hide a catastrophic verdict.
     best = max(sequential.retention, joint.retention)
     if best >= MEASURABLE_BELOW:
-        return "TOO MILD", f"best retention {best:.1f}% -- not measurably degraded"
-    if best < CATASTROPHIC_BELOW:
-        return "CATASTROPHIC", f"best retention {best:.1f}% -- the model is broken"
-    return "ELIGIBLE", f"best retention {best:.1f}%"
+        label, reason = "TOO MILD", f"best retention {best:.1f}% -- not measurably degraded"
+    elif best < CATASTROPHIC_BELOW:
+        label, reason = "CATASTROPHIC", f"best retention {best:.1f}% -- the model is broken"
+    else:
+        label, reason = "ELIGIBLE", f"best retention {best:.1f}%"
+
+    # §3.11: a score obtained with more optimisation cannot be attributed to the method. This
+    # actually happened -- the joint arm ran on twice the solver budget through a whole grid -- so the
+    # check belongs in the output rather than in someone's memory. It qualifies the *gain*, not the
+    # budget's eligibility, which is why it is appended rather than substituted.
+    if (
+        sequential.local_steps is not None
+        and joint.local_steps is not None
+        and sequential.local_steps != joint.local_steps
+    ):
+        reason += (
+            f" · **gain NOT usable**: solver budgets differ (sequential "
+            f"{sequential.local_steps}, joint {joint.local_steps}), §3.11"
+        )
+    return label, reason
 
 
 def main(argv: list[str] | None = None) -> int:

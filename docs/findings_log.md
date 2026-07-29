@@ -385,6 +385,84 @@ which §4.1 forbids. It would inflate every arm's score equally, so no compariso
 attempt required the two keys to be equal always, which was wrong because their defaults differ and it
 would have forbidden the arrangement every shipped config uses. Three tests cover it.
 
+### F-12 - The arms ran on unequal optimisation budgets, and the guard that existed was never called {#f-12}
+
+*2026-07-29 - affects every joint-gain number produced before this date*
+
+**The joint arm received twice the solver budget of the sequential arm, in every cell of the screening
+grid.** Recorded totals: joint **192** local steps per run, sequential **96**.
+
+The cause is arithmetic. The joint arm calls the solver once per outer iteration and the default was
+`joint_iterations = 4`; the sequential pipeline calls it twice (mask then reconstruct, then quantise
+then reconstruct). 4 x 48 layers = 192 against 2 x 48 = 96.
+
+This violates §3.11 directly, whose critical fairness point is that a score obtained with more
+optimisation cannot be attributed to the method.
+
+**The root cause is worse than the arithmetic.** `assert_matched_plans` was written specifically to
+catch this, is exported from the package, and is covered by tests - and **nothing called it during a
+real run**. The guard existed and was never wired in. A second contributing split: `LayerPlan` and
+`ReconstructionConfig` each carried their own `joint_iterations` default, and they had diverged, so
+changing the config default left the plan default - the one that actually runs - untouched.
+
+**What it does and does not invalidate.** Joint received *more* compute and still did not win at any
+budget, so the direction of the observation is robust: equalising can only move results against joint.
+But the magnitudes were not attributable, and the comparison was not protocol-compliant. Budget
+*eligibility* is unaffected, being driven by the sequential arm, and at S1 the two arms agree to
+within 0.2 pp.
+
+**Fixed:**
+
+- `LayerPlan.reconstruction_passes(arm)` - one source of truth for solver calls per arm, next to the
+  driver that makes them.
+- `assert_arms_can_be_matched(plan, arms)` - a **pre-flight** check wired into `run_sweep`, so an
+  unfair grid fails before spending hours rather than after. Confirmed firing in the run log.
+- `joint_iterations` default **4 to 2** in *both* places, pinned equal by a test.
+- `scripts/summarise_screening.py` now reads the recorded totals and marks any row whose arms differ
+  as **gain NOT usable**, separately from the budget's eligibility - an unmatched note must not hide
+  a catastrophic verdict.
+- 10 new tests, including one tying the predicted pass count to what the driver actually spends.
+
+**Re-measured at matched budgets** (96 passes each) for the three eligible budgets. The other three
+were left as they were: catastrophic on retention regardless, with their gain marked unusable.
+
+| Budget | Sequential | Joint | Joint gain, K=4 (unfair) | Joint gain, K=2 (matched) |
+| --- | --- | --- | --- | --- |
+| S1 30% + W8 | 45.97 | **45.90** | +0.06 pp | **+0.12 pp** |
+| S5 30% + W4 | 66.03 | **71.87** | -5.46 pp | **-4.55 pp** |
+| S6 40% + W8 | 67.10 | **67.06** | -0.06 pp | **+0.03 pp** |
+
+**A side observation worth following up.** At S5, cutting the joint arm from four alternations to two
+*improved* it - 73.17 to 71.87. More alternation made the result worse. That is the opposite of what an
+alternating optimiser converging on a better solution would do, and suggests the loop wanders rather
+than converges at W4. Not chased down; it bears on whether the joint arm as specified does what §3.7
+intends.
+
+### F-13 - Screening round 2: three eligible budgets, and the W4 cell is the interesting one {#f-13}
+
+*2026-07-29 - Pythia-160M `50f5173d` - 493 x 512 window - dense **36.97** - one seed - matched budgets
+for the eligible rows*
+
+Extends [F-10](#f-10) with the two candidates the original grid never tested. Evidence table in
+`outputs/tables/screening_summary.md`.
+
+| Budget | Sparsity | Bits | Sequential ppl | Joint ppl | Seq ret. | Joint ret. | Joint gain | Verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **S1** | 30% | W8 | 45.97 | 45.90 | **80.4%** | **80.6%** | +0.12 pp | **ELIGIBLE** |
+| S2 | 50% | W8 | 161.46 | 163.85 | 22.9% | 22.6% | *unusable* | catastrophic |
+| S3 | 50% | W4 | 250.25 | 256.74 | 14.8% | 14.4% | *unusable* | catastrophic |
+| S4 | 70% | W4 | 4663.88 | 4802.72 | 0.8% | 0.8% | *unusable* | catastrophic |
+| **S5** | 30% | W4 | 66.03 | 71.87 | **56.0%** | 51.4% | **-4.55 pp** | **ELIGIBLE** |
+| **S6** | 40% | W8 | 67.10 | 67.06 | **55.1%** | 55.1% | +0.03 pp | **ELIGIBLE** |
+
+**Three budgets are eligible**, so the budget axis survives - S5 was the cell worth adding.
+
+**S5 is the only budget where the two arms measurably differ**, and joint is the *worse* one, by
+4.55 pp of retention. Every other eligible budget is a tie to within 0.12 pp. That is consistent with
+[F-05](#f-05): W4 is the only regime where the joint mechanism is live, and at W4 it appears to
+*hurt*. One seed, so a hypothesis rather than a result - but "the mechanism is live and it costs
+quality" would be a more interesting and more awkward finding than "the mechanism is inert".
+
 ---
 
 ## 3. All end-to-end perplexities in one table
@@ -434,6 +512,8 @@ recording.
 | B-10 | Packed metadata returned from `get_extra_state` as a dict | `save_pretrained` walks the state dict expecting tensors; the first full run crashed at save |
 | B-11 | `evaluation.max_samples` may exceed `data.max_eval_samples` on a shared split | Evaluates on sequences the calibration set was drawn from, violating §4.1. Inflates every arm equally, so no comparison looks wrong ([F-11](#f-11)) |
 | B-12 | Four identical dense cells planned per four-budget grid | Wasted compute plus near-duplicate records §10.4 asks the audit to reject |
+| B-14 | Joint arm ran on 2x the sequential arm's solver budget; the fairness guard was never called ([F-12](#f-12)) | Every joint-gain number before 2026-07-29 was non-attributable under §3.11 |
+| B-15 | `LayerPlan` and `ReconstructionConfig` carried separate `joint_iterations` defaults | Changing the config default silently left the plan default in place, which is what runs |
 | B-13 | Sweep cells inherited the base config's model revision | Every cell pinned to the *first* model's SHA — fails to load, or silently loads the wrong weights if the SHA exists in both repos |
 
 Two of these were **masked by tests that should have caught them**: B-07 (the test disabled

@@ -357,7 +357,18 @@ class ReconstructionConfig:
     local_steps: int = 1
     """Refinement iterations per layer. **The fairness unit.** Used by the ALS solver; the sweep is
     single-pass, so its cost is fixed and matching is automatic."""
-    joint_iterations: int = 4
+    joint_iterations: int = 2
+    """Outer alternations in the joint arm, and **the fairness unit** (§3.11).
+
+    Two, matching the sequential pipeline's two solver calls (mask->reconstruct,
+    quantise->reconstruct). The previous default of 4 handed the joint arm twice the
+    optimisation budget, which invalidated a whole screening grid's joint-gain column before
+    anything noticed -- §3.11's critical fairness point is that a score obtained with more
+    optimisation cannot be attributed to the method.
+
+    With the sweep solver each call is one deterministic pass, so passes are the unit that
+    matters; `local_steps` controls nothing there. `assert_arms_can_be_matched` enforces this
+    before a sweep spends any compute."""
     """Outer alternations in the joint arm (``K`` in §3.7): fake-quantise, rescore saliency under
     the quantised weights, update the mask, re-estimate scales, reconstruct."""
     damping: float = 1e-2
