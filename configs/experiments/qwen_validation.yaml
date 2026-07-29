@@ -54,19 +54,26 @@ sweep:
 
   # Identical to main_scale_sweep.yaml. Keep the two in step: a budget that differs between the
   # sweep and the validation makes the transfer check meaningless.
+  # Identical to the Pythia sweep's frozen budgets, and that is a requirement rather than a
+  # convenience: §2.4 compares Qwen's joint gain against the Pythia trend interpolated at its
+  # parameter count, which is meaningless if the two ran at different compression budgets. A test
+  # asserts the two configs agree.
+  #
+  # Frozen 2026-07-29 from Phase 7 screening. Superseded pair: 50% + W8 and 70% + W4, both measured
+  # catastrophic on Pythia-160M. See findings_log.md F-10 and F-13.
   budget_overrides:
     moderate:
       compression:
         budget_label: moderate
         pruning:
-          sparsity: 0.5
+          sparsity: 0.3
         quantisation:
           bits: 8
     aggressive:
       compression:
         budget_label: aggressive
         pruning:
-          sparsity: 0.7
+          sparsity: 0.3
         quantisation:
           bits: 4
 

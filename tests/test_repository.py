@@ -26,6 +26,7 @@ REQUIRED_DOCS = (
     "implementation_plan.md",
     "protocol_freeze.md",
     "findings_log.md",
+    "review_brief.md",
     "methodology.md",
     "experiment_protocol.md",
     "benchmarking_protocol.md",

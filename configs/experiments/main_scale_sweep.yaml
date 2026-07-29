@@ -73,30 +73,59 @@ sweep:
     - 3456
 
   budget_overrides:
-    # 50% sparsity, 8-bit: the regime where a well-tuned sequential pipeline loses little, so any
-    # joint gain here is small and needs the seed repeats to be credible.
+    # =============================================================================================
+    # FROZEN 2026-07-29 from the Phase 7 screening grid. Evidence: findings_log.md F-10 and F-13,
+    # plus outputs/tables/screening_summary.md.
+    #
+    # DO NOT CHANGE. The budget is a controlled variable across scales (§2.5), and §6.3 forbids
+    # revisiting the choice once results exist. Superseded pair, for the record: the original
+    # moderate/aggressive was 50% + W8 and 70% + W4. Screening measured BOTH as catastrophic on
+    # Pythia-160M -- 22.9% and 0.8% retention. Since the smallest model sets the ceiling for all
+    # three, neither was usable anywhere.
+    #
+    # The frozen pair varies PRECISION, not sparsity: both budgets prune 30%. The sparsity-versus-
+    # latency curve (RQ4) therefore does not come from these budgets. It comes from benchmark-only
+    # runs of the pruning-only arm at several sparsities, which are cheap because that arm stays FP32
+    # and a latency measurement does not need the full quality evaluation.
+    # =============================================================================================
+
+    # MODERATE = screening S1. 30% sparsity, 8-bit.
+    #
+    # Pythia-160M, 493x512 window, dense 36.97:
+    #     sequential 45.97 (80.4% retention)   joint 45.90 (80.6%)   gain +0.12 pp
+    #
+    # This is the CONTROL budget. F-05 measured the joint mechanism as near-inert at 8 bits -- the
+    # arms pick masks differing in only 0.46% of positions -- so a joint gain near zero here is the
+    # EXPECTED result rather than a failure. Reporting it as a scale-independent null about pipeline
+    # design would be a misreading of the design.
     moderate:
       compression:
         budget_label: moderate
         pruning:
-          sparsity: 0.5
+          sparsity: 0.3
         quantisation:
           bits: 8
-    # 70% sparsity, 4-bit: quality degrades enough that the two arms should separate. Also where
-    # the "at which budgets does joint optimisation become useful?" question is answered.
+
+    # AGGRESSIVE = screening S5. 30% sparsity, 4-bit.
     #
-    # 4-bit is the RISK in this study's plan. It is kept here because the configuration system
-    # supports it and because it is the more interesting budget, but before running:
-    #   * confirm a single 4-bit CPU path exists for both the sequential and joint arms
-    #   * confirm both arms emit the same artefact format and run on the same backend
-    # If either fails, switch this budget to the INT8 fallback below. Latency and size numbers
-    # produced by two different runtimes are not comparable, so a mixed-backend aggressive budget
-    # would invalidate the deployment half of the study.
+    # Pythia-160M, matched solver budgets:
+    #     sequential 66.03 (56.0% retention)   joint 71.87 (51.4%)   gain -4.55 pp
+    #
+    # Chosen over the 40% + W8 alternative for one reason: 4-bit is the ONLY regime where the joint
+    # mechanism is measurably live -- 8.86% mask divergence at W4 against 0.46% at W8 (F-05). Two
+    # 8-bit budgets could not detect the effect this study exists to measure, and would produce a
+    # confident null that was an artefact of the design rather than a finding about nature.
+    #
+    # It is also the only eligible budget where the two arms measurably differ, and joint is the
+    # WORSE one. That is a hypothesis worth testing, not a reason to avoid the budget.
+    #
+    # Per decision D1 this budget contributes quality and size only. It never appears in a latency
+    # table, because a packed 4-bit CPU linear would measure the dequantisation kernel.
     aggressive:
       compression:
         budget_label: aggressive
         pruning:
-          sparsity: 0.7
+          sparsity: 0.3
         quantisation:
           bits: 4
 

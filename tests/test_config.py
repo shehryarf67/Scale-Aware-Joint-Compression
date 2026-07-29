@@ -392,6 +392,7 @@ class TestShippedConfigs:
             "extended_scale_sweep.yaml",
             "qwen_validation.yaml",
             "screening.yaml",
+            "screening_410m.yaml",
         }
         for path in files:
             config = load_config(path)
@@ -562,12 +563,36 @@ class TestSweepScope:
     def test_sweep_is_resumable(self, configs_dir: Path, name: str):
         assert self._sweep(configs_dir, name).skip_existing is True
 
-    def test_sweep_budgets_hold_sparsity_and_bits_as_planned(self, configs_dir: Path):
+    def test_sweep_budgets_are_the_ones_frozen_by_screening(self, configs_dir: Path):
+        """The budgets frozen on 2026-07-29 by the Phase 7 grid (findings_log.md F-13).
+
+        Pinned because §6.3 forbids revisiting the choice once results exist, and because the pair
+        this replaced — 50% + W8 and 70% + W4 — measured **catastrophic** on Pythia-160M at 22.9% and
+        0.8% retention. The budget is a controlled variable across scales, so the smallest model sets
+        the ceiling for all three; if these values drift, the sweep silently changes meaning.
+
+        The pair varies precision, not sparsity: both prune 30%. That is deliberate — 4-bit is the
+        only regime where the joint mechanism is measurably live (0.46% mask divergence at W8 against
+        8.86% at W4), so two 8-bit budgets could not detect the study's primary effect.
+        """
         overrides = self._sweep(configs_dir, "main_scale_sweep.yaml").budget_overrides
-        assert overrides["moderate"]["compression"]["pruning"]["sparsity"] == 0.5
+        assert overrides["moderate"]["compression"]["pruning"]["sparsity"] == 0.3
         assert overrides["moderate"]["compression"]["quantisation"]["bits"] == 8
-        assert overrides["aggressive"]["compression"]["pruning"]["sparsity"] == 0.7
+        assert overrides["aggressive"]["compression"]["pruning"]["sparsity"] == 0.3
         assert overrides["aggressive"]["compression"]["quantisation"]["bits"] == 4
+
+    def test_the_frozen_budgets_differ_only_in_precision(self, configs_dir: Path):
+        """Guards the reasoning, not just the numbers.
+
+        If someone later 'fixes' the budgets so they differ in sparsity instead, the study loses its
+        only 4-bit condition and becomes structurally unable to show a joint effect.
+        """
+        overrides = self._sweep(configs_dir, "main_scale_sweep.yaml").budget_overrides
+        moderate = overrides["moderate"]["compression"]
+        aggressive = overrides["aggressive"]["compression"]
+        assert moderate["pruning"]["sparsity"] == aggressive["pruning"]["sparsity"]
+        assert moderate["quantisation"]["bits"] != aggressive["quantisation"]["bits"]
+        assert aggressive["quantisation"]["bits"] == 4, "the aggressive budget must keep 4-bit"
 
 
 class TestPilotScope:

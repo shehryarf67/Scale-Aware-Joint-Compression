@@ -316,12 +316,66 @@ cannot be re-enabled without reinstalling Windows — so it is deliberately not 
 
 ---
 
+## The frozen compression budgets
+
+**Frozen 2026-07-29**, from the Phase 7 screening grid on Pythia-160M. Evidence:
+[findings_log.md F-10 and F-13](findings_log.md#f-13), and
+`outputs/tables/screening_summary.md`.
+
+| | Sparsity | Bits | 160M retention (seq / joint) | Role |
+| --- | --- | --- | --- | --- |
+| **Moderate** (screening S1) | **30%** | **W8** | 80.4% / 80.6% | **Control.** The mechanism is near-inert at W8, so a gain near zero is the *expected* outcome. |
+| **Aggressive** (screening S5) | **30%** | **W4** | 56.0% / 51.4% | **The headline comparison.** The only regime where the joint mechanism is measurably live. |
+
+§6.3 forbids revisiting this once results exist. Written into
+`main_scale_sweep.yaml`, `extended_scale_sweep.yaml` and `qwen_validation.yaml`, and pinned by tests
+in `tests/test_config.py`.
+
+### What this replaced, and why
+
+The shipped configs previously used **50% + W8** as moderate and **70% + W4** as aggressive. Screening
+measured both as **catastrophic on Pythia-160M** — 22.9% and 0.8% retention. Because the budget is a
+controlled variable across scales (§2.5), the *smallest* model sets the ceiling for all three, so
+neither was usable anywhere in the study.
+
+### Why this pair, out of three eligible candidates
+
+Screening left three budgets eligible: S1 (30% + W8, 80.4%), S5 (30% + W4, 56.0%) and S6
+(40% + W8, 55.1%). No pair satisfies everything:
+
+- **S5 + S6** fails §5.3's separation clause — both sit at ~55% retention, so there is no severity
+  contrast to test the budget question against.
+- **S1 + S6** would vary *sparsity* and keep both budgets on the benchmarkable INT8 path. Rejected
+  because it contains **no 4-bit condition at all**, and [F-05](findings_log.md#f-05) measured the
+  joint mechanism as near-inert at W8 (0.46% mask divergence against 8.86% at W4). A sweep with two
+  8-bit budgets would be structurally incapable of detecting the effect the study exists to measure,
+  and would produce a confident null that was an artefact of the design.
+- **S1 + S5** was chosen. It varies *precision*, keeps the one live-mechanism regime, and separates
+  80.4% from 56.0% retention.
+
+### The consequence, stated plainly
+
+**Both budgets prune 30%, so sparsity never varies across the frozen pair.** The sparsity-versus-
+latency curve that research question 4 asks for therefore does **not** come from these budgets.
+
+It comes instead from **benchmark-only runs of the pruning-only arm** at several sparsities. Those are
+cheap: that arm stays FP32, so it benchmarks on the native dense kernel, and a latency measurement
+does not need the full quality evaluation. This must actually be scheduled — it is the only route to
+RQ4 under this pair, and it is easy to forget because it is not part of any budget cell.
+
+Per decision **D1**, the aggressive budget contributes quality and size only and never appears in a
+latency table.
+
+### Outstanding
+
+§5.3 requires the promising budgets confirmed on **Pythia-410M** before 1B runs. Not yet done.
+
 ## Still open
 
 | Item | Why it is not frozen yet |
 | --- | --- |
 | Calibration sample indices, token count, sequence length | Frozen by the config once `prepare_data.py` has run for real. The WikiText load path has still never been executed. |
-| The two final budgets | Output of Phase 7 screening (S1–S4 on 160M, confirmed on 410M). §5.3 requires them frozen **before** 1B. |
+| ~~The two final budgets~~ | **FROZEN 2026-07-29** — see [The frozen compression budgets](#the-frozen-compression-budgets). Confirmation on 410M outstanding before 1B. |
 | 1.4B go/no-go | §5.2 needs measured peak VRAM against 85% of 6.0 GiB — a 5.1 GiB ceiling, which is tight. Decide after Phase 5 profiling. |
 | W4 latency via `torchao` | Deferred to Phase 6. Would lift D1's "no W4 latency row" limitation if a single 4-bit CPU path serves both arms. Needs measuring. |
 

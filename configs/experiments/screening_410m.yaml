@@ -1,0 +1,94 @@
+# Phase 7 confirmation: do the frozen budgets hold on Pythia-410M? (research plan §5.3)
+#
+# §5.3: "Run the screening grid on Pythia-160M first, then confirm promising budgets on
+# Pythia-410M... Freeze the choices before running 1B." The freeze is recorded in
+# protocol_freeze.md; this is the confirmation step that must pass before 1B.
+#
+# ONLY the two frozen budgets, not the whole grid. The grid's job was selection and it is done; this
+# run answers a narrower question: does the pair still sit in the measurable-but-not-catastrophic band
+# one scale up?
+#
+# WHAT WOULD FALSIFY THE FREEZE:
+#   * either budget collapsing below ~50% retention at 410M -- unlikely, since a larger model has more
+#     redundancy and should tolerate the same budget better, but it is the check being made
+#   * the moderate budget rising above ~99% retention, which would make it too mild to compare arms
+#
+# WHAT THIS RUN IS NOT: a result. One seed, and §6.3 requires a joint gain to exceed the seed spread
+# before it counts. The confirmatory three-seed runs happen in Phase 8 on these frozen budgets.
+#
+# Evaluation window matches the 160M screening exactly (493 x 512), so the two are comparable --
+# though note the DENSE REFERENCE differs per model, and retention is always against a model's own
+# dense run.
+
+include:
+  - ../models/pythia_410m.yaml
+  - ../compression/joint.yaml
+  - ../evaluation/quality.yaml
+  - ../evaluation/cpu_benchmark.yaml
+
+experiment:
+  id: screening_410m
+  name: Budget confirmation, Pythia-410M
+  description: >
+    Confirms the budgets frozen from the Pythia-160M screening grid still satisfy §5.3's selection
+    rule one scale up. Single seed by design; not a results table.
+  tags:
+    - screening
+    - stage-b
+    - confirmation
+    - not-a-result
+
+data:
+  calibration_samples: 128
+  calibration_split: train
+  # Identical window to the 160M screening, so the two are directly comparable.
+  sequence_length: 512
+  max_eval_samples: 512
+  # 410M is 2.5x the parameters and evaluation is CPU-bound, so a smaller batch keeps peak RSS in
+  # hand on 13.7 GiB. It does not change the numbers -- only how many sequences are resident at once.
+  batch_size: 2
+
+compression:
+  reconstruction:
+    solver: sweep
+    local_steps: 1
+    # Two, matching the sequential pipeline's two solver calls. assert_arms_can_be_matched refuses
+    # the grid otherwise (§3.11).
+    joint_iterations: 2
+    comparison_group: output
+    scale_search: false
+    keep_benefit_saliency: false
+
+sweep:
+  models:
+    - pythia-410m
+  methods:
+    - dense
+    - sequential
+    - joint
+  budgets:
+    - moderate
+    - aggressive
+  seeds:
+    - 1234
+
+  budget_overrides:
+    # The frozen pair. Identical to main_scale_sweep.yaml -- if these drift apart, the confirmation
+    # confirms the wrong thing.
+    moderate:
+      compression:
+        budget_label: moderate
+        pruning:
+          sparsity: 0.3
+        quantisation:
+          bits: 8
+    aggressive:
+      compression:
+        budget_label: aggressive
+        pruning:
+          sparsity: 0.3
+        quantisation:
+          bits: 4
+
+  skip_existing: true
+  continue_on_error: true
