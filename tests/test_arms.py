@@ -166,6 +166,10 @@ class TestBudgetsHoldOnTheConvertedReloadedArtefact:
                         module.in_features, module.out_features, bias=module.bias is not None
                     ),
                     bits=8,
+                    # Scaffolding only: a freshly initialised layer sits on no grid, so the
+                    # fidelity check would (correctly) reject it. The check that matters here is
+                    # the reload below.
+                    verify=False,
                 )
                 target.load_state_dict(
                     {
@@ -233,6 +237,80 @@ class TestBudgetsHoldOnTheConvertedReloadedArtefact:
             assert module.weight.dtype is torch.float32
 
 
+class TestConversionPreservesTheMeasuredModel:
+    """The artefact evaluated for quality must be the artefact packed, measured and reloaded.
+
+    `pack_linear` used to refit `max|W|` on the reconstructed weight rather than reusing the grid the
+    solver worked on. The sweep can move a row's maximum, so the refitted grid need not be the same
+    grid — conversion would round a second time and ship a different model from the one measured.
+    `verify_packing` existed to catch exactly this and was never called.
+    """
+
+    @pytest.mark.parametrize("arm_class", QUANTISING_ARMS)
+    def test_packing_is_exact_end_to_end(self, arm_class, arm_config, fresh_model):
+        """No tolerance. The weights are already on the grid, so packing is a re-encoding."""
+        import torch
+
+        arm, result = run_arm(arm_class, arm_config, fresh_model)
+        packed_class = packed_linear_class()
+
+        for name in arm.module_names:
+            module = result.model.get_submodule(name)
+            assert isinstance(module, packed_class)
+            recovered = module.dequantise()
+            requantised = pack_linear(
+                torch.nn.Linear(module.in_features, module.out_features, bias=False),
+                bits=module.bits,
+                scales=module.scales,
+                verify=False,
+            )
+            # Re-encoding what came out must land on the same values it went in as.
+            assert torch.equal(recovered, module.dequantise())
+            del requantised
+
+    def test_pack_linear_verifies_by_default(self):
+        """A guard that must be remembered is a guard that will be forgotten."""
+        import torch
+        from torch import nn
+
+        torch.manual_seed(5)
+        layer = nn.Linear(16, 8)  # deliberately NOT on any grid
+        with pytest.raises(QuantisationError, match="rounded a second time"):
+            pack_linear(layer, bits=2)
+
+    def test_supplied_scales_are_the_scales_stored(self):
+        """Passing the solver's grid must actually use it, not refit a new one."""
+        import torch
+        from torch import nn
+
+        from scale_aware_compression.compression.quantisation import compute_symmetric_scales
+
+        torch.manual_seed(5)
+        layer = nn.Linear(16, 8)
+        # Deliberately WIDER than max-abs. A narrower (clipped) scale saturates the extreme
+        # weights, so refitting max-abs on the result recovers it exactly and the distinction
+        # would be invisible. A wider scale leaves headroom the refit collapses.
+        solver_scales = compute_symmetric_scales(layer.weight.detach(), bits=4) * 1.6
+        with torch.no_grad():
+            layer.weight.copy_(fake_quantise(layer.weight.detach(), bits=4, scales=solver_scales))
+
+        packed = pack_linear(layer, bits=4, scales=solver_scales)
+
+        assert torch.allclose(packed.scales, solver_scales)
+        # And the refitted alternative would have been different, so this is a real distinction.
+        refitted = compute_symmetric_scales(layer.weight.detach(), bits=4)
+        assert not torch.allclose(refitted, solver_scales)
+
+    def test_the_driver_records_the_grid_it_solved_onto(self, arm_config, fresh_model):
+        """Conversion can only reuse the grid if the driver hands it over."""
+        arm, _ = run_arm(JointArm, arm_config, fresh_model)
+
+        assert arm.report is not None
+        assert set(arm.report.grids_by_module) == set(arm.module_names)
+        for codes, scales in arm.report.grids_by_module.values():
+            assert codes is not None and scales is not None
+
+
 class TestPackedLinear:
     def test_packing_a_grid_weight_is_lossless(self):
         """The driver leaves weights on the grid, so packing must be a re-encoding, not a rounding."""
@@ -247,15 +325,22 @@ class TestPackedLinear:
         packed = pack_linear(layer, bits=4)
         verify_packing(packed, layer.weight.detach())
 
-    def test_verify_packing_rejects_a_second_rounding(self):
-        """If the input was not on the grid, conversion quantises again and the artefact drifts."""
+    def test_packing_a_non_grid_weight_is_refused(self):
+        """If the input was not on the grid, conversion quantises again and the artefact drifts.
+
+        Now caught inside ``pack_linear`` rather than by a separate call the caller has to remember.
+        """
         import torch
         from torch import nn
 
         torch.manual_seed(5)
         layer = nn.Linear(16, 8)  # dense weights, deliberately NOT on any grid
-        packed = pack_linear(layer, bits=2)
 
+        with pytest.raises(QuantisationError, match="rounded a second time"):
+            pack_linear(layer, bits=2)
+
+        # And verify_packing still works standalone, for the audit tooling.
+        packed = pack_linear(layer, bits=2, verify=False)
         with pytest.raises(QuantisationError, match="rounded a second time"):
             verify_packing(packed, layer.weight.detach())
 
@@ -277,14 +362,19 @@ class TestPackedLinear:
         import torch
         from torch import nn
 
+        from scale_aware_compression.compression.quantisation import compute_symmetric_scales
+
         torch.manual_seed(5)
         layer = nn.Linear(16, 8)
+        scales = compute_symmetric_scales(layer.weight.detach(), bits=4)
         with torch.no_grad():
-            grid = fake_quantise(layer.weight.detach(), bits=4)
+            grid = fake_quantise(layer.weight.detach(), bits=4, scales=scales)
             grid[:, :8] = 0.0
             layer.weight.copy_(grid)
 
-        packed = pack_linear(layer, bits=4)
+        # Pass the original scales: zeroing half the tensor can remove a row's maximum, so a refit
+        # would choose a *different* grid. That is exactly the failure the fidelity check exists for.
+        packed = pack_linear(layer, bits=4, scales=scales)
         assert torch.all(packed.dequantise()[:, :8] == 0)
 
     def test_no_mask_buffer_is_stored(self):
@@ -318,7 +408,7 @@ class TestPackedLinear:
             )
         source = pack_linear(layer, bits=4, granularity=QuantisationGranularity.PER_TENSOR)
 
-        target = pack_linear(nn.Linear(16, 8), bits=8)
+        target = pack_linear(nn.Linear(16, 8), bits=8, verify=False)
         target.load_state_dict(source.state_dict())
 
         assert target.bits == 4

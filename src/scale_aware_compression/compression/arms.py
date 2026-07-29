@@ -233,12 +233,16 @@ class LayerwiseArm(Compressor):
             self.is_converted = True
             return model
 
+        # Pass the grids the driver actually solved onto. Letting conversion refit them would
+        # quantise a second time, so the artefact measured for size and reloaded for verification
+        # could differ from the one evaluated for quality.
         self.conversion_statistics = convert_model_to_packed(
             model,
             self.module_names,
             bits=plan.bits,
             granularity=plan.granularity,
             group_size=plan.group_size,
+            grids_by_module=self.report.grids_by_module if self.report else None,
         )
         self.is_converted = True
         LOGGER.info(

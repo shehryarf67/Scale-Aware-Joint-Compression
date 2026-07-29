@@ -39,9 +39,10 @@ from scale_aware_compression.compression.pruning import (
 from scale_aware_compression.compression.quantisation import (
     compute_symmetric_scales,
     fake_quantise,
+    quantise_weight,
     search_clipping_scales,
 )
-from scale_aware_compression.compression.reconstruct import reconstruct
+from scale_aware_compression.compression.reconstruct import reconstruct, reconstruction_loss
 from scale_aware_compression.constants import (
     MaskComparisonGroup,
     PruningGranularity,
@@ -202,10 +203,29 @@ class LayerResult:
     name: str
     target_sparsity: float
     realised_sparsity: float
-    naive_loss: float
-    final_loss: float
-    local_steps: int
-    num_weights: int
+    """Fraction of weights that are numerically zero after compression.
+
+    **Not the pruning budget.** Quantisation rounds small survivors to exactly zero, so this is
+    strictly larger than :attr:`mask_sparsity` whenever a bit width is set -- measurably so at W4,
+    where a 30% mask produced 31.4% numeric zeros on Pythia-410M. Verify the pruning budget against
+    :attr:`mask_sparsity`, which is the quantity the target is defined on.
+    """
+    mask_sparsity: float = 0.0
+    """Fraction the pruning mask explicitly removes. This is what the target constrains."""
+    zero_code_fraction: float = 0.0
+    """Fraction of *surviving* weights that quantisation rounded to the zero code.
+
+    The gap between the mask budget and the realised zeros, attributed. A large value at low bit
+    widths means the effective sparsity exceeds what was asked for, which changes the compression
+    ratio and is worth reporting rather than absorbing.
+    """
+    naive_loss: float = 0.0
+    final_loss: float = 0.0
+    local_steps: int = 0
+    num_weights: int = 0
+    joint_trace: list[dict[str, Any]] = field(default_factory=list)
+    """Per-outer-iteration record for the joint arm: objective before and after, whether the
+    proposal was accepted, and how far the mask moved. Empty for every other arm."""
 
     @property
     def relative_improvement(self) -> float:
@@ -242,6 +262,16 @@ class LayerwiseReport:
     module_names: list[str] = field(default_factory=list)
     calibration_fingerprint: str = ""
     total_local_steps: int = 0
+    grids_by_module: dict[str, tuple[torch.Tensor, torch.Tensor]] = field(
+        default_factory=dict, repr=False
+    )
+    """``(codes, scales)`` for each layer, keyed by module name.
+
+    Carried through to conversion so packing stores these exact scales instead of refitting
+    ``max|W|`` on the reconstructed weight -- refitting can pick a different grid and quietly ship a
+    different model from the one that was measured. Excluded from ``repr`` and from
+    :meth:`to_dict`: it is tensor data for the conversion step, not a record field.
+    """
 
     @property
     def num_layers(self) -> int:
@@ -293,8 +323,46 @@ class LayerOutcome:
 
     weight: torch.Tensor
     mask: torch.Tensor
+    codes: torch.Tensor | None
+    """The integer codes of the final weight, or ``None`` when the arm does not quantise.
+
+    Carried so conversion packs *these* rather than re-deriving them. Re-quantising an already
+    quantised value is **not** idempotent in floating point: a value sitting on a rounding boundary
+    flips a code, which was observed as a 3.7e-03 deviation on the tiny model. Storing the codes
+    removes the second rounding entirely rather than tolerating it.
+    """
+    scales: torch.Tensor | None
+    """The quantisation grid the final solve used, or ``None`` when the arm does not quantise.
+
+    Returned so conversion can pack these exact scales. Refitting ``max|W|`` on the reconstructed
+    weight is not equivalent -- the sweep can move a row's maximum, so the refitted grid need not be
+    the one the weights were solved onto, and packing would round a second time.
+    """
     result: LayerResult
     local_steps: int
+
+
+def _zero_code_fraction(compressed: torch.Tensor, mask: torch.Tensor) -> float:
+    """Fraction of *mask survivors* that quantisation rounded to zero.
+
+    Separating this from the mask sparsity is what makes the pruning budget checkable. A weight can be
+    zero for two unrelated reasons -- the mask removed it, or rounding collapsed it -- and only the
+    first is the budget the study controls. Conflating them overstates how much pruning was applied,
+    by 1.4 percentage points at W4 on Pythia-410M.
+
+    Args:
+        compressed: The final weight.
+        mask: The keep-mask, ``True`` meaning kept.
+
+    Returns:
+        Zeroed survivors as a fraction of the whole tensor, so it adds to the mask sparsity to give
+        the realised numeric sparsity.
+    """
+    survivors = int(mask.sum())
+    if survivors == 0:
+        return 0.0
+    rounded_away = int(((compressed == 0) & mask).sum())
+    return rounded_away / mask.numel()
 
 
 def compress_layer(
@@ -326,6 +394,7 @@ def compress_layer(
     gram = statistics.gram()
     column_norms = statistics.column_norms()
     steps_used = 0
+    joint_trace: list[dict[str, Any]] = []
     # The naive baseline of the FIRST solve and the objective of the LAST one. Taking the first
     # naive value is what makes the number comparable across arms: it is the cost of the whole
     # pipeline measured against not reconstructing at all, rather than against whatever
@@ -353,13 +422,17 @@ def compress_layer(
             group_size=plan.group_size,
         )
 
+    final_scales: torch.Tensor | None = None
+
     def solve(
         target: torch.Tensor,
         mask: torch.Tensor,
         *,
         bits: int | None,
     ) -> torch.Tensor:
-        nonlocal steps_used, first_naive_loss, last_final_loss
+        nonlocal steps_used, first_naive_loss, last_final_loss, final_scales
+        grid = fit_scales(target, mask) if bits is not None else None
+        final_scales = grid
         outcome = reconstruct(
             gram,
             target,
@@ -371,7 +444,7 @@ def compress_layer(
             granularity=plan.granularity,
             group_size=plan.group_size,
             block_size=plan.block_size,
-            scales=fit_scales(target, mask) if bits is not None else None,
+            scales=grid,
         )
         steps_used += max(1, plan.local_steps)
         if first_naive_loss is None:
@@ -444,15 +517,51 @@ def compress_layer(
     elif arm == "joint":
         # §3.7's alternation. Each iteration re-fits the grid for the current mask, rescores the
         # mask against that grid, and reconstructs -- so mask and quantiser each inform the other.
+        #
+        # The incumbent guard below is load-bearing. The solver's own accept-only-if-better rule
+        # protects a *fixed* mask; nothing protected the outer loop across mask *changes*, so an
+        # iteration that chose a worse mask replaced a better feasible solution the loop had already
+        # found. That is measurable: at 30% + W4 on Pythia-160M, four alternations scored worse than
+        # two (73.17 against 71.87 perplexity), which is the signature of a wandering search rather
+        # than a converging one.
+        #
+        # This does not tilt the comparison towards joint. It stops an alternating procedure
+        # discarding a solution it had already reached, which is a property of the optimiser, not an
+        # extra optimisation budget -- the step count is unchanged.
         mask = mask_from(weight)
-        current = weight
-        for _ in range(plan.joint_iterations):
-            mask = quantisation_aware_mask(current, mask)
+        current = solve(weight, mask, bits=plan.bits)
+        best_weight, best_mask = current, mask
+        best_scales = final_scales
+        best_loss = reconstruction_loss(gram, weight, current)
+
+        for iteration in range(1, plan.joint_iterations):
+            proposed_mask = quantisation_aware_mask(best_weight, best_mask)
             # Always solve against the ORIGINAL dense weight. Letting the target drift with the
             # iterate would optimise towards the previous approximation instead of the true layer
             # output, and the objective would stop being comparable between arms.
-            current = solve(weight, mask, bits=plan.bits)
-        compressed = current
+            proposed = solve(weight, proposed_mask, bits=plan.bits)
+            proposed_loss = reconstruction_loss(gram, weight, proposed)
+            accepted = proposed_loss < best_loss
+
+            joint_trace.append(
+                {
+                    "iteration": iteration,
+                    "loss_before": best_loss,
+                    "loss_proposed": proposed_loss,
+                    "accepted": accepted,
+                    "mask_divergence": float((proposed_mask != best_mask).float().mean()),
+                }
+            )
+            if accepted:
+                best_weight, best_mask, best_loss = proposed, proposed_mask, proposed_loss
+                best_scales = final_scales
+
+        mask, compressed = best_mask, best_weight
+        # The incumbent is not necessarily the last solve, so its grid has to follow it. Shipping the
+        # rejected iteration's scales with the accepted iteration's weights would quantise a second
+        # time at conversion.
+        final_scales = best_scales
+        last_final_loss = best_loss
 
     else:
         raise LayerwiseError(
@@ -460,16 +569,41 @@ def compress_layer(
             "sequential_qp, joint"
         )
 
+    # One canonicalisation, so the stored weight IS its codes times its scales. Without it the
+    # weight, the codes and the scales are three nearly-consistent descriptions of the same layer,
+    # and conversion has to guess which one is authoritative.
+    final_codes: torch.Tensor | None = None
+    if plan.quantises and final_scales is not None:
+        canonical = quantise_weight(
+            compressed,
+            bits=plan.bits,
+            granularity=plan.granularity,
+            group_size=plan.group_size,
+            scales=final_scales,
+        )
+        final_codes = canonical.codes
+        compressed = canonical.dequantise() * mask
+
     result = LayerResult(
         name="",
         target_sparsity=plan.sparsity,
         realised_sparsity=realised_sparsity(compressed != 0),
+        mask_sparsity=realised_sparsity(mask),
+        zero_code_fraction=_zero_code_fraction(compressed, mask),
         naive_loss=first_naive_loss or 0.0,
         final_loss=last_final_loss,
+        joint_trace=joint_trace,
         local_steps=steps_used,
         num_weights=weight.numel(),
     )
-    return LayerOutcome(weight=compressed, mask=mask, result=result, local_steps=steps_used)
+    return LayerOutcome(
+        weight=compressed,
+        mask=mask,
+        codes=final_codes,
+        scales=final_scales,
+        result=result,
+        local_steps=steps_used,
+    )
 
 
 def assert_arms_can_be_matched(plan: LayerPlan, arms: Sequence[str]) -> None:
@@ -678,6 +812,11 @@ def compress_model_layerwise(
 
             report.layers.append(result)
             report.total_local_steps += outcome.local_steps
+            if outcome.scales is not None and outcome.codes is not None:
+                report.grids_by_module[name] = (
+                    outcome.codes.detach().clone(),
+                    outcome.scales.detach().clone(),
+                )
             completed += 1
             if progress is not None:
                 progress(name, completed, total)

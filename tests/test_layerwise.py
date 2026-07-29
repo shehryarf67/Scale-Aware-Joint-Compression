@@ -180,52 +180,86 @@ class TestJointIsGenuinelyJoint:
 
         assert not torch.allclose(joint.weight, sequential.weight, atol=1e-6)
 
-    def test_the_joint_mask_only_diverges_at_aggressive_precision(self, layer_inputs):
-        """Records a real limitation of the method, so it cannot be discovered late.
+    def test_the_joint_arm_evaluates_every_mask_proposal_under_quantisation(self, layer_inputs):
+        """§3.8's first requirement, asserted on the mechanism rather than on an outcome.
 
-        Scoring the mask on quantised weights only changes the mask when rounding reorders the
-        saliency ranking. On this layer that happens at W2 and essentially stops by W4:
-
-        =====  ====================================
-        Width  mask positions differing from P->Q
-        =====  ====================================
-        W2     206 / 512
-        W3     2 / 512
-        W4     0 / 512
-        W8     0 / 512
-        =====  ====================================
-
-        So at moderate precision the joint arm's mask is *identical* to the sequential arm's, and
-        any joint gain there can only come from the reconstruction ordering -- one of §3.8's two
-        mechanisms is inert. That is a prediction about the results, not a defect in the code, and
-        it is why the budget screening must include a width where the mechanism is live.
+        An earlier version of this test asserted that the joint mask *differs* from the sequential
+        one at low bit widths and is *identical* at W8. That was measuring the old outer loop, which
+        accepted every proposal unconditionally. With the incumbent guard a proposal can be
+        evaluated under quantisation and then correctly rejected, so the final mask is no longer a
+        reliable witness that the evaluation happened. The trace is.
         """
-        import torch
-
         weight, statistics = layer_inputs
 
-        aggressive_joint = compress_layer(weight, statistics, moderate_plan(bits=2), arm="joint")
-        aggressive_seq = compress_layer(weight, statistics, moderate_plan(bits=2), arm="sequential")
-        assert not torch.equal(aggressive_joint.mask, aggressive_seq.mask)
+        joint = compress_layer(weight, statistics, moderate_plan(bits=4), arm="joint")
+        sequential = compress_layer(weight, statistics, moderate_plan(bits=4), arm="sequential")
 
-        moderate_joint = compress_layer(weight, statistics, moderate_plan(bits=8), arm="joint")
-        moderate_seq = compress_layer(weight, statistics, moderate_plan(bits=8), arm="sequential")
-        assert torch.equal(moderate_joint.mask, moderate_seq.mask)
+        assert joint.result.joint_trace, "the joint arm recorded no mask proposals"
+        assert not sequential.result.joint_trace, "only the joint arm has an outer loop"
+        for step in joint.result.joint_trace:
+            assert {"loss_before", "loss_proposed", "accepted", "mask_divergence"} <= set(step)
 
-    def test_the_joint_mask_responds_to_the_bit_width(self, layer_inputs):
-        """This is what "quantisation-aware" has to mean operationally.
+    def test_the_joint_arm_never_accepts_a_worse_proposal(self, layer_inputs):
+        """The guard that was missing, and whose absence made four iterations worse than two.
 
-        A joint arm whose mask is identical at W2 and W8 is not scoring against the grid at all,
-        which is precisely §3.8's disqualifying case.
+        The solver's own accept-only-if-better rule protects a *fixed* mask. Nothing protected the
+        outer loop across mask *changes*, so an iteration choosing a worse mask overwrote a better
+        feasible solution the loop had already found.
         """
-        import torch
-
         weight, statistics = layer_inputs
 
-        coarse = compress_layer(weight, statistics, moderate_plan(bits=2), arm="joint")
-        fine = compress_layer(weight, statistics, moderate_plan(bits=8), arm="joint")
+        joint = compress_layer(
+            weight, statistics, moderate_plan(bits=4, joint_iterations=4), arm="joint"
+        )
 
-        assert not torch.equal(coarse.mask, fine.mask)
+        for step in joint.result.joint_trace:
+            if step["accepted"]:
+                assert step["loss_proposed"] < step["loss_before"], step
+
+    def test_more_joint_iterations_can_never_hurt(self, layer_inputs):
+        """The property the guard buys, and the one the old loop violated.
+
+        Measured before the fix, on real Pythia-160M at 30% + W4: four alternations scored 73.17
+        perplexity against two alternations' 71.87. An alternating optimiser on a shared objective
+        going backwards as it runs longer is a wandering search, not a converging one.
+
+        Note this synthetic layer rejects *every* proposal, so the losses come out identical rather
+        than decreasing. That is the F-04 lesson again — random weights and correlated random
+        activations understate the mechanism. On six real Pythia-160M layers the accept rate is
+        44% at W8, 72% at W4, 39% at W3 and 72% at W2. Non-increasing is the property the guard
+        guarantees and the one the old loop broke; strict improvement is not guaranteed and is not
+        asserted.
+        """
+        weight, statistics = layer_inputs
+
+        losses = [
+            compress_layer(
+                weight, statistics, moderate_plan(bits=4, joint_iterations=k), arm="joint"
+            ).result.final_loss
+            for k in (1, 2, 4, 6)
+        ]
+
+        for fewer, more in zip(losses[:-1], losses[1:], strict=True):
+            assert more <= fewer + 1e-9, f"more iterations made it worse: {losses}"
+
+    def test_the_joint_arm_still_responds_to_the_bit_width(self, layer_inputs):
+        """§3.8 is only satisfied if the grid actually influences the search.
+
+        Compared on the recorded proposals rather than the final mask: a coarse grid and a fine one
+        must produce different proposals, even where the guard happens to reject both.
+        """
+        weight, statistics = layer_inputs
+
+        coarse = compress_layer(
+            weight, statistics, moderate_plan(bits=2, joint_iterations=4), arm="joint"
+        )
+        fine = compress_layer(
+            weight, statistics, moderate_plan(bits=8, joint_iterations=4), arm="joint"
+        )
+
+        coarse_divergence = [step["mask_divergence"] for step in coarse.result.joint_trace]
+        fine_divergence = [step["mask_divergence"] for step in fine.result.joint_trace]
+        assert coarse_divergence != fine_divergence
 
     def test_the_sequential_mask_ignores_the_bit_width(self, layer_inputs):
         """The controlled half of the comparison.

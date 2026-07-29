@@ -228,6 +228,9 @@ def pack_linear(
     bits: int,
     granularity: QuantisationGranularity = QuantisationGranularity.PER_CHANNEL,
     group_size: int = 128,
+    codes: torch.Tensor | None = None,
+    scales: torch.Tensor | None = None,
+    verify: bool = True,
 ) -> Any:
     """Convert an ``nn.Linear`` holding fake-quantised weights into packed storage.
 
@@ -240,12 +243,23 @@ def pack_linear(
         bits: Target bit width; must be in :data:`~scale_aware_compression.compression.quantisation.PACKABLE_BITS`.
         granularity: Scope each scale covers.
         group_size: Elements per group.
+        codes: The integer codes of the final weight. **Pass these whenever they are known** --
+            together with ``scales`` they make packing a pure re-encoding. Re-deriving codes from an
+            already-quantised weight is not idempotent in floating point: a value on a rounding
+            boundary flips, which showed up as a 3.7e-03 deviation on the tiny model.
+        scales: The scales reconstruction actually used. **Pass these whenever they are known.**
+            Without them this refits ``max|W|`` on the reconstructed weight, and the sweep can move
+            a row's maximum, so the refitted grid need not be the grid the weights were solved onto
+            -- conversion would then quantise a second time and silently ship a different model
+            from the one that was measured.
+        verify: Check the packed layer reproduces its source exactly. On by default; the guard is
+            worthless if it has to be remembered.
 
     Returns:
         A ``PackedLinear`` carrying the same numerical weight.
 
     Raises:
-        QuantisationError: If ``bits`` cannot be packed.
+        QuantisationError: If ``bits`` cannot be packed, or the round trip is not exact.
     """
     if bits not in PACKABLE_BITS:
         raise QuantisationError(
@@ -253,20 +267,30 @@ def pack_linear(
         )
 
     weight = layer.weight.detach().float()
-    quantised = quantise_weight(weight, bits=bits, granularity=granularity, group_size=group_size)
-    packed = pack_low_bit(quantised.codes.reshape(-1), bits=bits)
+    if codes is not None and scales is not None:
+        # Pack what the driver produced. No re-derivation, so no second rounding.
+        final_codes, final_scales = codes, scales
+    else:
+        quantised = quantise_weight(
+            weight, bits=bits, granularity=granularity, group_size=group_size, scales=scales
+        )
+        final_codes, final_scales = quantised.codes, quantised.scales
+    packed = pack_low_bit(final_codes.reshape(-1), bits=bits)
 
     bias = layer.bias.detach().clone() if getattr(layer, "bias", None) is not None else None
-    return packed_linear_class()(
+    replacement = packed_linear_class()(
         layer.in_features,
         layer.out_features,
         bits=bits,
         granularity=granularity,
         group_size=group_size,
         packed=packed,
-        scales=quantised.scales.detach().clone(),
+        scales=final_scales.detach().clone(),
         bias=bias,
     )
+    if verify:
+        verify_packing(replacement, weight)
+    return replacement
 
 
 def convert_model_to_packed(
@@ -276,6 +300,7 @@ def convert_model_to_packed(
     bits: int,
     granularity: QuantisationGranularity = QuantisationGranularity.PER_CHANNEL,
     group_size: int = 128,
+    grids_by_module: dict[str, tuple[torch.Tensor, torch.Tensor]] | None = None,
 ) -> dict[str, Any]:
     """Replace the named linear layers with packed equivalents, in place.
 
@@ -285,6 +310,9 @@ def convert_model_to_packed(
         bits: Target bit width.
         granularity: Scope each scale covers.
         group_size: Elements per group.
+        grids_by_module: ``(codes, scales)`` per layer, from the layerwise report. Omitting it makes
+            conversion re-derive both, which can round a second time and ship a different model from
+            the one measured -- see :func:`pack_linear`.
 
     Returns:
         Mapping with the conversion tally and the storage accounting, for the run record.
@@ -304,7 +332,15 @@ def convert_model_to_packed(
         if not hasattr(layer, "weight"):
             raise QuantisationError(f"{name!r} has no weight to pack")
 
-        replacement = pack_linear(layer, bits=bits, granularity=granularity, group_size=group_size)
+        codes, scales = (grids_by_module or {}).get(name, (None, None))
+        replacement = pack_linear(
+            layer,
+            bits=bits,
+            granularity=granularity,
+            group_size=group_size,
+            codes=codes,
+            scales=scales,
+        )
         setattr(parent, attribute, replacement)
 
         converted += 1
