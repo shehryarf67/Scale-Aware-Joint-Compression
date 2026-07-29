@@ -192,7 +192,13 @@ def run_arm(
 def _run_arm(arguments: argparse.Namespace, method: CompressionMethod) -> int:
     """Handle the five arm subcommands."""
     from scale_aware_compression.experiments.runner import ExperimentRunner
+    from scale_aware_compression.hardware import set_cpu_threads
     from scale_aware_compression.seed import set_global_seed
+
+    # The layerwise reconstruction solver performs Hessian factorisations.
+    # Pinning both PyTorch pools before loading a model avoids Windows OpenMP
+    # deadlock when this entry point runs on CPU.
+    set_cpu_threads(1, interop_threads=1)
 
     config = _load(arguments)
     if config.compression.method is not method:
@@ -304,6 +310,11 @@ def _run_sweep(arguments: argparse.Namespace) -> int:
         find_comparison_pairs,
         run_sweep,
     )
+    from scale_aware_compression.hardware import set_cpu_threads
+
+    # Keep the console-script sweep equivalent to scripts/run_scale_sweep.py.
+    # This must precede model loading and all Gram/Hessian matrix operations.
+    set_cpu_threads(1, interop_threads=1)
 
     config = _load(arguments)
     configure_logging(config.runtime.log_level)

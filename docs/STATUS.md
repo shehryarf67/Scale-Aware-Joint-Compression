@@ -337,9 +337,19 @@ All pushed. Suite at **804 passing**, lint and format clean.
 | Independent reload | Manifest plus `load_packed_model`; the checkpoint could not previously be loaded on its own |
 | `scale_trend` + `METHOD_VERSION` | Analysis entry point was a stub; nothing detected records produced by different code |
 
-### 🔴 Five decisions waiting, all protocol-level
+### 🟡 Protocol decisions: three confirmed, two remaining
 
-None of these are code problems and none should be settled by whoever runs the next command.
+The following confirmed decisions apply to the corrected Windows CPU screening re-run:
+
+- **Calibration sampling replicates replace run seeds.** Each replicate uses a different, fixed
+  calibration subset; paired sequential and joint runs share that exact subset.
+- **WikiText-2 split isolation is fixed.** Use validation only for budget screening and reserve the
+  test split strictly for final reported evaluation after budgets are frozen.
+- **External baseline reference.** Run Wanda and SparseGPT at matched settings on Pythia-160M as
+  sanity-reference baselines; they do not replace the primary sequential-versus-joint comparison.
+
+Only items 3 and 4 below remain unresolved. Items 1, 2, and 5 are retained as historical context
+for why the decisions were necessary.
 
 1. **Paired calibration replicates** replacing the run-seed axis. Blocking: [F-15](findings_log.md#f-15)
    proved run seeds are inert, so the three-seed protocol yields three identical numbers and a seed

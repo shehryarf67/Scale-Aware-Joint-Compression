@@ -453,6 +453,27 @@ def compress_layer(
     *,
     arm: str,
 ) -> LayerOutcome:
+    """Compress one layer without constructing an autograd graph.
+
+    Sequential and joint compression both enter through this shared function.
+    Their reconstruction path forms Gram products and factorises a Hessian-like
+    matrix, none of which participates in training. Keeping the full path in
+    :func:`torch.no_grad` prevents graph retention and avoids autograd work
+    compounding CPU resource pressure during those operations.
+    """
+    import torch
+
+    with torch.no_grad():
+        return _compress_layer_impl(weight, statistics, plan, arm=arm)
+
+
+def _compress_layer_impl(
+    weight: torch.Tensor,
+    statistics: ActivationStatistics,
+    plan: LayerPlan,
+    *,
+    arm: str,
+) -> LayerOutcome:
     """Compress one weight tensor according to ``arm``.
 
     Every arm is a different call order over the same three operations -- score, mask, reconstruct
