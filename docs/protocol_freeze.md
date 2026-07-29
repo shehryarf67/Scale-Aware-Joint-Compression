@@ -366,15 +366,29 @@ RQ4 under this pair, and it is easy to forget because it is not part of any budg
 Per decision **D1**, the aggressive budget contributes quality and size only and never appears in a
 latency table.
 
-### Outstanding
+### Confirmed on 410M ✅
 
-§5.3 requires the promising budgets confirmed on **Pythia-410M** before 1B runs. Not yet done.
+§5.3's pre-1B requirement is satisfied. Pythia-410M, same 493 × 512 window, dense 22.17, matched solver
+budgets:
+
+| Budget | Sequential | Joint | Seq ret. | Joint ret. | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| moderate 30% + W8 | 29.08 | 29.09 | **76.2%** | 76.2% | ELIGIBLE |
+| aggressive 30% + W4 | 39.51 | 38.03 | **56.1%** | 58.3% | ELIGIBLE |
+
+The aggressive budget gives near-identical *sequential* retention at both scales — 56.0% at 160M
+against 56.1% at 410M — which is the behaviour a properly controlled variable should show.
+
+Full detail, including the joint gain changing sign between scales, in
+[findings_log.md F-14](findings_log.md#f-14). **That sign flip is not yet a finding** — see the seed
+problem immediately below.
 
 ## Still open
 
 | Item | Why it is not frozen yet |
 | --- | --- |
 | Calibration sample indices, token count, sequence length | Frozen by the config once `prepare_data.py` has run for real. The WikiText load path has still never been executed. |
+| **Seed policy (§5.5) and the practical-importance rule (§6.3)** | 🔴 **Newly broken.** The pipeline is deterministic, so three confirmatory seeds give three identical numbers and the seed spread is exactly zero — see [findings_log.md F-15](findings_log.md#f-15). The rule's "exceeds the seed spread" clause is vacuous as written. The variance that exists is in the **calibration draw**. Needs a human decision, and must be justified on the mechanism rather than on wanting error bars. |
 | ~~The two final budgets~~ | **FROZEN 2026-07-29** — see [The frozen compression budgets](#the-frozen-compression-budgets). Confirmation on 410M outstanding before 1B. |
 | 1.4B go/no-go | §5.2 needs measured peak VRAM against 85% of 6.0 GiB — a 5.1 GiB ceiling, which is tight. Decide after Phase 5 profiling. |
 | W4 latency via `torchao` | Deferred to Phase 6. Would lift D1's "no W4 latency row" limitation if a single 4-bit CPU path serves both arms. Needs measuring. |

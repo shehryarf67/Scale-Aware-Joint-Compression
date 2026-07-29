@@ -7,8 +7,8 @@ Written to be read by someone with **no access to the repository**. Everything n
 work is here. If you are reviewing this: the last section, [Questions we want
 challenged](#7-questions-we-most-want-challenged), is the part we care about most.
 
-Status as of **2026-07-29**. Phases 0, 5, 6 complete; Phase 7 (budget screening) complete on
-Pythia-160M with confirmation on Pythia-410M in progress. 759 automated tests passing.
+Status as of **2026-07-29**. Phases 0, 5, 6 complete. Phase 7 (budget screening) complete on
+Pythia-160M **and confirmed on Pythia-410M**; budgets frozen. 761 automated tests passing.
 
 ---
 
@@ -261,6 +261,47 @@ added afterwards to find a usable second budget.
 (73.17 → 71.87). More alternation making the result worse is the opposite of what a converging
 alternating optimiser should do.
 
+### F-14 · 410M confirmation, and the joint gain changes sign with scale {#f-14}
+
+Pythia-410M, same 493 × 512 window, dense **22.17**, matched solver budgets (verified from the records:
+192 passes both arms, 96 target modules).
+
+| Budget | Sequential | Joint | Seq ret. | Joint ret. | Joint gain |
+| --- | --- | --- | --- | --- | --- |
+| moderate 30% + W8 | 29.08 | 29.09 | **76.2%** | 76.2% | −0.03 pp |
+| aggressive 30% + W4 | 39.51 | **38.03** | **56.1%** | **58.3%** | **+2.18 pp** |
+
+Both budgets confirmed eligible, so the freeze holds one scale up. The aggressive budget gives
+near-identical *sequential* retention at both scales (56.0% at 160M, 56.1% at 410M), which is the
+behaviour a properly controlled variable should show.
+
+Putting the scales side by side:
+
+| Budget | 160M joint gain | 410M joint gain |
+| --- | --- | --- |
+| 30% + W8 (control) | +0.12 pp | −0.03 pp |
+| **30% + W4** | **−4.55 pp** | **+2.18 pp** |
+
+The control is ~zero at both scales, as [F-05](#f-05) predicts. At 4 bits the gain **changes sign**.
+This is the shape of the primary research question, which is why we treat it with suspicion rather than
+enthusiasm — see [§7.1](#71-joint-changes-sign-with-scale-at-4-bits-real-or-noise).
+
+### F-15 · The run seed is inert, so the planned error bars do not exist {#f-15}
+
+Two runs of the same cell with different run seeds gave **bit-identical** results:
+
+```
+runtime.seed = 1234  ->  perplexity 65.1548
+runtime.seed = 2345  ->  perplexity 65.1548
+```
+
+Calibration indices come from a separate fixed `calibration_seed`, and nothing in the solver, mask
+construction or driver is stochastic. The pipeline is deterministic given a calibration draw.
+
+Consequence: the plan's three-seed confirmatory protocol would produce three identical numbers, the
+seed spread would be exactly **zero**, and the pre-registered rule "the gain must exceed the seed
+spread" is vacuous as written. See [§7.2](#72-the-run-seed-is-inert-what-should-the-error-bars-be).
+
 ---
 
 ## 4. Decisions taken, and what settled each
@@ -337,7 +378,30 @@ should have caught them**.
 
 Ordered by how much a wrong answer would cost us.
 
-### 7.1 Is joint being *worse* than sequential at 4 bits plausible, or does it indicate a bug?
+### 7.1 Joint changes sign with scale at 4 bits. Real, or noise?
+
+The single most important number we have, and the one we trust least. Matched solver budgets, one
+measurement each, no uncertainty estimate:
+
+| Budget | Pythia-160M | Pythia-410M |
+| --- | --- | --- |
+| 30% + W8 (control) | +0.12 pp | -0.03 pp |
+| **30% + W4** | **-4.55 pp** | **+2.18 pp** |
+
+The control behaves as a control should — ~zero at both scales, consistent with the mechanism being
+inert at 8 bits. At 4 bits, where the mechanism *is* live, the joint gain goes from clearly negative to
+clearly positive between the two scales.
+
+That is the shape of the study's primary question, which is exactly why we are suspicious of it. Two
+points are not a trend, there is no error bar, and per §7.2 the planned mechanism for producing one does
+not work.
+
+**What we would like challenged:** is a sign change of this size plausible for this mechanism between
+160M and 410M, or is it more likely an artefact? What would you want to see before believing it? Note
+the 160M number is the one that looks anomalous in isolation — joint being *worse* — so the sub-question
+below still stands.
+
+### 7.1b Is joint being *worse* than sequential at 160M/4-bit plausible, or a bug?
 
 At 30% + W4 with matched solver budgets, joint retention is **51.4%** against sequential's **56.0%** —
 4.55 pp worse. At 8 bits the two are tied to within 0.12 pp. This is the single result we are least
@@ -357,7 +421,30 @@ where additional alternations degrade the result? Should the reconstruction targ
 iteration (it is currently always the original dense output, deliberately)? Is our accept-only-if-better
 guard operating at the wrong granularity — per layer rather than per iteration?
 
-### 7.2 Is the frozen budget pair defensible?
+### 7.2 The run seed is inert. What should the error bars be?
+
+Two runs of the same cell with different run seeds give **bit-identical** results (perplexity 65.1548
+both times). Calibration indices come from a separate fixed `calibration_seed`, and nothing in the
+solver, mask construction or driver is stochastic.
+
+So the plan's three-seed confirmatory protocol would produce three identical numbers, the seed spread
+would be exactly zero, and the pre-registered rule "the gain must exceed the seed spread" becomes
+vacuous. The paper would have no error bars while appearing to have followed a three-seed protocol.
+
+Our reading is that the variance which actually exists is in the **calibration draw** — different
+calibration sequences give different Gram matrices, hence different masks and scales, hence a genuinely
+different compressed model. Repeat *r* would use calibration draw *r* for **both** arms, which
+preserves the within-comparison fairness requirement and gives the paired comparisons the plan asks
+for.
+
+**What we would like challenged:** is varying the calibration draw the right variance source for
+post-training quantisation, and is three draws enough? Is there an accepted convention for error bars
+on one-shot PTQ results that we should follow instead? And is it legitimate to change this after
+observing the 410M result in §7.1 — we believe yes, because seeds *provably* do nothing and the
+argument does not depend on the outcome, but the timing is uncomfortable and we would rather have it
+checked.
+
+### 7.3 Is the frozen budget pair defensible?
 
 Both budgets prune 30% and differ only in precision (8-bit vs 4-bit). We chose that over varying
 sparsity because 4 bits is the only regime where the joint mechanism is measurably live.
@@ -368,7 +455,7 @@ budgets cannot detect the effect" the right way to reason about budget selection
 selection bias? We think not — the choice was made on a *mechanism* measurement rather than on outcome
 measurements — but it is close enough to the line that we want an outside view.
 
-### 7.3 Is ~56% retention at 30% sparsity + 4-bit plausible for a 160M model?
+### 7.4 Is ~56% retention at 30% sparsity + 4-bit plausible for a 160M model?
 
 Published one-shot results on comparable-scale models degrade considerably less. We have ruled out:
 calibration size (8× more moved it under 3%), the comparison group (fixed, worth 6.7×), and
@@ -382,7 +469,7 @@ sweep implementation being weaker than a reference GPTQ/SparseGPT.
 sparsity plus 4-bit weight-only quantisation with layerwise reconstruction? If the answer is "much
 better than 56%", we have a remaining implementation problem and should find it before Phase 8.
 
-### 7.4 Is matching *solver calls* the right fairness unit?
+### 7.5 Is matching *solver calls* the right fairness unit?
 
 The plan requires "equal total local optimisation steps and approximately equal objective evaluations."
 With a single-pass deterministic sweep, `local_steps` controls nothing, so we matched the number of
@@ -396,7 +483,7 @@ are near-idempotent — "matched on paper, not in compute."
 alternation to be a fair representative of "joint compression", or have we handicapped it to satisfy a
 fairness constraint?
 
-### 7.5 Is our analysis of why keep-benefit scoring fails correct?
+### 7.6 Is our analysis of why keep-benefit scoring fails correct?
 
 We claim `B_ij = ‖X_j‖²[W_ij² − (W_ij − Q(W_ij))²]` is non-negative and reduces to a monotone transform
 of activation-weighted magnitude minus a near-constant, and therefore mostly reproduces the ranking it
@@ -406,7 +493,7 @@ was meant to improve. Measured effect: −16.15% layer-objective joint gain at W
 that avoids the collapse? A criterion consistent with error compensation would presumably need the
 inverse-Hessian term rather than the diagonal approximation we used.
 
-### 7.6 How should JSQ relate to this study?
+### 7.7 How should JSQ relate to this study?
 
 JSQ (Guo et al., ICML 2024, *Compressing Large Language Models by Joint Sparsification and
 Quantization*) states its motivation as: *"sparsification tends to preserve outliers that are harmful to

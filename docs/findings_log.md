@@ -463,6 +463,104 @@ Extends [F-10](#f-10) with the two candidates the original grid never tested. Ev
 *hurt*. One seed, so a hypothesis rather than a result - but "the mechanism is live and it costs
 quality" would be a more interesting and more awkward finding than "the mechanism is inert".
 
+### F-14 - 410M confirmation: the budgets hold, and the joint gain changes sign with scale {#f-14}
+
+*2026-07-29 - Pythia-410M `9879c9b5` - 493 x 512 window - dense **22.17** - one seed - matched solver
+budgets (192 passes both arms, 96 target modules, verified from the records)*
+
+The §5.3 confirmation that the frozen budgets still satisfy the selection rule one scale up.
+
+| Budget | Sparsity | Bits | Sequential ppl | Joint ppl | Seq ret. | Joint ret. | Joint gain | Verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| moderate | 30% | W8 | 29.08 | 29.09 | **76.2%** | 76.2% | -0.03 pp | **ELIGIBLE** |
+| aggressive | 30% | W4 | 39.51 | **38.03** | **56.1%** | **58.3%** | **+2.18 pp** | **ELIGIBLE** |
+
+**Both budgets confirmed.** The freeze holds at 410M and §5.3's pre-1B requirement is satisfied.
+
+A pleasing property worth noting: the aggressive budget produces almost identical *sequential*
+retention at both scales - 56.0% at 160M against 56.1% at 410M. For a variable that is supposed to be
+held constant across scales, that is the behaviour one would hope for.
+
+**The result that matters, and the reason to be careful about it.** Putting the two scales together:
+
+| Budget | 160M joint gain | 410M joint gain |
+| --- | --- | --- |
+| 30% + W8 (control) | +0.12 pp | -0.03 pp |
+| **30% + W4** | **-4.55 pp** | **+2.18 pp** |
+
+At W8 the gain is ~0 at both scales, which is exactly what [F-05](#f-05) predicts: the mechanism is
+near-inert there, so the control behaves as a control should. At W4 - the only regime where the
+mechanism is live - **the gain changes sign between 160M and 410M**, from clearly negative to clearly
+positive.
+
+That is the shape of the study's primary research question. It is also precisely the result we would
+*want* to see, which is a reason for more scepticism rather than less. Specifically:
+
+- **Two points are not a trend.** The plan says so itself about three.
+- **There is no uncertainty estimate on either number**, and per [F-15](#f-15) the planned mechanism
+  for producing one does not work.
+- +2.18 pp exceeds the pre-registered practical-importance threshold of 1.0 pp, but that threshold also
+  requires consistency across three seeds *and* exceeding the seed spread. Neither clause can currently
+  be evaluated.
+- The 160M and 410M numbers come from different dense references (36.97 and 22.17), which is correct -
+  retention is always against a model's own dense run - but it means the comparison is between two
+  ratios, not two perplexities.
+
+**Nothing here may be reported as a scale finding yet.** What it does justify is prioritising the
+uncertainty question before spending 1B compute, because the entire headline now rests on whether
++/-2 pp is inside or outside noise.
+
+### F-15 - The run seed is inert, so the planned error bars do not exist {#f-15}
+
+*2026-07-29 - a design problem, found by checking rather than by failure*
+
+**Two runs of the same cell with different run seeds produce bit-identical results.** Pythia-160M,
+30% + W4, pilot window:
+
+```
+runtime.seed = 1234  ->  perplexity 65.1548
+runtime.seed = 2345  ->  perplexity 65.1548
+```
+
+Identical to four decimal places. Confirmed by inspection too:
+
+- Calibration indices derive from `data.calibration_seed`, which the code comments explicitly describe
+  as *"independent of the run seed, so every arm at a given scale calibrates on the same sequences"*.
+- Nothing in the solver, the mask construction, or the layerwise driver is stochastic - no sampling, no
+  shuffling, no dropout. The column sweep is a deterministic pass and `topk` is deterministic.
+
+So the pipeline is fully deterministic given a fixed calibration draw, and **the run seed cannot change
+the compressed model.**
+
+**Why this matters more than it looks.** §5.5 prescribes three confirmatory seeds for the central
+comparison, and §6.3's practical-importance rule requires a joint gain to exceed *the seed spread*.
+Under this method:
+
+- three confirmatory seeds would produce three **identical** numbers,
+- the seed spread would be exactly **zero**,
+- so the "exceeds the seed spread" clause becomes vacuous - any nonzero gain passes it trivially,
+- and the paper would have **no error bars at all**, while appearing to have followed a three-seed
+  protocol.
+
+This is the same root cause as the superseded method definition: the seed policy was written for the
+*original* full-model quantisation-aware-training design, where training is stochastic and seeds
+genuinely produce variance. It does not transfer to deterministic post-training reconstruction. Nothing
+was done wrong in following it; it simply does not measure anything here.
+
+**The variance that does exist is in the calibration draw.** Different calibration sequences give
+different Gram matrices, hence different masks, different scales, and a genuinely different compressed
+model. That is what published post-training-quantisation work varies to obtain error bars.
+
+Note the fairness requirement is preserved under such a change: §3.11 requires identical calibration
+*between arms within a comparison*, not across repeats. So repeat r would use calibration draw r for
+**both** arms - which also gives §6.3 the paired comparisons it asks for.
+
+**Not actioned.** Replacing the seed axis with a calibration-draw axis is a change to §5.5's frozen
+seed policy, and §6.3 forbids revisiting protocol choices after seeing results. The 410M sign flip in
+[F-14](#f-14) is a result, and it is exactly what makes this decision urgent and delicate: the change
+must be justified on the *mechanism* - seeds provably do nothing - and not on wanting error bars around
+a number we like.
+
 ---
 
 ## 3. All end-to-end perplexities in one table
@@ -514,6 +612,7 @@ recording.
 | B-12 | Four identical dense cells planned per four-budget grid | Wasted compute plus near-duplicate records §10.4 asks the audit to reject |
 | B-14 | Joint arm ran on 2x the sequential arm's solver budget; the fairness guard was never called ([F-12](#f-12)) | Every joint-gain number before 2026-07-29 was non-attributable under §3.11 |
 | B-15 | `LayerPlan` and `ReconstructionConfig` carried separate `joint_iterations` defaults | Changing the config default silently left the plan default in place, which is what runs |
+| B-16 | Three-seed confirmatory protocol produces three identical numbers ([F-15](#f-15)) | The paper would report a seed spread of zero as though the protocol had been followed, and §6.3's practical-importance rule would be vacuous |
 | B-13 | Sweep cells inherited the base config's model revision | Every cell pinned to the *first* model's SHA — fails to load, or silently loads the wrong weights if the SHA exists in both repos |
 
 Two of these were **masked by tests that should have caught them**: B-07 (the test disabled
