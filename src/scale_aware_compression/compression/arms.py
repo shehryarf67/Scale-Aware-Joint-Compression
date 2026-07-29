@@ -18,6 +18,7 @@ Stage semantics under layerwise post-training reconstruction (plan §3.1):
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from scale_aware_compression.compression.base import CompressionError, Compressor
@@ -253,6 +254,53 @@ class LayerwiseArm(Compressor):
             self.conversion_statistics["weight_compression_ratio"],
         )
         return model
+
+    def save(self, model: nn.Module, path: str | Path) -> Path:
+        """Persist the artefact **and** the manifest needed to load it back.
+
+        The base class writes the weights. Weights alone are not an independently loadable artefact
+        for a packed model: a model rebuilt from the same architecture config has plain ``nn.Linear``
+        everywhere and no way to know which modules should be packed, so the state dict will not fit.
+        §4.8 requires the checkpoint reload from disk on its own, which needs the manifest.
+
+        Args:
+            model: The converted model.
+            path: Destination directory.
+
+        Returns:
+            The directory written to.
+        """
+        from scale_aware_compression.compression.packed import packed_linear_class
+        from scale_aware_compression.compression.reload import write_manifest
+
+        destination = super().save(model, path)
+
+        plan = self.plan
+        if not plan.quantises:
+            # Nothing was packed, so the artefact is an ordinary FP32 checkpoint and needs no
+            # manifest to be loadable.
+            return destination
+
+        packed_class = packed_linear_class()
+        shapes: dict[str, tuple[int, int]] = {}
+        packed_names: list[str] = []
+        for name in self.module_names:
+            module = model.get_submodule(name)
+            if isinstance(module, packed_class):
+                packed_names.append(name)
+                shapes[name] = (module.out_features, module.in_features)
+
+        write_manifest(
+            Path(destination),
+            module_names=packed_names,
+            bits=plan.bits,
+            granularity=plan.granularity,
+            group_size=plan.group_size,
+            shapes=shapes,
+            target_sparsity=plan.sparsity,
+            method=self.method.value,
+        )
+        return destination
 
     def report_statistics(self, model: nn.Module | None = None) -> dict[str, Any]:
         """Describe what was achieved, next to what was requested.

@@ -69,6 +69,13 @@ from scale_aware_compression.compression.reconstruct import (
     solve_masked_rows,
     sweep_reconstruct,
 )
+from scale_aware_compression.compression.reload import (
+    MANIFEST_NAME,
+    ReloadError,
+    load_packed_model,
+    read_manifest,
+    write_manifest,
+)
 from scale_aware_compression.compression.schedules import (
     ScheduleError,
     is_mask_update_step,
@@ -104,7 +111,9 @@ __all__ = [
     "QuantisationError",
     "QuantisedWeight",
     "Quantiser",
+    "MANIFEST_NAME",
     "ReconstructionError",
+    "ReloadError",
     "ReconstructionResult",
     "ScheduleError",
     "SequentialArm",
@@ -120,6 +129,7 @@ __all__ = [
     "convert_model_to_packed",
     "effective_bits_per_weight",
     "fake_quantise",
+    "load_packed_model",
     "get_compressor",
     "is_mask_update_step",
     "mask_freeze_step",
@@ -128,6 +138,7 @@ __all__ = [
     "packed_linear_class",
     "plan_from_config",
     "quantise_weight",
+    "read_manifest",
     "realised_sparsity",
     "reconstruct",
     "reconstruction_loss",
@@ -137,6 +148,7 @@ __all__ = [
     "sweep_reconstruct",
     "unpack_low_bit",
     "verify_packing",
+    "write_manifest",
 ]
 
 COMPRESSOR_REGISTRY: dict[CompressionMethod, type[Compressor]] = {

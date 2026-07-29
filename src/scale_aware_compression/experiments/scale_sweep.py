@@ -439,6 +439,90 @@ def _revision_for(model_name: str, document: dict[str, Any]) -> str | None:
     return load_document(candidate).get("model", {}).get("revision")
 
 
+# Fields two records must agree on before their difference means anything. §3.11 lists the first
+# group; the rest are things that silently changed under this project at least once and produced a
+# joint-gain figure that had to be retracted.
+COMPARABILITY_FIELDS: tuple[tuple[str, str], ...] = (
+    ("model_name", "model"),
+    ("budget_label", "budget"),
+    ("seed", "seed"),
+    ("sparsity", "target sparsity"),
+    ("quantisation_bits", "bit width"),
+    ("schema_version", "record schema"),
+    ("method_version", "method version"),
+)
+
+
+def _pair_key(record: dict[str, Any]) -> tuple[Any, ...]:
+    """The cell a record belongs to: one model, one budget, one replicate."""
+    return (record.get("model_name"), record.get("budget_label"), record.get("seed"))
+
+
+def _incomparable(sequential: dict[str, Any], joint: dict[str, Any]) -> list[str]:
+    """Reasons two records cannot be differenced, empty when they can.
+
+    Checks the §3.11 invariants plus the things that have actually gone wrong here: unequal solver
+    budgets, different calibration draws, different module coverage, different evaluation windows, and
+    records produced by different versions of the algorithm.
+    """
+    reasons: list[str] = []
+    for key, label in COMPARABILITY_FIELDS:
+        if sequential.get(key) != joint.get(key):
+            reasons.append(f"{label} differs ({sequential.get(key)} vs {joint.get(key)})")
+
+    def revision(record: dict[str, Any]) -> Any:
+        return (record.get("config", {}).get("model", {}) or {}).get("revision")
+
+    if revision(sequential) != revision(joint):
+        reasons.append("model revision differs")
+
+    def stats(record: dict[str, Any]) -> dict[str, Any]:
+        return (record.get("compression", {}) or {}).get("statistics", {}) or {}
+
+    sequential_stats, joint_stats = stats(sequential), stats(joint)
+    if sequential_stats.get("calibration_fingerprint") != joint_stats.get(
+        "calibration_fingerprint"
+    ):
+        reasons.append("calibration set differs")
+    if sequential_stats.get("total_local_steps") != joint_stats.get("total_local_steps"):
+        reasons.append(
+            f"solver budget differs ({sequential_stats.get('total_local_steps')} vs "
+            f"{joint_stats.get('total_local_steps')})"
+        )
+    sequential_modules = (sequential_stats.get("layerwise", {}) or {}).get("module_names")
+    joint_modules = (joint_stats.get("layerwise", {}) or {}).get("module_names")
+    if sequential_modules is not None and sequential_modules != joint_modules:
+        reasons.append("module coverage differs")
+
+    def window(record: dict[str, Any]) -> tuple[Any, Any]:
+        payload = (record.get("quality", {}) or {}).get("perplexity", {}) or {}
+        return (payload.get("num_sequences"), payload.get("dataset_fingerprint"))
+
+    if window(sequential) != window(joint):
+        reasons.append(f"evaluation window differs ({window(sequential)} vs {window(joint)})")
+    return reasons
+
+
+def _nll(record: dict[str, Any]) -> float | None:
+    """Mean negative log-likelihood per token, or ``None`` when it cannot be derived.
+
+    Preferred over perplexity as the comparison quantity. Perplexity is exponential, so a fixed gap
+    means different things at different baselines -- five points at a dense perplexity of 20 is not
+    five points at 200. NLL is additive, which is what makes a difference comparable across scales.
+    """
+    payload = (record.get("quality", {}) or {}).get("perplexity", {}) or {}
+    total = payload.get("total_nll")
+    tokens = payload.get("total_tokens")
+    if total and tokens:
+        return float(total) / float(tokens)
+    perplexity = payload.get("perplexity")
+    if perplexity:
+        import math
+
+        return math.log(float(perplexity))
+    return None
+
+
 def scale_trend(
     records: list[dict[str, Any]],
     *,
@@ -446,23 +530,92 @@ def scale_trend(
 ) -> list[dict[str, Any]]:
     """Extract the joint-gain-versus-scale trend from completed records.
 
-    This is the answer to the primary research question, in tabular form.
+    The answer to the primary research question, in tabular form -- and deliberately conservative
+    about what it will put in that table. A row is emitted only when the two arms are genuinely
+    comparable; otherwise the pair is reported with its reasons and no gain, because a difference
+    between incomparable runs is not a gain.
+
+    Two metrics are reported per cell:
+
+    * **excess NLL** (``joint_advantage_nll``) is primary. NLL is additive, so a difference is
+      comparable across scales where a perplexity difference is not.
+    * **retention** is kept as the readable secondary figure.
+
+    The x-axis is **targeted non-embedding parameters** (§2.6), taken from the layerwise report rather
+    than the registry's total, because the embedding share falls sharply with scale and would confound
+    a scale trend with a trend in how much of each model was compressed.
 
     Args:
-        records: Loaded run records, as returned by :meth:`ExperimentTracker.load_all`.
-        metric: Quality metric to compare on.
+        records: Loaded run records.
+        metric: Retention key to read from each record's quality payload.
 
     Returns:
-        One row per (model, budget), each holding the sequential score, the joint score, and the
-        gain, ordered by parameter count.
-
-    Raises:
-        NotImplementedError: Always, in the current scaffold.
+        One row per (model, budget, replicate), ordered by targeted parameter count. Rows carry
+        ``comparable`` and, when false, ``reasons``.
     """
-    # TODO(scale_sweep): group records by (model_name, budget_label), average the metric over
-    # seeds within each group, then call metrics.joint_gain.joint_gain_summary() per group.
-    # Report the spread across seeds alongside the mean: a gain smaller than the seed-to-seed
-    # spread is not a finding, and the scale trend must be read with that in view.
-    raise NotImplementedError(
-        "scale_trend is not implemented yet; see the TODO in experiments/scale_sweep.py"
-    )
+    from collections import defaultdict
+
+    by_cell: dict[tuple[Any, ...], dict[str, dict[str, Any]]] = defaultdict(dict)
+    for record in records:
+        # A failed or partial run must not silently contribute half a pair.
+        if record.get("status") != "success":
+            LOGGER.debug(
+                "Skipping %s: status %s", record.get("experiment_id"), record.get("status")
+            )
+            continue
+        method = record.get("compression_method")
+        if method in {CompressionMethod.SEQUENTIAL.value, CompressionMethod.JOINT.value}:
+            by_cell[_pair_key(record)][method] = record
+
+    rows: list[dict[str, Any]] = []
+    for key, arms in by_cell.items():
+        model_name, budget_label, seed = key
+        sequential = arms.get(CompressionMethod.SEQUENTIAL.value)
+        joint = arms.get(CompressionMethod.JOINT.value)
+        if sequential is None or joint is None:
+            LOGGER.info(
+                "%s / %s / seed %s has no complete pair; no gain is defined",
+                model_name,
+                budget_label,
+                seed,
+            )
+            continue
+
+        reasons = _incomparable(sequential, joint)
+        stats = (joint.get("compression", {}) or {}).get("statistics", {}) or {}
+        targeted = stats.get("targeted_parameters") or joint.get("parameter_count") or 0
+
+        sequential_nll, joint_nll = _nll(sequential), _nll(joint)
+        row: dict[str, Any] = {
+            "model_name": model_name,
+            "budget_label": budget_label,
+            "seed": seed,
+            "targeted_parameters": targeted,
+            "total_parameters": joint.get("parameter_count"),
+            "sequential_experiment_id": sequential.get("experiment_id"),
+            "joint_experiment_id": joint.get("experiment_id"),
+            "comparable": not reasons,
+        }
+        if reasons:
+            row["reasons"] = reasons
+            rows.append(row)
+            continue
+
+        row["sequential_nll"] = sequential_nll
+        row["joint_nll"] = joint_nll
+        # Positive means joint is better: it achieved the lower NLL.
+        row["joint_advantage_nll"] = (
+            None if sequential_nll is None or joint_nll is None else sequential_nll - joint_nll
+        )
+        for label, record in (("sequential", sequential), ("joint", joint)):
+            retention = (record.get("quality", {}) or {}).get("retention", {}) or {}
+            row[f"{label}_retention"] = retention.get("perplexity_retention")
+        if row.get("sequential_retention") is not None and row.get("joint_retention") is not None:
+            row["joint_gain_retention_pp"] = row["joint_retention"] - row["sequential_retention"]
+        row["metric"] = metric
+        rows.append(row)
+
+    rows.sort(key=lambda item: (item["targeted_parameters"], str(item["budget_label"])))
+    usable = sum(1 for row in rows if row["comparable"])
+    LOGGER.info("Scale trend: %d comparable pair(s) of %d", usable, len(rows))
+    return rows

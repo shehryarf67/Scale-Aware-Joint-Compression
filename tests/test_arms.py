@@ -311,6 +311,91 @@ class TestConversionPreservesTheMeasuredModel:
             assert codes is not None and scales is not None
 
 
+class TestTheCheckpointReloadsIndependently:
+    """§4.8's requirement, which weights alone cannot satisfy.
+
+    A packed model replaces some `nn.Linear` modules with `PackedLinear`. A model rebuilt from the
+    same architecture config has plain `nn.Linear` everywhere and no way to know which modules should
+    be packed, so the state dict does not fit. The manifest is what closes that gap — and the paper's
+    quality figure should come from the artefact a deployment would load, not from the in-memory
+    object that happened to exist when compression finished.
+    """
+
+    def test_saving_writes_a_manifest(self, arm_config, fresh_model, tmp_path):
+        from scale_aware_compression.compression.reload import MANIFEST_NAME, read_manifest
+
+        arm, result = run_arm(JointArm, arm_config, fresh_model)
+        destination = arm.save(result.model, tmp_path / "artefact")
+
+        assert (destination / MANIFEST_NAME).is_file()
+        manifest = read_manifest(destination)
+        assert manifest["bits"] == arm.plan.bits
+        assert set(manifest["packed_modules"]) == set(arm.module_names)
+
+    def test_the_pruning_arm_needs_no_manifest(self, arm_config, fresh_model, tmp_path):
+        """It stays FP32, so it is an ordinary checkpoint and loads without help."""
+        from scale_aware_compression.compression.reload import MANIFEST_NAME
+
+        arm, result = run_arm(PruningArm, arm_config, fresh_model)
+        destination = arm.save(result.model, tmp_path / "fp32")
+
+        assert not (destination / MANIFEST_NAME).exists()
+
+    def test_a_reloaded_model_reproduces_the_in_memory_one(
+        self, arm_config, tiny_causal_lm, tmp_path
+    ):
+        """The end-to-end check. Same logits from the artefact as from the object that wrote it."""
+        import copy
+
+        import torch
+
+        from scale_aware_compression.compression.reload import load_packed_model
+
+        arm, result = run_arm(JointArm, arm_config, copy.deepcopy(tiny_causal_lm))
+        destination = arm.save(result.model, tmp_path / "artefact")
+
+        ids = torch.randint(0, tiny_causal_lm.config.vocab_size, (1, 12))
+        with torch.inference_mode():
+            before = result.model(ids).logits
+
+        # A *fresh* dense model, exactly as a deployment would construct it.
+        rebuilt = load_packed_model(destination, copy.deepcopy(tiny_causal_lm))
+        with torch.inference_mode():
+            after = rebuilt(ids).logits
+
+        assert torch.allclose(before, after, atol=1e-5)
+
+    def test_a_missing_manifest_is_refused(self, tmp_path, tiny_causal_lm):
+        """Guessing which modules were packed is not an option."""
+        import copy
+
+        from scale_aware_compression.compression.reload import ReloadError, load_packed_model
+
+        empty = tmp_path / "nothing"
+        empty.mkdir()
+        with pytest.raises(ReloadError, match="not independently loadable"):
+            load_packed_model(empty, copy.deepcopy(tiny_causal_lm))
+
+    def test_a_future_manifest_version_is_refused(self, tmp_path, tiny_causal_lm):
+        """Fields can change meaning between versions, so an unknown one must not be guessed at."""
+        import copy
+        import json
+
+        from scale_aware_compression.compression.reload import (
+            MANIFEST_NAME,
+            ReloadError,
+            load_packed_model,
+        )
+
+        directory = tmp_path / "future"
+        directory.mkdir()
+        (directory / MANIFEST_NAME).write_text(
+            json.dumps({"manifest_version": "999", "packed_modules": {}}), encoding="utf-8"
+        )
+        with pytest.raises(ReloadError, match="manifest version"):
+            load_packed_model(directory, copy.deepcopy(tiny_causal_lm))
+
+
 class TestPackedLinear:
     def test_packing_a_grid_weight_is_lossless(self):
         """The driver leaves weights on the grid, so packing must be a re-encoding, not a rounding."""
