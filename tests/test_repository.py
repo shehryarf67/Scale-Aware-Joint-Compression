@@ -431,6 +431,54 @@ class TestFrozenProtocolMatchesTheConfigs:
             )
 
 
+class TestLatencyIsOnlyRecordedWhenItMeansSomething:
+    """A number that measures the plumbing is worse than no number.
+
+    Decision D1 makes native INT8 the only latency backend and excludes W4 from latency tables. But
+    every quantised arm converts to `PackedLinear`, whose forward unpacks codes, dequantises to FP32
+    and calls a dense matmul — slower than the dense model, and attributable to neither sparsity nor
+    precision. Until a native INT8 runtime artefact exists, quantised arms record no latency.
+    """
+
+    def _runner(self, document, tmp_path):
+        import copy
+
+        from scale_aware_compression.experiments.runner import ExperimentRunner
+
+        resolved = copy.deepcopy(document)
+        resolved.setdefault("runtime", {})["output_dir"] = str(tmp_path)
+        return ExperimentRunner(ExperimentConfig.from_mapping(resolved))
+
+    @pytest.mark.parametrize(
+        ("method", "bits", "expected"),
+        [
+            ("dense", 32, "fp32"),
+            ("pruning", 32, "fp32"),
+            ("quantisation", 8, "packed_dequantising"),
+            ("joint", 4, "packed_dequantising"),
+        ],
+    )
+    def test_the_runtime_representation_is_recorded(
+        self, minimal_config_document, tmp_path, method, bits, expected
+    ):
+        import copy
+
+        document = copy.deepcopy(minimal_config_document)
+        document["compression"] = {
+            "method": method,
+            "pruning": {"enabled": method in {"pruning", "sequential", "joint"}, "sparsity": 0.3},
+            "quantisation": {"enabled": bits < 32, "bits": bits if bits < 32 else 8},
+        }
+        runner = self._runner(document, tmp_path)
+        assert runner._runtime_representation() == expected
+
+    def test_only_fp32_artefacts_are_benchmarked(self, minimal_config_document, tmp_path):
+        """The pruning-only arm stays FP32, which is what makes RQ4 answerable without a 4-bit kernel."""
+        runner = self._runner(minimal_config_document, tmp_path)
+        assert runner._latency_is_meaningful("fp32") is True
+        assert runner._latency_is_meaningful("packed_dequantising") is False
+
+
 class TestResumabilityAndRecordHygiene:
     """A sweep that skips a stale cell is worse than one that re-runs it.
 

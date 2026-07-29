@@ -230,6 +230,21 @@ EPSILON: Final[float] = 1e-12
 # written by different revisions of the code are never silently concatenated.
 # ---------------------------------------------------------------------------
 RESULT_SCHEMA_VERSION: Final[str] = "2"
+
+METHOD_VERSION: Final[str] = "3"
+"""Version of the compression *algorithm*, bumped by hand when a change invalidates old records.
+
+Distinct from the schema version, which describes the record's shape. This describes what produced
+the numbers inside it. Every joint-gain figure this project has produced has been retracted at least
+once because a method change was not visible in the records, so resumption compares this and re-runs
+a cell whose recorded value came from a different algorithm.
+
+History:
+  1  original: blockwise capture, unbounded joint loop, per-arm reconstruction targets
+  2  per-output masks, matched solver budgets
+  3  common dense objective for every arm, joint incumbent guard, dependency-group recapture,
+     packing that reuses the solver's exact codes and scales
+"""
 """Bumped to 2 when ``status`` was added: a failed run is now recorded rather than dropped, and
 a reader must be able to filter those out."""
 

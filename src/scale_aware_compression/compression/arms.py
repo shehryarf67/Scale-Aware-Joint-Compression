@@ -278,7 +278,15 @@ class LayerwiseArm(Compressor):
         }
         if self.report is not None:
             statistics["layerwise"] = self.report.to_dict()
-            statistics["measured_sparsity"] = self.report.realised_sparsity
+            # `measured_sparsity` was the numeric zero fraction, which conflates pruned weights with
+            # survivors quantisation rounded away -- it overstates the pruning applied by ~1.8
+            # percentage points at W4. The budget is defined on the mask, so that is what is reported
+            # against the target; the conflated figure keeps its own clearly named key.
+            statistics["measured_sparsity"] = self.report.mask_sparsity
+            statistics["numeric_zero_fraction"] = self.report.realised_sparsity
+            statistics["zero_code_fraction"] = self.report.zero_code_fraction
+            statistics["accepted_joint_updates"] = self.report.accepted_joint_updates
+            statistics["rejected_joint_updates"] = self.report.rejected_joint_updates
             statistics["targeted_parameters"] = self.report.targeted_parameters
             statistics["total_local_steps"] = self.report.total_local_steps
         if self.conversion_statistics:

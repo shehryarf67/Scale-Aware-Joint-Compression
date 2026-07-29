@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any
 
 from scale_aware_compression.config import ExperimentConfig
 from scale_aware_compression.constants import (
+    METHOD_VERSION,
     RESULT_CSV_COLUMNS,
     RESULT_CSV_NAME,
     RESULT_SCHEMA_VERSION,
@@ -164,6 +165,13 @@ class ExperimentRecord:
     model_name: str
     compression_method: str
     seed: int
+    runtime_representation: str = ""
+    """What the artefact executes as: ``fp32`` or ``packed_dequantising``.
+
+    Distinct from the storage format. §4.7 forbids comparing latencies across backends, and this is
+    the field that makes such a comparison detectable after the fact -- a table mixing the two is
+    mixing native FP32 kernels with a dequantise-then-matmul emulation.
+    """
     experiment_group: str = ""
     """The configured ``experiment.id``, kept as a grouping label.
 
@@ -173,6 +181,13 @@ class ExperimentRecord:
     timestamp: str = field(default_factory=utc_timestamp)
     git_commit: str | None = field(default_factory=get_git_commit)
     schema_version: str = RESULT_SCHEMA_VERSION
+    method_version: str = METHOD_VERSION
+    """Which version of the algorithm produced this record.
+
+    The git commit is too strict for a resume check -- every code change would invalidate every
+    record -- and no check at all is too loose, which is how three successive joint-gain figures were
+    each computed by a different algorithm before anyone noticed. This is the deliberate middle.
+    """
 
     model_size_label: str = ""
     parameter_count: int = 0
@@ -278,9 +293,11 @@ class ExperimentRecord:
         return {
             "experiment_id": self.experiment_id,
             "experiment_group": self.experiment_group,
+            "runtime_representation": self.runtime_representation,
             "timestamp": self.timestamp,
             "git_commit": self.git_commit,
             "schema_version": self.schema_version,
+            "method_version": self.method_version,
             "model_name": self.model_name,
             "model_size_label": self.model_size_label,
             "parameter_count": self.parameter_count,
@@ -326,6 +343,7 @@ class ExperimentRecord:
             "timestamp": self.timestamp,
             "git_commit": self.git_commit,
             "schema_version": self.schema_version,
+            "method_version": self.method_version,
             "status": self.status,
             "model_name": self.model_name,
             "model_size_label": self.model_size_label,
@@ -439,6 +457,42 @@ class ExperimentTracker:
             reasons.append(f"status is {status}")
         if record.get("schema_version") != RESULT_SCHEMA_VERSION:
             reasons.append(f"schema {record.get('schema_version')} is not {RESULT_SCHEMA_VERSION}")
+        if record.get("method_version") != METHOD_VERSION:
+            reasons.append(f"method version {record.get('method_version')} is not {METHOD_VERSION}")
+
+        recorded_data = record.get("config", {}).get("data", {}) or {}
+        for key, expected in (
+            ("dataset", config.data.dataset),
+            ("subset", config.data.subset),
+            ("eval_split", config.data.eval_split),
+            ("sequence_length", config.data.sequence_length),
+            ("calibration_seed", config.data.calibration_seed),
+            ("calibration_samples", config.data.calibration_samples),
+        ):
+            if recorded_data.get(key) != expected:
+                reasons.append(f"data.{key} {recorded_data.get(key)} is not {expected}")
+
+        recorded_reconstruction = (record.get("config", {}).get("compression", {}) or {}).get(
+            "reconstruction", {}
+        ) or {}
+        reconstruction = config.compression.reconstruction
+        for key, expected in (
+            ("solver", reconstruction.solver.value),
+            ("joint_iterations", reconstruction.joint_iterations),
+            ("comparison_group", reconstruction.comparison_group.value),
+            ("scale_search", reconstruction.scale_search),
+            ("keep_benefit_saliency", reconstruction.keep_benefit_saliency),
+        ):
+            if recorded_reconstruction.get(key) != expected:
+                reasons.append(
+                    f"reconstruction.{key} {recorded_reconstruction.get(key)} is not {expected}"
+                )
+
+        recorded_granularity = (
+            (record.get("config", {}).get("compression", {}) or {}).get("quantisation", {}) or {}
+        ).get("granularity")
+        if recorded_granularity != config.compression.quantisation.granularity.value:
+            reasons.append("quantisation granularity differs")
 
         recorded = (record.get("config", {}).get("model", {}) or {}).get("revision")
         if config.model.revision and recorded != config.model.revision:
@@ -656,14 +710,31 @@ class ExperimentRunner:
                 record.add_quality(report)
 
             # 7. Deployment measurements, on CPU.
-            with log_stage(LOGGER, "benchmark (CPU)"):
-                benchmark = benchmark_model(
-                    model,
-                    loaded.tokenizer,
-                    config.benchmark,
-                    label=f"{config.model.name}/{config.compression.method.value}",
+            runtime = self._runtime_representation()
+            record.runtime_representation = runtime
+            if self._latency_is_meaningful(runtime):
+                with log_stage(LOGGER, "benchmark (CPU)"):
+                    benchmark = benchmark_model(
+                        model,
+                        loaded.tokenizer,
+                        config.benchmark,
+                        label=f"{config.model.name}/{config.compression.method.value}",
+                    )
+                    record.add_benchmark(benchmark)
+            else:
+                # Deliberately leaves `deployment` empty rather than filling it with a number that
+                # cannot be published. An absent field is a question; a wrong field is an answer.
+                record.notes = (
+                    f"{record.notes} CPU latency not measured: runtime representation is "
+                    f"{runtime!r}, which dequantises to FP32 on every forward pass, so a timing "
+                    "would measure unpacking rather than the compression (decision D1)."
+                ).strip()
+                LOGGER.warning(
+                    "Skipping the CPU benchmark: %s would measure dequantisation, not compression. "
+                    "A native INT8 runtime path is required before W8 latency can be reported, and "
+                    "W4 latency is excluded by D1 regardless.",
+                    runtime,
                 )
-                record.add_benchmark(benchmark)
 
         except NotImplementedError:
             # An unimplemented arm is a known gap, not a failed experiment. Let it through
@@ -793,6 +864,53 @@ class ExperimentRunner:
             LOGGER.debug("Could not resolve the cached snapshot: %s", error)
             return None
 
+    def _runtime_representation(self) -> str:
+        """What the model will actually execute as, which is not the same as how it is stored.
+
+        Returns:
+            ``"fp32"`` for dense and pruning-only arms, whose weights stay full precision and run on
+            the native dense kernel; ``"packed_dequantising"`` for any quantised arm, because
+            ``PackedLinear`` unpacks and dequantises to FP32 on every forward pass.
+        """
+        compression = self.config.compression
+        if compression.effective_bits >= 32:
+            return "fp32"
+        return "packed_dequantising"
+
+    def _latency_is_meaningful(self, runtime: str) -> bool:
+        """Whether a CPU timing of this artefact measures the compression or the plumbing.
+
+        Decision D1 makes PyTorch native INT8 the only latency backend, and W4 contributes quality
+        and size only. But every quantised arm currently converts to ``PackedLinear``, whose forward
+        unpacks integer codes, dequantises them and calls a dense FP32 matmul. Timing that measures
+        the unpacking -- it is *slower* than the dense model and says nothing about either sparsity
+        or precision.
+
+        So the honest options are to build a native INT8 runtime artefact, or to record no latency.
+        Until the former exists this returns ``False`` for quantised arms, and the record carries a
+        note saying why rather than a number that cannot be used.
+
+        The dense and pruning-only arms are unaffected: they stay FP32 and benchmark natively, which
+        is what makes research question 4 -- does sparsity produce a real CPU speedup? -- answerable
+        without a 4-bit kernel at all.
+
+        Args:
+            runtime: The value from :meth:`_runtime_representation`.
+
+        Returns:
+            ``True`` when the timing is attributable to the compression.
+        """
+        return runtime == "fp32"
+
+    def _evaluation_fingerprint(self) -> str | None:
+        """This run's evaluation-corpus fingerprint, or ``None`` if it cannot be resolved yet.
+
+        Best-effort: the fingerprint is a property of the tokenised split, so resolving it needs the
+        cache. A ``None`` result weakens the dense-reference check to the window comparison rather
+        than failing the run.
+        """
+        return getattr(self, "_eval_fingerprint", None)
+
     def _window_mismatch(self, payload: dict[str, Any]) -> str | None:
         """Why a candidate dense record is not comparable with this run, or ``None`` if it is.
 
@@ -809,6 +927,19 @@ class ExperimentRunner:
 
         if actual_length is not None and int(actual_length) != int(expected_length):
             return f"sequence_length {actual_length} != {expected_length}"
+
+        # The corpus itself, not just the window shape. Matching on sequence length alone would accept
+        # a dense run over a *different split* that happened to use the same window -- and once final
+        # results move to the test split while screening stays on validation, that is not a
+        # hypothetical.
+        expected_fingerprint = self._evaluation_fingerprint()
+        actual_fingerprint = payload.get("dataset_fingerprint")
+        if (
+            expected_fingerprint
+            and actual_fingerprint
+            and actual_fingerprint != expected_fingerprint
+        ):
+            return f"dataset fingerprint {actual_fingerprint} != {expected_fingerprint}"
         # The count is a *cap*, so a dense run may legitimately have evaluated fewer sequences than
         # the cap when the split ran out. Only a genuine excess is disqualifying.
         if (

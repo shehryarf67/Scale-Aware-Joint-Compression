@@ -318,6 +318,46 @@ class LayerwiseReport:
         """Total weights across every compressed layer -- the §2.6 scale x-axis."""
         return sum(layer.num_weights for layer in self.layers)
 
+    def _weighted(self, attribute: str) -> float:
+        """Parameter-weighted mean of a per-layer field.
+
+        Weighted rather than a plain mean: layers differ in size by up to 4x, so an unweighted
+        average would let a small attention projection count as much as a wide MLP one and the figure
+        would not be the model's sparsity.
+        """
+        total = self.targeted_parameters
+        if total == 0:
+            return 0.0
+        return sum(getattr(x, attribute) * x.num_weights for x in self.layers) / total
+
+    @property
+    def mask_sparsity(self) -> float:
+        """Fraction the pruning masks remove -- the quantity the budget is defined on.
+
+        Use this to verify the target, not :attr:`realised_sparsity`: that one also counts survivors
+        quantisation rounded to zero, so it overstates the pruning applied.
+        """
+        return self._weighted("mask_sparsity")
+
+    @property
+    def zero_code_fraction(self) -> float:
+        """Fraction of weights that survived the mask and were then rounded to zero."""
+        return self._weighted("zero_code_fraction")
+
+    @property
+    def accepted_joint_updates(self) -> int:
+        """Joint mask proposals that improved the objective and were kept."""
+        return sum(1 for x in self.layers for step in x.joint_trace if step.get("accepted"))
+
+    @property
+    def rejected_joint_updates(self) -> int:
+        """Joint mask proposals that made the objective worse and were discarded.
+
+        A large count is the guard doing its job. A count of zero across every layer would mean the
+        joint arm never revises its mask, which is §3.8's disqualifying case and worth noticing.
+        """
+        return sum(1 for x in self.layers for step in x.joint_trace if not step.get("accepted"))
+
     @property
     def realised_sparsity(self) -> float:
         """Weight-averaged realised sparsity across the compressed layers."""
@@ -332,6 +372,12 @@ class LayerwiseReport:
             "arm": self.arm,
             "num_layers": self.num_layers,
             "targeted_parameters": self.targeted_parameters,
+            # Three separate sparsity figures, because a zero has two possible causes and only one of
+            # them is the budget under study.
+            "mask_sparsity": self.mask_sparsity,
+            "zero_code_fraction": self.zero_code_fraction,
+            "accepted_joint_updates": self.accepted_joint_updates,
+            "rejected_joint_updates": self.rejected_joint_updates,
             "realised_sparsity": self.realised_sparsity,
             "total_local_steps": self.total_local_steps,
             "calibration_fingerprint": self.calibration_fingerprint,
