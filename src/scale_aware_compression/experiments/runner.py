@@ -164,6 +164,12 @@ class ExperimentRecord:
     model_name: str
     compression_method: str
     seed: int
+    experiment_group: str = ""
+    """The configured ``experiment.id``, kept as a grouping label.
+
+    Distinct from :attr:`experiment_id`, which follows §5.6's convention and encodes the model, arm,
+    budget and seed so two runs cannot collide.
+    """
     timestamp: str = field(default_factory=utc_timestamp)
     git_commit: str | None = field(default_factory=get_git_commit)
     schema_version: str = RESULT_SCHEMA_VERSION
@@ -207,8 +213,25 @@ class ExperimentRecord:
             A record with identity and configuration fields populated.
         """
         compression = config.compression
+        canonical = make_experiment_id(
+            model_name=config.model.name,
+            method=compression.method,
+            budget_label=compression.budget_label,
+            seed=config.runtime.seed,
+            sparsity=compression.effective_sparsity,
+            bits=compression.effective_bits,
+        )
+        # §5.6's convention, so a record is keyed by everything that makes it a distinct measurement.
+        # Taking `experiment.id` alone meant two runs differing only in seed shared one identifier and
+        # the second silently overwrote the first -- which also destroyed the dense baseline a
+        # compressed run needed for its retention. The configured id is kept as a prefix when it adds
+        # information, so a deliberately separated variant (a different evaluation window, say) still
+        # gets its own record.
+        label = config.experiment.id
+        experiment_id = canonical if label in {"unnamed", canonical} else f"{label}__{canonical}"
         return cls(
-            experiment_id=config.experiment.id,
+            experiment_id=experiment_id,
+            experiment_group=label,
             model_name=config.model.name,
             compression_method=compression.method.value,
             seed=config.runtime.seed,
@@ -254,6 +277,7 @@ class ExperimentRecord:
         """Return the full nested record, JSON-serialisable."""
         return {
             "experiment_id": self.experiment_id,
+            "experiment_group": self.experiment_group,
             "timestamp": self.timestamp,
             "git_commit": self.git_commit,
             "schema_version": self.schema_version,
@@ -365,9 +389,7 @@ class ExperimentTracker:
         return self.output_dir / f"{experiment_id}.json"
 
     def exists(self, experiment_id: str) -> bool:
-        """Whether a record already exists for this run.
-
-        Used by the sweep's ``skip_existing`` so an interrupted sweep can be resumed.
+        """Whether *any* record file exists for this run, valid or not.
 
         Args:
             experiment_id: The run identifier.
@@ -376,6 +398,65 @@ class ExperimentTracker:
             ``True`` if the JSON record is present.
         """
         return self.record_path(experiment_id).is_file()
+
+    def exists_valid(self, experiment_id: str, config: ExperimentConfig) -> bool:
+        """Whether a **usable** record exists, so a sweep may legitimately skip this cell.
+
+        File presence alone is not enough, and using it as the resume condition is a way to keep a
+        stale result silently. A record only stands in for running the cell if it succeeded and the
+        run that produced it matches the one being asked for now:
+
+        * ``status == "success"`` -- a crashed or half-written record must be re-run, not skipped.
+        * the model **revision** matches, or the cell would be skipped on the strength of a run
+          against different weights.
+        * the compression **budget** matches -- sparsity and bit width.
+        * the **schema version** matches, since an older schema may lack fields the analysis needs.
+
+        Deliberately does **not** compare the git commit. Every code change would then invalidate
+        every record and resumption would be useless during development. The cost of that choice is
+        recorded rather than hidden: a sweep resumed across a method change mixes results, so the
+        findings log carries an explicit note whenever numbers predate a method change.
+
+        Args:
+            experiment_id: The run identifier.
+            config: The configuration the cell would run with now.
+
+        Returns:
+            ``True`` if the existing record can stand in for running this cell.
+        """
+        path = self.record_path(experiment_id)
+        if not path.is_file():
+            return False
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            LOGGER.warning("Record %s is unreadable (%s); will re-run", path, error)
+            return False
+
+        reasons: list[str] = []
+        status = record.get("status")
+        if status != "success":
+            reasons.append(f"status is {status}")
+        if record.get("schema_version") != RESULT_SCHEMA_VERSION:
+            reasons.append(f"schema {record.get('schema_version')} is not {RESULT_SCHEMA_VERSION}")
+
+        recorded = (record.get("config", {}).get("model", {}) or {}).get("revision")
+        if config.model.revision and recorded != config.model.revision:
+            reasons.append("model revision differs")
+
+        recorded_sparsity = float(record.get("sparsity") or 0.0)
+        if abs(recorded_sparsity - config.compression.effective_sparsity) > 1e-9:
+            reasons.append(
+                f"sparsity {recorded_sparsity} is not {config.compression.effective_sparsity}"
+            )
+        recorded_bits = int(record.get("quantisation_bits") or 32)
+        if recorded_bits != config.compression.effective_bits:
+            reasons.append(f"bits {recorded_bits} is not {config.compression.effective_bits}")
+
+        if reasons:
+            LOGGER.info("Re-running %s: %s", experiment_id, ", ".join(reasons))
+            return False
+        return True
 
     def save(self, record: ExperimentRecord) -> Path:
         """Write a record to JSON and append its row to the CSV.
@@ -403,7 +484,12 @@ class ExperimentTracker:
         return destination
 
     def append_csv_row(self, record: ExperimentRecord) -> Path:
-        """Append one row to the aggregated CSV, writing the header if needed.
+        """Write one row to the aggregated CSV, **replacing** any existing row for the same run.
+
+        Upsert rather than append. Re-running a cell overwrites its JSON record, so a plain append
+        left two CSV rows for one experiment id -- and they disagree, because the second run is the
+        one that counts. Anything later averaging the CSV would weight the stale row equally, which
+        is the duplicate-record failure the audit is meant to reject.
 
         Args:
             record: The record to flatten.
@@ -417,22 +503,26 @@ class ExperimentTracker:
         """
         self.output_dir.mkdir(parents=True, exist_ok=True)
         path = self.csv_path
-        write_header = not path.exists()
+        rows: list[dict[str, Any]] = []
 
-        if not write_header:
+        if path.exists():
             with path.open("r", encoding="utf-8", newline="") as handle:
-                existing_header = next(csv.reader(handle), [])
-            if existing_header and tuple(existing_header) != RESULT_CSV_COLUMNS:
-                raise ExperimentError(
-                    f"{path} was written with a different result schema. Move it aside (or bump "
-                    "RESULT_SCHEMA_VERSION and start a new file) before appending."
-                )
+                reader = csv.DictReader(handle)
+                if reader.fieldnames and tuple(reader.fieldnames) != RESULT_CSV_COLUMNS:
+                    raise ExperimentError(
+                        f"{path} was written with a different result schema. Move it aside (or "
+                        "bump RESULT_SCHEMA_VERSION and start a new file) before appending."
+                    )
+                rows = [row for row in reader if row.get("experiment_id") != record.experiment_id]
 
-        with path.open("a", encoding="utf-8", newline="") as handle:
+        rows.append(record.to_csv_row())
+
+        # Rewritten whole rather than patched in place: one row per run keeps the file small, and a
+        # partial in-place edit is much harder to reason about than a full rewrite.
+        with path.open("w", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=list(RESULT_CSV_COLUMNS))
-            if write_header:
-                writer.writeheader()
-            writer.writerow(record.to_csv_row())
+            writer.writeheader()
+            writer.writerows(rows)
         return path
 
     def load(self, experiment_id: str) -> dict[str, Any]:

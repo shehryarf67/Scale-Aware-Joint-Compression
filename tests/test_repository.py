@@ -431,6 +431,110 @@ class TestFrozenProtocolMatchesTheConfigs:
             )
 
 
+class TestResumabilityAndRecordHygiene:
+    """A sweep that skips a stale cell is worse than one that re-runs it.
+
+    `exists()` returned true whenever the JSON file was present — regardless of whether the run
+    succeeded, what weights it used, or what budget it ran. Resuming on that basis silently keeps a
+    result that does not answer the question being asked now.
+    """
+
+    def _tracker(self, tmp_path):
+        from scale_aware_compression.experiments.runner import ExperimentTracker
+
+        return ExperimentTracker(tmp_path)
+
+    def _record(self, config, **overrides):
+        from scale_aware_compression.experiments.runner import ExperimentRecord
+
+        record = ExperimentRecord.from_config(config, capture_environment=False)
+        record.status = "success"
+        for key, value in overrides.items():
+            setattr(record, key, value)
+        return record
+
+    @pytest.fixture
+    def config(self, minimal_config_document):
+        import copy
+
+        document = copy.deepcopy(minimal_config_document)
+        document["compression"] = {
+            "method": "joint",
+            "pruning": {"sparsity": 0.3},
+            "quantisation": {"bits": 4},
+        }
+        document["model"] = {**document.get("model", {}), "revision": "abc123"}
+        return ExperimentConfig.from_mapping(document)
+
+    def test_a_successful_matching_record_is_skippable(self, tmp_path, config):
+        tracker = self._tracker(tmp_path)
+        record = self._record(config)
+        tracker.save(record)
+        assert tracker.exists_valid(record.experiment_id, config) is True
+
+    def test_a_failed_record_is_re_run(self, tmp_path, config):
+        """A crashed cell must not be mistaken for a completed one."""
+        tracker = self._tracker(tmp_path)
+        record = self._record(config, status="failure")
+        tracker.save(record)
+        assert tracker.exists_valid(record.experiment_id, config) is False
+
+    def test_a_record_from_different_weights_is_re_run(self, tmp_path, config):
+        """§2.7 pins revisions precisely so this cannot pass unnoticed."""
+        import copy
+
+        tracker = self._tracker(tmp_path)
+        record = self._record(config)
+        tracker.save(record)
+
+        moved = copy.deepcopy(config)
+        moved.model.revision = "def456"
+        assert tracker.exists_valid(record.experiment_id, moved) is False
+
+    def test_a_record_at_a_different_budget_is_re_run(self, tmp_path, config):
+        import copy
+
+        tracker = self._tracker(tmp_path)
+        record = self._record(config)
+        tracker.save(record)
+
+        rebudgeted = copy.deepcopy(config)
+        rebudgeted.compression.pruning.sparsity = 0.5
+        assert tracker.exists_valid(record.experiment_id, rebudgeted) is False
+
+    def test_re_running_a_cell_does_not_duplicate_its_csv_row(self, tmp_path, config):
+        """Appending left two rows for one run, and anything averaging them weights the stale one."""
+        import csv
+
+        tracker = self._tracker(tmp_path)
+        first = self._record(config, duration_seconds=1.0)
+        tracker.save(first)
+        second = self._record(config, duration_seconds=2.0)
+        tracker.save(second)
+
+        with tracker.csv_path.open(encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+
+        matching = [row for row in rows if row["experiment_id"] == first.experiment_id]
+        assert len(matching) == 1, "the stale row was not replaced"
+
+    def test_distinct_runs_still_get_their_own_rows(self, tmp_path, config):
+        """Upsert must key on the run, not collapse the whole file to one row."""
+        import copy
+
+        tracker = self._tracker(tmp_path)
+        tracker.save(self._record(config))
+
+        other = copy.deepcopy(config)
+        other.runtime.seed = 999
+        tracker.save(self._record(other))
+
+        with tracker.csv_path.open(encoding="utf-8", newline="") as handle:
+            import csv
+
+            assert len(list(csv.DictReader(handle))) == 2
+
+
 class TestNoRunArtefactsCommitted:
     """Git tracks nothing but `.gitkeep` under `outputs/` and `results/`.
 

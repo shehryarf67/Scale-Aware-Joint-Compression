@@ -279,15 +279,15 @@ def run_sweep(
     failures: list[tuple[SweepCell, Exception]] = []
 
     for index, cell in enumerate(ordered, start=1):
-        if config.sweep.skip_existing and tracker.exists(cell.experiment_id):
+        cell_config = build_cell_config(config, cell)
+        if config.sweep.skip_existing and tracker.exists_valid(cell.experiment_id, cell_config):
             LOGGER.info(
-                "[%d/%d] skip %s (already recorded)", index, len(ordered), cell.experiment_id
+                "[%d/%d] skip %s (valid record present)", index, len(ordered), cell.experiment_id
             )
             continue
 
         LOGGER.info("[%d/%d] run %s", index, len(ordered), cell.experiment_id)
         try:
-            cell_config = build_cell_config(config, cell)
             records.append(ExperimentRunner(cell_config, tracker=tracker).run())
         except Exception as error:  # noqa: BLE001 - re-raised below unless told to continue
             if not config.sweep.continue_on_error:

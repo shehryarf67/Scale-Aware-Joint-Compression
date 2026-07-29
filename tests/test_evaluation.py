@@ -334,10 +334,19 @@ class TestDenseRunEndToEnd:
         # The dense arm is its own retention reference, so the column is populated at 100%.
         assert record.quality["retention"]["perplexity_retention"] == pytest.approx(100.0)
 
-        # And it is on disk, in both formats.
-        written = tmp_path / "metrics" / "tiny-dense.json"
+        # And it is on disk, in both formats. Keyed by the §5.6 run identifier rather than by the
+        # configured `experiment.id`: taking the configured id alone meant two runs differing only in
+        # seed shared a filename, and the second silently overwrote the first.
+        written = tmp_path / "metrics" / f"{record.experiment_id}.json"
         assert written.is_file()
         assert (tmp_path / "metrics" / "results.csv").is_file()
+
+        # The configured id survives as a grouping label, and the identifier encodes what makes this
+        # measurement distinct: model, arm, budget and seed.
+        assert record.experiment_group == "tiny-dense"
+        assert record.experiment_id.startswith("tiny-dense__")
+        for fragment in ("dense", f"seed{record.seed}"):
+            assert fragment in record.experiment_id
 
     def test_csv_row_has_the_declared_columns(self, dense_config: ExperimentConfig, tmp_path: Path):
         from scale_aware_compression.constants import RESULT_CSV_COLUMNS
