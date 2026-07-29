@@ -1,7 +1,8 @@
 # Project status
 
-**Last updated:** 2026-07-28 · first session on the HP Omen · **Phases 0, 5 and 6 complete**;
-**Phase 7 (budget screening) part-run and paused mid-grid** — see the resume point below
+**Last updated:** 2026-07-29 · second session on the HP Omen · **Phases 0, 5 and 6 complete**;
+**Phase 7 (budget screening) paused with no valid results** — two rounds of external review
+invalidated every number, the fixes are in, the grid needs re-running from scratch
 
 > Read this first. It is the handoff between sessions and between machines. If it looks stale,
 > check `git log` — the truth is the commit history, this file is a summary of it.
@@ -44,7 +45,7 @@ done. **Every arm runs from a config to a run record on real Pythia-160M.**
 
 | | State |
 | --- | --- |
-| Tests | **740 passing** in ~37 s, offline |
+| Tests | **804 passing** in ~40 s, offline |
 | Lint / format | `ruff check .` and `ruff format --check .` both clean |
 | CI | `.github/workflows/ci.yml` — lint, format, tests on push/PR to `main` |
 | Environment | verified end to end: torch 2.13.0+cu126, CUDA available, sm_89 |
@@ -279,69 +280,81 @@ Two smaller things noticed in the same runs:
 
 ---
 
-## 🟡 Phase 7 — IN PROGRESS, paused. Resume here.
+## 🟡 Phase 7 — paused with NO valid results. Resume here.
 
-### Where it stopped
+### The state in one line
 
-Round 1 of the §5.3 screening grid is **complete and committed**: 9 cells on Pythia-160M (dense,
-sequential and joint at S1–S4), one seed, 493 × 512 evaluation window. Records are in
-`outputs/metrics/pythia-160m_*.json` on the Omen only — they are git-ignored.
+**Every screening number this project has produced has been retracted.** Two rounds of external review
+found bugs that invalidated them, all the fixes are applied and pushed, and `outputs/metrics/` is
+deliberately empty. Nothing is known about joint gain right now.
 
-Round 2 was **started and deliberately killed**, so nothing partial exists: S5 and S6 were added to
-`configs/experiments/screening.yaml` but have **not run**. Verified no partial records were written, so
-`skip_existing: true` will resume correctly.
-
-**To resume, one command.** It skips the 9 finished cells and runs the 4 outstanding ones
-(sequential + joint at S5 and S6), roughly 40 minutes:
+### To resume, one command
 
 ```bash
-python scripts/run_scale_sweep.py --config configs/experiments/screening.yaml
-python scripts/summarise_screening.py --model pythia-160m     --budgets s1_30_w8,s2_50_w8,s3_50_w4,s4_70_w4,s5_30_w4,s6_40_w8
+python scripts/run_scale_sweep.py --config configs/experiments/screening.yaml     # 13 cells, ~2 h
+python scripts/summarise_screening.py --model pythia-160m \
+    --budgets s1_30_w8,s2_50_w8,s3_50_w4,s4_70_w4,s5_30_w4,s6_40_w8
 ```
 
-### What round 1 found
+Then the 410M confirmation:
 
-Dense reference **36.97**. Full detail and provenance in
-[findings_log.md](findings_log.md#f-10).
+```bash
+python scripts/run_scale_sweep.py --config configs/experiments/screening_410m.yaml
+```
 
-| Budget | Sequential | Joint | Seq ret. | Joint ret. | Joint gain | Verdict |
-| --- | --- | --- | --- | --- | --- | --- |
-| **S1 30% + W8** | 45.97 | 45.93 | **80.4%** | **80.5%** | +0.06 pp | **ELIGIBLE** |
-| S2 50% + W8 | 161.46 | 163.85 | 22.9% | 22.6% | −0.33 pp | catastrophic |
-| S3 50% + W4 | 250.25 | 256.74 | 14.8% | 14.4% | −0.37 pp | catastrophic |
-| S4 70% + W4 | 4663.88 | 4802.72 | 0.8% | 0.8% | −0.02 pp | catastrophic |
+### Why the numbers were retracted, in order
 
-**§5.3's grid does not contain two usable budgets at 160M.** Only S1 survives. This supersedes the
-pair baked into `main_scale_sweep.yaml` (50% + W8 and 70% + W4) — **both are catastrophic** at the
-smallest model, and since the budget is a controlled variable across scales (§2.5), 160M sets the
-ceiling for all three.
+| Figure | Budget | Cause of retraction |
+| --- | --- | --- |
+| **−4.55 pp** | 30% + W4 | Joint outer loop had no acceptance test, so it discarded better solutions it had already found |
+| **+1.03 pp** | 30% + W4 | The arms minimised **different objectives** — sequential targeted its own intermediate, joint targeted dense |
+| *unknown* | — | Not yet measured on corrected code |
 
-**Joint did not beat sequential at any budget.** Do not read a sign off that: one seed, and §6.3
-requires a gain to exceed the seed spread, which is unmeasured. It is consistent with
-[F-05](findings_log.md#f-05)'s prediction that the mechanism is near-inert at W8, and no more.
+**Every bug pointed the same way: flattering the joint arm.** That belongs in the paper's limitations
+regardless of where the number lands, and it is a reason to hold the next figure loosely too. Full
+detail in [findings_log.md](findings_log.md) F-16 and F-17.
 
-### Why round 2 tests what it tests
+### What the budgets were, before retraction
 
-The original grid never paired W4 with *mild* sparsity — S3 and S4 were 50% and 70%. That gap matters
-because [F-05](findings_log.md#f-05) found W4 is the **only** regime where the joint mechanism is live
-(8.86% mask divergence against 0.46% at W8), so a study with no W4 budget removes the one condition
-under which joint could plausibly differ.
+The frozen pair in [protocol_freeze.md](protocol_freeze.md) is **moderate 30% + W8** and
+**aggressive 30% + W4**. Both survived the first re-run, and the *sequential* arm's retention has been
+stable across every version of the code (≈80% and ≈57%), so the budget choice is unlikely to move. It
+is the joint-versus-sequential difference that has been unstable, not the budgets.
 
-- **S5 = 30% + W4** — the missing cell. Mild sparsity, aggressive precision.
-- **S6 = 40% + W8** — fallback if S5 also collapses. [F-08](findings_log.md#f-08) put it at 58%
-  retention on the pilot window, which is borderline.
+### Nine fixes applied since the last valid run
 
-### The decision waiting at the end
+All pushed. Suite at **804 passing**, lint and format clean.
 
-§5.3 requires **two** budgets frozen before 1B, and §6.3 forbids revisiting the choice once results
-exist. If S5 and S6 both fail, the options are: freeze one budget and drop the budget axis (weakening
-secondary question 2); screen a finer grid; or accept a budget below the catastrophic threshold and
-say so. **That choice is a human one** — it has a judgement clause ("enough separation to test whether
-joint gain changes with scale") and it cannot be revisited later.
+| Fix | What it was |
+| --- | --- |
+| Common reconstruction objective | Arms minimised three different objectives; the direction inflated joint gain |
+| Canonicalise before measuring | Joint accepted a proposal on one weight and packed a different one |
+| Joint incumbent guard | Outer loop accepted every proposal, including worse ones |
+| Dependency-group recapture | Activations captured once per block, so reconstruction was blockwise, not layerwise |
+| Packing reuses solver codes | Conversion refit the grid and re-quantised; `verify_packing` existed and was never called |
+| Mask sparsity as the budget | `measured_sparsity` conflated pruned weights with rounding zeros (~1.8 pp at W4) |
+| Latency gate | Quantised arms were benchmarked through a dequantising path, so timings measured unpacking |
+| Independent reload | Manifest plus `load_packed_model`; the checkpoint could not previously be loaded on its own |
+| `scale_trend` + `METHOD_VERSION` | Analysis entry point was a stub; nothing detected records produced by different code |
 
-Once two budgets are chosen: write them into
-[protocol_freeze.md](protocol_freeze.md), update `main_scale_sweep.yaml` and
-`extended_scale_sweep.yaml`, and confirm on 410M before touching 1B.
+### 🔴 Five decisions waiting, all protocol-level
+
+None of these are code problems and none should be settled by whoever runs the next command.
+
+1. **Paired calibration replicates** replacing the run-seed axis. Blocking: [F-15](findings_log.md#f-15)
+   proved run seeds are inert, so the three-seed protocol yields three identical numbers and a seed
+   spread of exactly zero — which makes §6.3's "must exceed the seed spread" rule vacuous. **There is
+   currently no route to an error bar at all.**
+2. **Move final evaluation to the WikiText-2 test split.** Budgets were selected after seeing
+   validation results, so reporting the headline on validation is selection bias.
+3. **P→Q versus Q→P baseline policy.** `method_definition.md` promises best-of-two; the sweep runs only
+   P→Q. The documents and the grid must agree.
+4. **S6 (40% + W8) as an auxiliary control.** Its retention nearly matches 30% + W4, so running it
+   across scales would separate "compression severity" from "low-bit quantisation changes the mask".
+5. **An external Wanda / SparseGPT / GPTQ sanity anchor** at matched settings on 160M. The only thing
+   that would settle whether ~57% retention is plausible or indicates a remaining implementation gap.
+
+[review_brief.md](review_brief.md) is written for an outside reader and states these as open questions.
 
 ---
 
@@ -363,15 +376,20 @@ Done this session:
   already-compressed prefix*, all five arms as call-order variations on one solver,
   `assert_matched_plans` enforcing §3.11.
 
-Still to do:
+All three items that were outstanding here are now closed:
 
-1. Wire `Pruner` / `Quantiser` / `SequentialCompressor` / `JointCompressor` stage methods to the
-   driver, and register `SEQUENTIAL_QP` in `COMPRESSOR_REGISTRY`.
-2. `convert` — real int4/int8 packing into a deployable artefact, so `is_converted` and
-   `storage_efficiency` mean something.
-3. Decide the scale-rule question above before screening.
+1. **Registered** — `COMPRESSOR_REGISTRY` maps all five methods to the layerwise arms in
+   `compression/arms.py`. The older `Pruner` / `Quantiser` / `SequentialCompressor` /
+   `JointCompressor` classes are *deliberately* left unregistered: they implement the superseded
+   full-model fine-tuning design, and their stage methods still raise. Importable, unrunnable.
+2. **`convert`** — real int2/4/8 packing into `PackedLinear`, reusing the solver's own codes rather
+   than re-quantising, with `verify_packing` on the way out and a manifest so the artefact reloads
+   independently. `is_converted` and `storage_efficiency` now mean something.
+3. **The scale rule** — decided as D3 and recorded in
+   [protocol_freeze.md](protocol_freeze.md#the-three-decisions-that-were-open).
 
-Then Phase 7 (budget screening), Phase 8 (sweep). Full detail and exit tests for every phase:
+What gates Phase 8 is therefore not code. It is the screening re-run and the five protocol decisions
+above. Full detail and exit tests for every phase:
 [implementation_plan.md](implementation_plan.md#phases).
 
 ---
@@ -464,9 +482,12 @@ Full record in [protocol_freeze.md](protocol_freeze.md#environment). Summary:
 - [x] Pin model revision SHAs in all five model configs
 - [x] Probe the real quantisation backend → **`onednn`**, not `x86`
 - [x] **Phase 5 — single-layer compression primitives**, all exit criteria asserted
-- [ ] `python scripts/download_models.py --models pythia-160m`
-- [ ] `python scripts/prepare_data.py --config configs/experiments/pilot.yaml` — first real exercise
-      of the WikiText path
-- [ ] `python scripts/run_dense_baseline.py --config configs/experiments/pilot.yaml` — first real
-      record, on a real model
-- [ ] Phase 6 — the five arms through one shared layerwise driver ← **next**
+- [x] `python scripts/download_models.py --models pythia-160m` — and 410M
+- [x] `python scripts/prepare_data.py` — the WikiText path has now run for real
+- [x] `python scripts/run_dense_baseline.py` — first real record, on a real model
+- [x] **Phase 6 — the five arms through one shared layerwise driver**, verified end to end
+- [x] Two rounds of external code review applied — nine fixes, suite at 804
+- [ ] **Re-run the 160M screening grid on the corrected code** ← **next**, ~2 h, 13 cells
+- [ ] Confirm the two budgets on 410M
+- [ ] Settle the five protocol decisions above — **human calls, not code**
+- [ ] Only then: Pythia-1B

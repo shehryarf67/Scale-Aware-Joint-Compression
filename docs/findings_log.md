@@ -668,6 +668,10 @@ as frozen on current code.
 *2026-07-29 - Pythia-160M `50f5173d` - 493 x 512 window - dense **36.97** - one seed - matched solver
 budgets (96 passes both arms, verified) - **supersedes [F-10](#f-10) and [F-13](#f-13)***
 
+> 🔴 **The joint-gain column below is retracted — see [F-18](#f-18).** Two further faults were found
+> in the comparison itself, and the one with a direction inflated joint gain. The perplexities are
+> retained as the record of what that version of the code produced; the **gain** must not be quoted.
+
 Every earlier screening number was produced before the three algorithmic fixes in
 [F-16](#f-16). All records were deleted and the full grid re-run.
 
@@ -722,6 +726,68 @@ three quantities reach the record and that they add up.
 The distinction is real and visible now: at W4 the numeric sparsity exceeds the mask sparsity by
 roughly 1.8 percentage points (0.3176 against 0.30 at S5), all of it survivors that rounding collapsed
 to zero. **The pruning budget must be verified against `mask_sparsity`.**
+
+---
+
+### F-18 - F-17's joint-gain column is retracted. Three figures, three retractions. {#f-18}
+
+*2026-07-29 - no measurement - **retracts the joint-gain column of [F-17](#f-17)***
+
+A third review round found two more algorithmic faults, both in the comparison itself rather than in
+either arm. F-17's perplexities were produced by code carrying them, so **its joint-gain column is
+withdrawn and there is no number in its place.** The grid was re-started on corrected code and
+deliberately stopped part-way, so no partial records exist and nothing has to be untangled later.
+
+#### The two faults
+
+**B-22 - the arms were minimising different objectives.** Each arm reconstructed against its own
+intermediate weight rather than against the dense weight. Sequential fitted its quantisation step to
+its *pruned* reconstruction; joint fitted to dense throughout. So the two arms were not two solutions
+to one problem -- they were solutions to two different problems, and their losses were not on a common
+scale. `solve` no longer accepts a target; the objective is structurally the dense weight for every
+arm. What legitimately still differs between arms is where the quantisation *grid* comes from, which
+is the actual method distinction.
+
+**B-23 - acceptance compared a different model from the one kept.** The joint arm scored a proposal
+before canonicalising it, then stored the canonicalised version. In fp32 those are not the same
+tensor, so the incumbent guard was choosing between quantities it had not measured consistently.
+`solve` now returns a `SolvedLayer` carrying weight, codes, scales and loss together, so acceptance,
+the recorded objective, evaluation and packing all refer to one object.
+
+#### Direction of the bias, which is the part that matters
+
+B-22 was **not symmetric.** Fitting sequential's second stage to its own intermediate gives it an
+easier target than the dense weight while measuring it against dense, so it is penalised at
+measurement time; joint was already fitting dense and is not. **The bug disadvantaged sequential and
+inflated joint gain.** F-17's +1.03 pp is therefore an upper bound on the truth, not an estimate of
+it -- and it was already sitting exactly on the >= 1.0 pp pre-registered threshold.
+
+#### The pattern is now the finding
+
+| Reported | Budget | Retracted because |
+| --- | --- | --- |
+| **-4.55 pp** | 30% + W4 | Joint outer loop had no acceptance test (B-17) |
+| **+1.03 pp** | 30% + W4 | Arms minimised different objectives (B-22, B-23) |
+| *pending* | 30% + W4 | Not yet measured on corrected code |
+
+**Every bug found so far has pointed the same way: flattering the joint arm.** Four separate faults
+(B-14 unequal solver budgets, B-17 the missing guard, B-22 unequal objectives, B-23 compare-before-
+canonicalise) and not one of them favoured sequential. That is not a coincidence to be explained away
+-- joint is the arm with more moving parts, so it has more places for an unearned advantage to hide,
+and it is the arm the study hopes to find an effect for. **This belongs in the paper's limitations
+whatever the final number is**, and it is a standing reason to treat the next figure as provisional
+until an independent implementation agrees with it.
+
+#### What is *not* retracted
+
+The budget decision. Sequential retention has been stable across every version of the code -- around
+80% at 30% + W8 and around 57% at 30% + W4 -- because none of these bugs touched the sequential arm's
+first stage or the eligibility rule. The frozen pair is therefore expected to hold. **Expected, not
+verified:** the re-run confirms it or it does not.
+
+Also not retracted: [F-07](#f-07) (the mask comparison group, 6.7x), [F-05](#f-05) (W4 is the only
+regime where the mask mechanism is live), and [F-15](#f-15) (the run seed is inert). None depends on
+the arm comparison.
 
 ---
 
@@ -780,6 +846,8 @@ recording.
 | B-21 | `mask_sparsity` and `zero_code_fraction` were never serialised ([F-17](#f-17)) | Both read 0.0000 in every record, so the pruning budget could only be checked against the conflated numeric sparsity |
 | B-20 | Dense-reference lookup ignored the evaluation window | Normalised a 64x256 run against a 493x512 baseline and reported the resulting ratio as retention |
 | B-16 | Three-seed confirmatory protocol produces three identical numbers ([F-15](#f-15)) | The paper would report a seed spread of zero as though the protocol had been followed, and §6.3's practical-importance rule would be vacuous |
+| B-22 | Every arm reconstructed against its own intermediate weight, not the dense weight ([F-18](#f-18)) | The arms solved two different problems and their losses were not on a common scale; the asymmetry penalised sequential and **inflated joint gain** |
+| B-23 | Joint acceptance compared pre-canonicalisation weights, then stored the canonicalised ones ([F-18](#f-18)) | The incumbent guard chose between quantities it had not measured consistently, and the packed artefact was not the object that won |
 | B-13 | Sweep cells inherited the base config's model revision | Every cell pinned to the *first* model's SHA — fails to load, or silently loads the wrong weights if the SHA exists in both repos |
 
 Two of these were **masked by tests that should have caught them**: B-07 (the test disabled
