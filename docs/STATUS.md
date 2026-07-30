@@ -298,9 +298,35 @@ execution order.
 all of it is on the validation split, all of it predates the B-22/B-23 corrections, and none of it has
 an uncertainty estimate. The frozen budgets are *not* reopened.
 
-**The screening re-run is no longer the next step.** A1 §7 puts the **external correctness anchors
-first**: if Wanda and SparseGPT disagree with us, the screening grid would have spent two hours
-measuring a pipeline we do not trust.
+### ✅ Screening re-run complete — the frozen budgets hold for a third time
+
+**[F-23](findings_log.md#f-23).** 13 cells, 2 h 08 m, on code that has passed three independent
+correctness anchors. `outputs/metrics/` holds all 13 records.
+
+| Budget | Seq ret. | **Joint gain** | Verdict |
+| --- | --- | --- | --- |
+| **S1** 30% + W8 | **80.2%** | +0.07 pp | **ELIGIBLE** |
+| **S5** 30% + W4 | **56.7%** | **+1.08 pp** | **ELIGIBLE** |
+| **S6** 40% + W8 | **54.4%** | −0.23 pp | **ELIGIBLE** |
+| S2 / S3 / S4 | 20.8 / 14.5 / 0.7% | — | catastrophic |
+
+Sequential retention across three rewrites of the solver: S1 at 80.4 → 80.3 → **80.2%**, S5 at
+56.0 → 57.1 → **56.7%**. The frozen pair is unchanged.
+
+**S6 answered the mechanism question for free.** S5 and S6 are quality-matched by different recipes —
+56.7% against 54.4% — yet the joint gain is +1.08 pp at W4 and −0.23 pp at W8. Among all three eligible
+budgets, both W8 budgets give gains indistinguishable from zero and only W4 gives a gain. That is the
+discrimination A1 §5.4 commissioned a 12-run control to make, and it **supports a precision-specific
+mechanism rather than a compression-severity effect**.
+
+**The headline: S5 joint gain +1.08 pp**, against the retracted +1.03 pp. The prediction on record was
+that it would come out *lower*, since the B-22 fix removed a joint-flattering bias. It did not move —
+that prediction was wrong. What the stability buys is real though: two very different code versions
+landing on the same figure is evidence the effect is not a bug artefact, which could not be said of
+either retraction.
+
+**Still exploratory.** Barely over the ≥1.0 pp threshold, one calibration draw so no error bar, and the
+validation split is a declared selection surface. The confirmatory answer comes from steps 9–10.
 
 ### ✅ First anchor passed — the mask is confirmed correct
 
@@ -407,10 +433,9 @@ it claims to; it says nothing about absolute quality against published work (A1 
 | 3b1 | **Exact-optimum reconstruction anchor** | ✅ **PASSES** — [F-20](findings_log.md#f-20) |
 | 3b2 | Arm-dependent solver slack | ✅ **measured** — [F-21](findings_log.md#f-21); sign is safe, magnitude open |
 | 3b3 | External SparseGPT comparison | ✅ **done** — [F-22](findings_log.md#f-22); our numbers are credible |
-| **4** | **Create and fingerprint the calibration draws** | ⬜ **next** |
-| 4 | Create and fingerprint the five fixed calibration draws | ⬜ |
-| 5 | Re-run validation screening on the corrected implementation | ⬜ |
-| 6 | Run both sequential orders (P→Q, Q→P) on validation | ⬜ |
+| 4 | Calibration replicate axis, **R=8 / 8 / 5** | ✅ **done** — `05008dc`, 37 tests |
+| 5 | Re-run the 160M validation screening | ✅ **done** — [F-23](findings_log.md#f-23) |
+| **6** | **Both sequential orders (P→Q, Q→P) on validation** | ⬜ **next** |
 | 7 | Freeze the winning order per (model, budget) | ⬜ |
 | 8 | Run the reduced S6 mechanistic control (12 runs) | ⬜ |
 | 9 | Freeze the entire confirmatory configuration | ⬜ |

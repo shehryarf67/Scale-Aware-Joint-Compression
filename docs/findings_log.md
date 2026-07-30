@@ -668,7 +668,7 @@ as frozen on current code.
 *2026-07-29 - Pythia-160M `50f5173d` - 493 x 512 window - dense **36.97** - one seed - matched solver
 budgets (96 passes both arms, verified) - **supersedes [F-10](#f-10) and [F-13](#f-13)***
 
-> 🔴 **The joint-gain column below is retracted — see [F-18](#f-18).** Two further faults were found
+> 🔴 **Superseded by [F-23](#f-23); the joint-gain column below was already retracted by [F-18](#f-18).** Two further faults were found
 > in the comparison itself, and the one with a direction inflated joint gain. The perplexities are
 > retained as the record of what that version of the code produced; the **gain** must not be quoted.
 
@@ -726,6 +726,102 @@ three quantities reach the record and that they add up.
 The distinction is real and visible now: at W4 the numeric sparsity exceeds the mask sparsity by
 roughly 1.8 percentage points (0.3176 against 0.30 at S5), all of it survivors that rounding collapsed
 to zero. **The pruning budget must be verified against `mask_sparsity`.**
+
+---
+
+### F-23 - Screening on anchored code. The frozen budgets hold, and S6 answers the mechanism question {#f-23}
+
+*2026-07-30 - Pythia-160M `50f5173d` - 493 x 512 **validation** window, dense **36.9741** - 128
+calibration sequences from train, one draw - `METHOD_VERSION = 4` - **2 h 08 m**, 13 cells -
+**supersedes [F-17](#f-17)***
+
+The first screening grid produced by code that has passed three independent correctness anchors
+([F-19](#f-19), [F-20](#f-20), [F-22](#f-22)).
+
+| Budget | Sparsity | Bits | Seq ppl | Joint ppl | Seq ret. | Joint ret. | **Joint gain** | Verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **S1** | 30% | W8 | 46.10 | 46.06 | **80.2%** | 80.3% | **+0.07 pp** | **ELIGIBLE** |
+| S2 | 50% | W8 | 177.76 | 175.48 | 20.8% | 21.1% | +0.27 pp | catastrophic |
+| S3 | 50% | W4 | 254.53 | 240.99 | 14.5% | 15.3% | +0.82 pp | catastrophic |
+| S4 | 70% | W4 | 5041.61 | 5895.00 | 0.7% | 0.6% | −0.11 pp | catastrophic |
+| **S5** | 30% | W4 | 65.26 | **64.04** | **56.7%** | **57.7%** | **+1.08 pp** | **ELIGIBLE** |
+| **S6** | 40% | W8 | 67.93 | 68.22 | **54.4%** | 54.2% | **−0.23 pp** | **ELIGIBLE** |
+
+#### The frozen budgets survive a third time
+
+The same three budgets are eligible and the same two stay frozen, so
+[protocol_freeze.md](protocol_freeze.md) is unchanged. Sequential retention across every version of
+this code:
+
+| Budget | F-14 | F-17 | **F-23** |
+| --- | --- | --- | --- |
+| S1 30% + W8 | 80.4% | 80.3% | **80.2%** |
+| S5 30% + W4 | 56.0% | 57.1% | **56.7%** |
+
+Within half a percentage point across three rewrites of the solver. None of the retracted bugs touched
+the sequential arm's first stage, and this is what that looks like.
+
+#### 🔵 S6 answers the question A1 planned a separate experiment for
+
+**S5 and S6 are quality-matched by two different recipes, and only the low-bit one shows a joint gain.**
+
+| | Sparsity | Bits | Seq retention | Joint gain |
+| --- | --- | --- | --- | --- |
+| **S5** | 30% | **W4** | 56.7% | **+1.08 pp** |
+| **S6** | 40% | **W8** | 54.4% | **−0.23 pp** |
+
+Sequential retention differs by 2.3 pp — comparable damage from very different settings — yet the joint
+gain differs by 1.31 pp and changes sign. Among all three *eligible* budgets the pattern is clean: both
+W8 budgets give gains indistinguishable from zero (+0.07, −0.23) and the only W4 budget gives +1.08.
+
+This is exactly the discrimination [A1 §5.4](protocol_amendment_a1.md) commissioned a 12-run control to
+make: **it supports a precision-specific mechanism rather than a compression-severity effect.** It is
+what [F-05](#f-05) predicts from mask divergence of 8.86% at W4 against 0.46% at W8.
+
+**It arrived free, as a by-product of screening**, which is worth noting because A1 flagged S6 as the
+weakest of its five decisions on the "would this have been justified before seeing results" test. It no
+longer costs anything at 160M. The 410M half and the paired replicates are still outstanding.
+
+**Do not over-read it.** One draw, one model, validation split. The catastrophic budgets do *not*
+support the same pattern — S2 is W8 with +0.27 and S4 is W4 with −0.11 — but at 21% and 0.6% retention
+those models are rubble and the differences carry no information.
+
+#### The headline figure, and a prediction that failed
+
+**S5 joint gain is +1.08 pp, against the retracted +1.03 pp.**
+
+The prediction on record before this run was that it would come out *below* +1.03, since the B-22
+correction removed a bias that flattered joint. It did not move. That prediction was wrong.
+
+What the stability does buy: the figure survived a rewrite that changed the reconstruction objective,
+added an acceptance guard, fixed activation grouping, and altered the packing path. **Two very
+different code versions landing on +1.03 and +1.08 is genuine evidence the effect is not a bug
+artefact** — which could not be said of either retracted number.
+
+What it does not buy:
+
+- it still sits **barely over** the pre-registered ≥ 1.0 pp threshold, the same discomfort F-17 recorded;
+- **no uncertainty estimate** — one calibration draw, by design for screening;
+- **validation split**, which A1 §4 declares a selection surface.
+
+One consideration that cuts *toward* joint: [F-21](#f-21) measured the solver as handling the joint mask
+**less** well (efficiency 0.5631 against 0.6409), so solver slack works against joint here. If anything
++1.08 understates.
+
+#### Two incidental observations, both worth keeping
+
+**Equal wall-clock corroborates the matched solver budgets.** Every compressed cell took ~9.3 minutes,
+joint and sequential alike. §3.11 requires matched optimisation budgets and B-14 was a violation of it;
+equal wall-clock is independent evidence the fix holds in practice and not only in the step counter.
+One outlier: sequential S3 took 20.6 min against ~9.3 for everything else, cause unknown, result
+consistent with its neighbours.
+
+**Dense perplexity is not bit-reproducible across thread configurations.** This run measured dense at
+**36.9741**; the [F-22](#f-22) anchor measured **36.9744** on the identical model and identical data an
+hour earlier. A relative difference of 8e-6, from floating-point reduction order under a different CPU
+thread count. Negligible in itself — but dense perplexity is the *denominator of every retention
+figure*, so retention is reproducible to about four significant figures rather than exactly. Worth
+stating before someone treats a 0.01 pp retention difference as signal.
 
 ---
 
