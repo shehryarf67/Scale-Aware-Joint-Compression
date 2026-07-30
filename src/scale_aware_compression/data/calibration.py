@@ -200,13 +200,13 @@ def load_calibration_set(
     drawn = select_calibration_indices(
         len(dataset),
         total_to_draw,
-        seed=config.calibration_seed,
+        seed=config.effective_calibration_seed,
         exclude_below=exclude_below,
     )
 
     # Split the draw deterministically, using the same fixed seed. Interleaving rather than
     # slicing would correlate the held-out set with position in the corpus.
-    shuffler = random.Random(config.calibration_seed + 1)
+    shuffler = random.Random(config.effective_calibration_seed + 1)
     shuffled = list(drawn)
     shuffler.shuffle(shuffled)
     calibration_indices = sorted(shuffled[:requested])
@@ -227,7 +227,7 @@ def load_calibration_set(
         num_samples=len(calibration_indices),
         sequence_length=config.sequence_length,
         split=config.calibration_split,
-        seed=config.calibration_seed,
+        seed=config.effective_calibration_seed,
         indices_fingerprint=_fingerprint_indices(calibration_indices),
         token_fingerprint=fingerprint_token_ids(calibration_dataset.token_ids()),
         num_heldout_samples=len(heldout_indices),
@@ -288,7 +288,7 @@ def cache_calibration_set(
     base = Path(output_dir) if output_dir is not None else DEFAULT_DATA_DIR / "calibration"
     name = (
         f"{config.dataset}_{config.calibration_split}_{summary.num_samples}"
-        f"_len{config.sequence_length}_seed{config.calibration_seed}"
+        f"_len{config.sequence_length}_seed{config.effective_calibration_seed}"
     )
     directory = base / "".join(
         character if character.isalnum() or character in "._-" else "-" for character in name

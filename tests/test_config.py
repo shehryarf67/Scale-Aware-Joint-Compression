@@ -486,8 +486,12 @@ class TestShippedConfigs:
         sweep = load_config(configs_dir / "experiments" / "main_scale_sweep.yaml")
         validation = load_config(configs_dir / "experiments" / "qwen_validation.yaml")
         assert sweep.sweep.budget_overrides == validation.sweep.budget_overrides
-        assert sweep.sweep.seeds == validation.sweep.seeds
         assert sweep.sweep.methods == validation.sweep.methods
+        # The replicate count, not the seed list. A1 §5.1 withdrew the seed axis as inert (F-15), so
+        # matching on `seeds` would now pass with both empty while the two configs ran different
+        # numbers of calibration draws -- which is exactly the mismatch this test exists to catch.
+        assert sweep.sweep.replicates == validation.sweep.replicates
+        assert sweep.sweep.seeds == validation.sweep.seeds
 
 
 class TestSweepScope:

@@ -145,9 +145,26 @@ The run-seed axis is **withdrawn**. It is replaced by **paired calibration repli
 calibration draws, where replicate *r* is used by **every arm** in that comparison — sequential, Q→P
 and joint alike.
 
-```yaml
-calibration_replicates: [1729, 2718, 3141, 5772, 8111]
+Implemented 2026-07-30 as `constants.CALIBRATION_REPLICATE_SEEDS`:
+
+```python
+CALIBRATION_REPLICATE_SEEDS = (1234, 2718, 3141, 5772, 8111, 1729, 4669, 6180)
 ```
+
+Selected per run by `data.calibration_replicate`, and swept by `sweep.replicates`.
+
+**Replicate 0 is 1234 — `DEFAULT_SEED` — deliberately, and this differs from the illustrative list
+first drafted above.** Every measurement this project has already taken used that seed (calibration
+fingerprint `0384621bc22c43f2` at 128 sequences). Had replicate 0 used a fresh seed, none of F-19
+through F-22 would be comparable with the confirmatory runs and all four anchors would have to be
+re-run to mean anything. Continuity with the existing record is worth more than matching a list that
+was illustrative when written.
+
+**The order is load-bearing and the tuple is append-only.** §6 sets R=8 at 160M and 410M but R=5 at
+1B, and the smaller R takes the **first** R entries — so the 1B draws are a strict subset of the
+others rather than a different set. Replicate 3 therefore means the same calibration draw at every
+scale, which is what lets a scale trend be read as a scale trend. Reordering or inserting would
+silently change which draw a completed run used relative to its siblings.
 
 - **R is set per scale, decided 2026-07-30:**
 

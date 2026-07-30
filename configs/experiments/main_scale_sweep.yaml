@@ -65,12 +65,30 @@ sweep:
   budgets:
     - moderate
     - aggressive
-  # Three seeds per cell. The spread across them is the error bar, and a joint gain smaller than
-  # that spread is not a finding.
-  seeds:
-    - 1234
-    - 2345
-    - 3456
+  # Eight PAIRED CALIBRATION REPLICATES per cell, per Amendment A1 §5.1 and §6.
+  #
+  # This replaces the three-seed protocol, which measured nothing: the pipeline is deterministic
+  # post-training reconstruction, so two runs at different run seeds produce bit-identical output
+  # (findings_log.md F-15). Three seeds gave three identical numbers and a seed spread of exactly
+  # zero, which made §6.3's "must exceed the seed spread" clause pass for any nonzero gain.
+  #
+  # A replicate varies the CALIBRATION DRAW, which changes the Gram matrix, hence the mask and the
+  # scales, hence a genuinely different compressed model. Replicate r uses
+  # constants.CALIBRATION_REPLICATE_SEEDS[r], and every arm in a comparison uses the same r -- that
+  # pairing is what §3.11 requires within a comparison and what §6.3 asks for.
+  #
+  # Eight rather than five because the statistical constraint is a cliff, not a slope: at R=5 the best
+  # possible outcome (every replicate agreeing in sign) carries an exact two-sided probability of
+  # 2/2^5 = 0.0625, so no significance claim exists at any effect size. R=8 reaches 0.008.
+  #
+  # Pythia-1B runs five instead, via replicates_by_model below: a 1B replicate costs roughly four
+  # times a 160M one, and that is where the marginal hour stops buying enough power to justify itself.
+  # The smaller count takes the FIRST five seeds, so the 1B draws are a strict subset of these rather
+  # than a different set -- replicate 3 means the same calibration draw at every scale, which is what
+  # lets a scale trend be read as a scale trend.
+  replicates: 8
+  replicates_by_model:
+    pythia-1b: 5
 
   budget_overrides:
     # =============================================================================================

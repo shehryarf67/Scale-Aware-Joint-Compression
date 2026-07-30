@@ -290,4 +290,38 @@ RESULT_CSV_NAME: Final[str] = "results.csv"
 
 DEFAULT_SEED: Final[int] = 1234
 DEFAULT_SEEDS: Final[tuple[int, ...]] = (1234, 2345, 3456)
+"""Superseded run seeds. Retained only so old records remain readable.
+
+The run seed is **inert** under this method: the pipeline is deterministic post-training
+reconstruction, so two runs at different run seeds produce bit-identical output (`findings_log.md`
+F-15). Protocol Amendment A1 §5.1 withdrew this axis and replaced it with
+:data:`CALIBRATION_REPLICATE_SEEDS`.
+"""
+
+CALIBRATION_REPLICATE_SEEDS: Final[tuple[int, ...]] = (
+    1234,
+    2718,
+    3141,
+    5772,
+    8111,
+    1729,
+    4669,
+    6180,
+)
+"""Seeds for the paired calibration replicates that replace the run-seed axis (A1 §5.1).
+
+Each entry selects a different draw of calibration sequences. A different draw gives a different Gram
+matrix, hence a different mask and different scales, hence a genuinely different compressed model --
+which is the variation the run seed failed to produce.
+
+**Replicate 0 is 1234 deliberately.** That is :data:`DEFAULT_SEED`, so replicate 0 reproduces every
+measurement this project has already taken (calibration fingerprint ``0384621bc22c43f2`` at 128
+sequences). Had replicate 0 used a fresh seed, none of F-19 through F-22 would be comparable with the
+confirmatory runs, and the anchors would have to be re-run to mean anything.
+
+**Order is load-bearing.** A1 §6 sets R=8 at 160M and 410M but R=5 at 1B, and the smaller R takes the
+**first** R entries — so the 1B draws are a strict subset of the 160M draws rather than a different
+set. Reordering this tuple silently changes which draws a completed 1B run used relative to its
+smaller siblings, so it must not be reordered or inserted into. Append only.
+"""
 """Seeds used to repeat each sweep cell; the spread across these is the error bar."""

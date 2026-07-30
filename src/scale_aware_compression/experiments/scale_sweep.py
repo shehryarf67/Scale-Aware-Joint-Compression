@@ -45,6 +45,7 @@ class SweepCell:
     seed: int
     sparsity: float
     bits: int
+    replicate: int | None = None
     overrides: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -139,35 +140,57 @@ def build_sweep_plan(config: ExperimentConfig) -> SweepPlan:
     budgets = sweep.budgets or [config.compression.budget_label]
     seeds = sweep.seeds or [config.runtime.seed]
 
+    # A1 §5.1 withdrew the run-seed axis: seeds are inert here (F-15), so replicating over them
+    # produces identical numbers. `sweep.replicates` is the axis that varies the calibration draw and
+    # therefore actually produces a compressed model that differs. When it is unset the sweep falls
+    # back to the seed axis so pre-amendment configs keep working.
+    def replicates_for(model_name: str) -> list[int | None]:
+        """Replicate indices for one model, honouring any per-model override.
+
+        A1 §6 sets 8 at 160M and 410M but 5 at 1B. The reduced count takes the FIRST entries of the
+        seed table, so the smaller set is a strict subset -- replicate 3 is the same calibration draw
+        at every scale, which is what lets a scale trend be read as a scale trend rather than as a
+        change of calibration.
+        """
+        if not sweep.replicates and model_name not in sweep.replicates_by_model:
+            return [config.data.calibration_replicate]
+        count = sweep.replicates_by_model.get(model_name, sweep.replicates)
+        return list(range(count))
+
     if not models or not methods:
         raise ExperimentError("Sweep grid is empty: set sweep.models and sweep.methods")
 
     cells: list[SweepCell] = []
-    for model_name, method, budget_label, seed in product(models, methods, budgets, seeds):
-        spec = get_model_spec(model_name)
-        overrides = _budget_overrides(config, budget_label)
-        sparsity, bits = _resolve_budget(config, method, overrides)
-        cells.append(
-            SweepCell(
-                experiment_id=make_experiment_id(
+    for model_name in models:
+        for method, budget_label, seed, replicate in product(
+            methods, budgets, seeds, replicates_for(model_name)
+        ):
+            spec = get_model_spec(model_name)
+            overrides = _budget_overrides(config, budget_label)
+            sparsity, bits = _resolve_budget(config, method, overrides)
+            cells.append(
+                SweepCell(
+                    experiment_id=make_experiment_id(
+                        model_name=spec.short_name,
+                        method=method,
+                        budget_label=budget_label,
+                        seed=seed,
+                        sparsity=sparsity,
+                        bits=bits,
+                        replicate=replicate,
+                    ),
                     model_name=spec.short_name,
+                    size_label=spec.size_label,
+                    parameter_count=spec.parameter_count,
                     method=method,
                     budget_label=budget_label,
                     seed=seed,
                     sparsity=sparsity,
                     bits=bits,
-                ),
-                model_name=spec.short_name,
-                size_label=spec.size_label,
-                parameter_count=spec.parameter_count,
-                method=method,
-                budget_label=budget_label,
-                seed=seed,
-                sparsity=sparsity,
-                bits=bits,
-                overrides=overrides,
+                    replicate=replicate,
+                    overrides=overrides,
+                )
             )
-        )
 
     plan = SweepPlan(
         cells=cells,
@@ -392,6 +415,7 @@ def build_cell_config(config: ExperimentConfig, cell: SweepCell) -> ExperimentCo
             "experiment": {"id": cell.experiment_id},
             "model": {"name": cell.model_name, "size_label": cell.size_label},
             "runtime": {"seed": cell.seed},
+            "data": {"calibration_replicate": cell.replicate},
             "compression": {
                 "method": cell.method.value
                 if isinstance(cell.method, CompressionMethod)
@@ -445,7 +469,6 @@ def _revision_for(model_name: str, document: dict[str, Any]) -> str | None:
 COMPARABILITY_FIELDS: tuple[tuple[str, str], ...] = (
     ("model_name", "model"),
     ("budget_label", "budget"),
-    ("seed", "seed"),
     ("sparsity", "target sparsity"),
     ("quantisation_bits", "bit width"),
     ("schema_version", "record schema"),
@@ -453,9 +476,22 @@ COMPARABILITY_FIELDS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _replicate_of(record: dict[str, Any]) -> Any:
+    """Return the calibration replicate a record used, or its run seed for pre-A1 records.
+
+    The replicate is what makes a comparison *paired*: arms must be differenced within one draw, never
+    across draws. Falling back to the seed keeps records taken before A1 groupable, and since seeds
+    were inert those records all share one group -- which is the honest representation of a protocol
+    that produced no variation.
+    """
+    data = (record.get("config", {}) or {}).get("data", {}) or {}
+    replicate = data.get("calibration_replicate")
+    return f"rep{replicate}" if replicate is not None else f"seed{record.get('seed')}"
+
+
 def _pair_key(record: dict[str, Any]) -> tuple[Any, ...]:
     """The cell a record belongs to: one model, one budget, one replicate."""
-    return (record.get("model_name"), record.get("budget_label"), record.get("seed"))
+    return (record.get("model_name"), record.get("budget_label"), _replicate_of(record))
 
 
 def _incomparable(sequential: dict[str, Any], joint: dict[str, Any]) -> list[str]:
@@ -469,6 +505,12 @@ def _incomparable(sequential: dict[str, Any], joint: dict[str, Any]) -> list[str
     for key, label in COMPARABILITY_FIELDS:
         if sequential.get(key) != joint.get(key):
             reasons.append(f"{label} differs ({sequential.get(key)} vs {joint.get(key)})")
+
+    if _replicate_of(sequential) != _replicate_of(joint):
+        reasons.append(
+            f"calibration replicate differs ({_replicate_of(sequential)} vs "
+            f"{_replicate_of(joint)}) -- a joint gain must be differenced within one draw"
+        )
 
     def revision(record: dict[str, Any]) -> Any:
         return (record.get("config", {}).get("model", {}) or {}).get("revision")
@@ -569,15 +611,15 @@ def scale_trend(
 
     rows: list[dict[str, Any]] = []
     for key, arms in by_cell.items():
-        model_name, budget_label, seed = key
+        model_name, budget_label, replicate = key
         sequential = arms.get(CompressionMethod.SEQUENTIAL.value)
         joint = arms.get(CompressionMethod.JOINT.value)
         if sequential is None or joint is None:
             LOGGER.info(
-                "%s / %s / seed %s has no complete pair; no gain is defined",
+                "%s / %s / %s has no complete pair; no gain is defined",
                 model_name,
                 budget_label,
-                seed,
+                replicate,
             )
             continue
 
@@ -589,7 +631,7 @@ def scale_trend(
         row: dict[str, Any] = {
             "model_name": model_name,
             "budget_label": budget_label,
-            "seed": seed,
+            "replicate": replicate,
             "targeted_parameters": targeted,
             "total_parameters": joint.get("parameter_count"),
             "sequential_experiment_id": sequential.get("experiment_id"),
@@ -615,7 +657,13 @@ def scale_trend(
         row["metric"] = metric
         rows.append(row)
 
-    rows.sort(key=lambda item: (item["targeted_parameters"], str(item["budget_label"])))
+    rows.sort(
+        key=lambda item: (
+            item["targeted_parameters"],
+            str(item["budget_label"]),
+            str(item["replicate"]),
+        )
+    )
     usable = sum(1 for row in rows if row["comparable"])
     LOGGER.info("Scale trend: %d comparable pair(s) of %d", usable, len(rows))
     return rows

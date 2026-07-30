@@ -47,10 +47,11 @@ sweep:
   budgets:
     - moderate
     - aggressive
-  seeds:
-    - 1234
-    - 2345
-    - 3456
+  # Eight paired calibration replicates, matching main_scale_sweep.yaml. The run-seed axis it used to
+  # carry was withdrawn by Amendment A1 §5.1: seeds are inert under this method (F-15), so three of
+  # them produced three identical numbers. This check only means something if the external model is
+  # compressed and measured under the *same* protocol as the Pythia sweep, replicate count included.
+  replicates: 8
 
   # Identical to main_scale_sweep.yaml. Keep the two in step: a budget that differs between the
   # sweep and the validation makes the transfer check meaningless.
