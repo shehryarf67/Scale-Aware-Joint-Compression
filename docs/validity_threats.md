@@ -508,7 +508,7 @@ local steps), so any change must be applied identically to both arms and re-froz
 | Mask scoring rule not finalised | settled — activation-weighted magnitude on quantised weights (D3) |
 | No automatic check that both arms saw the same module list | closed — `assert_matched_plans` checks coverage, calibration and local steps |
 | Tensor-wide mask ranking deleted whole input columns | **closed** — per-output ranking is now the default; cost was 6.7x perplexity |
-| Absolute retention at 50% on 160M is below published one-shot results | open — not chased down; affects budget choice, not the arm comparison |
+| Absolute retention is below published one-shot results | **closed** — external SparseGPT comparison at matched settings puts us **ahead**, and 77% of the gap is the mask comparison group ([F-22](findings_log.md#f-22)). ~81% at 30% pruning-only is plausible |
 | Solver captures only 0.64 of the achievable objective gain | **characterised** — systematic, 0.57–0.72 across module types ([F-20](findings_log.md#f-20)) |
 | Slack differs between arms and could confound the comparison | **partially closed** — real (7.8 pp gap) but **never inverts mask ranking** (0/96 rows), so the *sign* is safe; magnitude effect unmeasurable because no exact optimum exists for the quantised problem ([F-21](findings_log.md#f-21)) |
 | Mask construction never checked against an independent implementation | **closed** — exact agreement over 84,934,656 weights ([F-19](findings_log.md#f-19)) |

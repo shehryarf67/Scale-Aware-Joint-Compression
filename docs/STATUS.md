@@ -343,6 +343,35 @@ exists for the quantised problem — the closed-form minimiser solves a continuo
 and a discrete grid makes it an integer program. Recorded as a limitation with wording ready for the
 paper.
 
+### ✅ Third anchor: our absolute numbers are credible
+
+**[F-22](findings_log.md#f-22).** `IST-DASLab/sparsegpt`'s `fasterprune`, **unmodified**, matched on
+model, revision, calibration draw, coverage and evaluation loader:
+
+| Arm | Perplexity | Retention |
+| --- | --- | --- |
+| Dense | 36.9744 | 100% |
+| **Ours**, per-output-row | **45.6644** | **80.97%** |
+| Ours, *tensor-wide* (their group) | 59.9617 | 61.66% |
+| Reference SparseGPT | 66.0355 | 55.99% |
+
+**We came out 25 pp ahead, which was a reason for suspicion rather than celebration** — and the
+prediction on record beforehand was the opposite direction, since [F-20](findings_log.md#f-20) had found
+our sweep only captures 0.64 of the achievable gain.
+
+Reading their source found the cause: `fasterprune` thresholds `tmp.flatten()` over a whole
+`(out_features × 128)` block, i.e. a **tensor-wide comparison group**, where ours is per-output-row —
+the difference [F-07](findings_log.md#f-07) already measured at 6.7× on this model. Running our own
+pipeline with *their* group settles it: **77.3% of the 24.98 pp gap is the comparison group**, leaving a
+5.67 pp residual (−9.20% relative perplexity, inside A1's 10% band).
+
+**So ~81% retention at 30% pruning-only is plausible, not inflated** — which closes the question F-20
+left open. It does *not* establish that our reconstruction specifically is competitive; `fasterprune`
+picks its own mask internally and cannot be handed ours without editing it.
+
+The reference checkout lives at `c:/Users/shehr/sajc_external/` — **outside the repo**, so third-party
+code never enters the git index.
+
 <details>
 <summary>The original framing of this blocker, kept for the record</summary>
 
@@ -377,7 +406,8 @@ it claims to; it says nothing about absolute quality against published work (A1 
 | 3a | **Wanda mask-agreement anchor** | ✅ **PASSES** — [F-19](findings_log.md#f-19) |
 | 3b1 | **Exact-optimum reconstruction anchor** | ✅ **PASSES** — [F-20](findings_log.md#f-20) |
 | 3b2 | Arm-dependent solver slack | ✅ **measured** — [F-21](findings_log.md#f-21); sign is safe, magnitude open |
-| **3b3** | External absolute-quality comparison (Wanda/SparseGPT) | ⬜ **next** — approved 2026-07-30 |
+| 3b3 | External SparseGPT comparison | ✅ **done** — [F-22](findings_log.md#f-22); our numbers are credible |
+| **4** | **Create and fingerprint the calibration draws** | ⬜ **next** |
 | 4 | Create and fingerprint the five fixed calibration draws | ⬜ |
 | 5 | Re-run validation screening on the corrected implementation | ⬜ |
 | 6 | Run both sequential orders (P→Q, Q→P) on validation | ⬜ |

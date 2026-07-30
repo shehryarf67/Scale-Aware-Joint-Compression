@@ -80,6 +80,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to an IST-DASLab/sparsegpt checkout. Kept outside this repository.",
     )
     parser.add_argument("--sparsity", type=float, default=0.3, help="Target sparsity for both.")
+    parser.add_argument(
+        "--comparison-group",
+        choices=["output", "tensor"],
+        default="output",
+        help="Comparison group for OUR mask. Defaults to the shipped 'output'. Pass 'tensor' to "
+        "match SparseGPT's own ranking, which thresholds over a whole (rows x 128) column block: "
+        "that is the confound to rule in or out when the two implementations disagree.",
+    )
     parser.add_argument("--output", type=Path, default=None, help="Where to write the JSON report.")
     parser.add_argument("--dry-run", action="store_true", help="Print the plan and exit.")
     return parser
@@ -135,7 +143,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  sparsity  : {arguments.sparsity} (both arms)")
     print(f"  reference : {arguments.sparsegpt_path}")
     print("  matched   : model, revision, calibration, coverage, evaluation")
-    print("  differs   : the compression algorithm only")
+    print(f"  our mask  : {arguments.comparison_group} comparison group")
+    print("  differs   : the compression algorithm (mask rule AND reconstruction)")
     if arguments.dry_run:
         print("\n--dry-run: nothing loaded.")
         return 0
@@ -147,6 +156,7 @@ def main(argv: list[str] | None = None) -> int:
     from scale_aware_compression.compression.masks import build_mask_from_scores
     from scale_aware_compression.compression.pruning import activation_weighted_saliency
     from scale_aware_compression.compression.reconstruct import sweep_reconstruct
+    from scale_aware_compression.constants import MaskComparisonGroup
     from scale_aware_compression.data.calibration import load_calibration_set
     from scale_aware_compression.data.loaders import build_evaluation_dataloader
     from scale_aware_compression.evaluation.perplexity import compute_perplexity
@@ -158,6 +168,7 @@ def main(argv: list[str] | None = None) -> int:
     from scale_aware_compression.models.loader import load_model_and_tokenizer
 
     sparsity = float(arguments.sparsity)
+    comparison_group = MaskComparisonGroup(arguments.comparison_group)
     results: dict[str, dict] = {}
 
     # --- dense reference -------------------------------------------------------------------------
@@ -237,7 +248,9 @@ def main(argv: list[str] | None = None) -> int:
             gram = statistics[name].gram().detach().to("cpu", torch.float32)
             norms = statistics[name].column_norms().detach().to("cpu")
             mask = build_mask_from_scores(
-                activation_weighted_saliency(weight, norms), sparsity=sparsity
+                activation_weighted_saliency(weight, norms),
+                sparsity=sparsity,
+                comparison_group=comparison_group,
             )
             outcome = sweep_reconstruct(
                 gram,
@@ -324,6 +337,7 @@ def main(argv: list[str] | None = None) -> int:
         "model": config.model.name,
         "revision": config.model.revision,
         "target_sparsity": sparsity,
+        "our_comparison_group": arguments.comparison_group,
         "calibration_fingerprint": calibration.summary.token_fingerprint,
         "results": results,
         "retention_gap_pp": retention_gap_pp,
@@ -332,7 +346,10 @@ def main(argv: list[str] | None = None) -> int:
         "reference": "IST-DASLab/sparsegpt SparseGPT.fasterprune, unmodified",
     }
     destination = arguments.output or (
-        REPOSITORY_ROOT / "outputs" / "anchors" / f"external_sparsegpt_{config.model.name}.json"
+        REPOSITORY_ROOT
+        / "outputs"
+        / "anchors"
+        / f"external_sparsegpt_{config.model.name}_{arguments.comparison_group}.json"
     )
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(payload, indent=2), encoding="utf-8")

@@ -729,6 +729,105 @@ to zero. **The pruning budget must be verified against `mask_sparsity`.**
 
 ---
 
+### F-22 - External SparseGPT comparison: our absolute numbers are credible {#f-22}
+
+*2026-07-30 - Pythia-160M `50f5173d` - 493 x 512 **validation** window, dense **36.9744** - 128
+calibration sequences from train, fingerprint `b0e766b25fdd6536` - 30% sparsity, pruning-only -
+reference is `IST-DASLab/sparsegpt` `SparseGPT.fasterprune`, **unmodified** - **closes A1 §5.5b2***
+
+The only check that speaks to *absolute* quality rather than internal consistency. Matched on model,
+revision, calibration draw, module coverage and evaluation loader; the compression algorithm is the
+only unmatched variable.
+
+| Arm | Perplexity | Retention |
+| --- | --- | --- |
+| Dense | **36.9744** | 100% |
+| **Ours**, per-output-row mask + sweep | **45.6644** | **80.97%** |
+| **Ours**, *tensor-wide* mask + sweep | **59.9617** | **61.66%** |
+| **Reference SparseGPT**, unmodified | **66.0355** | **55.99%** |
+
+All at measured sparsity 0.2997-0.3000.
+
+#### We beat the canonical implementation by 25 points, and that was a reason for suspicion
+
+The raw gap is **+24.98 pp retention** in our favour, **-30.85%** relative perplexity -- eight times the
+A1 alarm threshold. A result that flattering against a well-cited reference is far more likely to be a
+misconfiguration than a genuine win, so it was chased rather than reported.
+
+**Predicted direction was wrong.** [F-20](#f-20) found our sweep captures only 0.6409 of the achievable
+objective gain, so the expectation on record before running this was that SparseGPT would come out
+*ahead*. It did not, by a wide margin, and in the direction that most needed scepticism.
+
+#### The cause, read from their source and then measured
+
+`fasterprune` selects its mask like this:
+
+```python
+tmp = W1**2 / (torch.diag(Hinv1).reshape((1, -1))) ** 2
+thresh = torch.sort(tmp.flatten())[0][int(tmp.numel() * sparsity)]
+mask1 = tmp <= thresh
+```
+
+`W1` is `(out_features, 128)` and `tmp.flatten()` thresholds **jointly across all output rows** within
+each 128-column block. That is a tensor-wide comparison group. Ours is **per-output-row** -- and
+[F-07](#f-07) had already measured that exact difference as worth 6.7x perplexity on this model, because
+tensor-wide ranking lets a low-energy input column be deleted in every row at once.
+
+**So the control was to run our own pipeline with their comparison group.** Result:
+
+| | Retention gap | Share of the 24.98 pp |
+| --- | --- | --- |
+| Explained by the comparison group | **19.31 pp** | **77.3%** |
+| Residual after matching it | 5.67 pp | 22.7% |
+
+Residual relative perplexity is **-9.20%**, just inside A1's 10% alarm band.
+
+**Three-quarters of the gap is the mask comparison group.** Not our reconstruction, and not a defect in
+either implementation -- theirs is their *documented default*, and SparseGPT is published on models like
+OPT-175B where a 160M model's lack of redundancy is not a factor. This is an external corroboration of
+[F-07](#f-07) from a direction we did not choose.
+
+#### The residual 5.67 pp, and what it is not
+
+Not separable from this run. The remaining candidates:
+
+* **the criterion.** Theirs is `w^2 / [H^-1]^2_jj`; ours is Wanda's `|w| * ||X_j||_2`. The Wanda paper
+  reports its criterion matching or beating SparseGPT at moderate sparsity, so a residual in this
+  direction is consistent with published work rather than surprising.
+* **the pool shape.** Their threshold is per 128-column block, ours is over the whole tensor -- so their
+  mask is *more* constrained (exactly 30% per block), which should if anything help them.
+* **the reconstruction.** Cannot be isolated here, because `fasterprune` chooses its mask internally and
+  cannot be handed an external one without editing it, which would forfeit running it unmodified.
+
+#### What this settles
+
+**Our absolute retention is not implausibly high.** ~81% at 30% pruning-only is what a per-output-row
+Wanda mask plus error compensation produces, it reproduces bit-for-bit across runs, and when matched on
+comparison group it sits within ~9% relative perplexity of the canonical SparseGPT. The open question
+from [F-20](#f-20) -- "is ~57% retention plausible or does it indicate a remaining implementation gap?"
+-- is answered: **plausible.**
+
+**What it does not settle:** whether our *reconstruction* specifically is competitive. That would need
+their sweep driven by our mask, which their code does not permit without modification.
+
+#### Three faults in the driver, all of which would have produced numbers rather than errors
+
+Recorded because the pattern is the point. Only the second one crashed.
+
+| Fault | Would have looked like |
+| --- | --- |
+| Live KV cache across block replays (B-28) | a slightly different algorithm |
+| `DatasetSummary.token_fingerprint` -- wrong attribute | *(crashed; the harmless kind)* |
+| `blocks[0] = Catcher(...)` on a **copy** (B-29) | SparseGPT run on **zero** calibration data |
+
+The third is the instructive one. Every published driver uses that swap trick, because in their repos
+`model.decoder.layers` is the live `nn.ModuleList`. Our `get_decoder_blocks` returns `list(current)` --
+a copy -- so the assignment rebound a throwaway list while the model went on calling the real block.
+**The only reason it surfaced is an empty-capture guard added an hour earlier for unrelated reasons.**
+Without it, SparseGPT would have pruned against nothing and the number would have been reported.
+
+---
+
 ### F-21 - Solver slack IS arm-dependent, but it never inverted a mask ranking {#f-21}
 
 *2026-07-30 - Pythia-160M `50f5173d` - calibration fingerprint `b0e766b25fdd6536` - 30% sparsity, joint
@@ -1092,6 +1191,8 @@ recording.
 | B-25 | The Wanda anchor's own tie test asked whether a disagreement sat on a score equal to our float32 prune threshold ([F-19](#f-19)) | The tie exists in float64 and float32 has already broken it, so the test called 2 of 4 precision-driven swaps genuine faults and returned INVESTIGATE on a pipeline that was correct |
 | B-26 | The reconstruction anchor sampled modules by a plain stride ([F-20](#f-20)) | `48 // 6 == 8` and a block has four target modules in fixed order, so all six samples were `attention.query_key_value` and no MLP projection was ever checked -- a confident PASS over a quarter of the model |
 | B-27 | The arm-slack metric was named `attributable_joint_benefit` and printed as "1.0 = entirely real" ([F-21](#f-21)) | On a run where every row's advantage was negative it read +0.6425 and invited "64% of the joint gain is real", when it was the ratio of two disadvantages meaning the sweep overstates joint's penalty by 1.56x |
+| B-28 | Reference SparseGPT driver replayed blocks with `use_cache=True` and a live `Cache` ([F-22](#f-22)) | The cache would accumulate across replays, growing the key/value length and silently changing the activations SparseGPT fits to. Caught before the reference stage ran |
+| B-29 | `blocks[0] = Catcher(...)` mutated a **copy**, because `get_decoder_blocks` returns `list(current)` ([F-22](#f-22)) | The model kept calling the real block, so zero calibration inputs were captured; SparseGPT would have pruned against nothing and still produced a perplexity. Only an empty-capture guard turned it into an error |
 | B-13 | Sweep cells inherited the base config's model revision | Every cell pinned to the *first* model's SHA — fails to load, or silently loads the wrong weights if the SHA exists in both repos |
 
 Two of these were **masked by tests that should have caught them**: B-07 (the test disabled
