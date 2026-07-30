@@ -371,6 +371,14 @@ def _run_reference_sparsegpt(
 
     model.eval()
 
+    # GPT-NeoX passes `layer_past` (a Cache) and `use_cache=True` into every block. This driver
+    # *replays* each block over the captured inputs, and a live cache would accumulate across replays
+    # -- growing the key/value length and silently changing the activations SparseGPT then fits to.
+    # Their own opt_sequential disables caching for exactly this reason. Restored afterwards so the
+    # subsequent perplexity evaluation is unaffected.
+    previous_use_cache = getattr(model.config, "use_cache", None)
+    model.config.use_cache = False
+
     captured: list[tuple] = []
 
     class Catcher(nn.Module):
@@ -385,16 +393,24 @@ def _run_reference_sparsegpt(
             raise _StopForwardError
 
     blocks[0] = Catcher(blocks[0])
-    with torch.no_grad():
-        for batch in batches:
-            payload = {
-                key: value.to(device)
-                for key, value in batch.items()
-                if key in {"input_ids", "attention_mask"} and hasattr(value, "to")
-            }
-            with contextlib.suppress(_StopForwardError):
-                model(**payload)
-    blocks[0] = blocks[0].inner
+    try:
+        with torch.no_grad():
+            for batch in batches:
+                payload = {
+                    key: value.to(device)
+                    for key, value in batch.items()
+                    if key in {"input_ids", "attention_mask"} and hasattr(value, "to")
+                }
+                with contextlib.suppress(_StopForwardError):
+                    model(**payload)
+    finally:
+        blocks[0] = blocks[0].inner
+
+    if not captured:
+        raise SystemExit(
+            "Captured no inputs to the first decoder block. The block signature or call convention "
+            "has changed; the reference comparison would otherwise prune against nothing."
+        )
 
     for index, block in enumerate(blocks):
         linears = {
@@ -437,6 +453,9 @@ def _run_reference_sparsegpt(
                     advanced = advanced[0]
                 captured[position] = (advanced.detach(), kwargs)
         LOGGER.info("reference SparseGPT: block %d done (%d linears)", index, len(linears))
+
+    if previous_use_cache is not None:
+        model.config.use_cache = previous_use_cache
 
 
 class _StopForwardError(Exception):
