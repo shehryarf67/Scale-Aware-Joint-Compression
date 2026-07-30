@@ -147,6 +147,7 @@ class WandaAnchorReport:
     target_sparsity: float
     norms: list[ColumnNormComparison] = field(default_factory=list)
     masks: list[MaskComparison] = field(default_factory=list)
+    precision_divergence: list[MaskComparison] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -171,16 +172,36 @@ class WandaAnchorReport:
 
     @property
     def masks_agree(self) -> bool:
-        """True when every mask disagreement is explained by tied scores."""
-        return all(item.explained_by_ties for item in self.masks)
+        """True when the two selectors agree exactly on identical norms.
+
+        ``self.masks`` holds the **matched-norm** comparison: both sides fed the same float64 norms,
+        so the only thing under test is the selection. Exact agreement is the right bar there, and
+        ties cannot excuse anything, because identical inputs must give identical output.
+        """
+        return bool(self.masks) and all(item.differing_positions == 0 for item in self.masks)
+
+    @property
+    def precision_sensitive_positions(self) -> int:
+        """Positions where float32 versus float64 norms flip the selection.
+
+        Informational, not a defect. Two weights whose scores tie in float64 sit within a couple of
+        ULPs in float32, and which one survives is then arbitrary. Reported because the count is a
+        useful measure of how close the ranking runs to its own precision floor -- a large number
+        would mean the mask is not reproducible across arithmetic, which *would* matter.
+        """
+        return sum(item.differing_positions for item in self.precision_divergence)
 
     @property
     def passes(self) -> bool:
         """The anchor's verdict.
 
-        Deliberately strict, and it can afford to be: unlike the SparseGPT anchor, this one compares
-        two implementations of the *same* formula, so exact agreement is the correct expectation and
-        anything else is a defect in one of them.
+        Deliberately strict, and it can afford to be: this compares two implementations of the *same*
+        formula, so on identical inputs exact agreement is the only acceptable result.
+
+        ``precision_sensitive_positions`` deliberately does **not** gate the verdict. Failing the
+        anchor because float32 and float64 break a tie differently would be failing it on arithmetic
+        rather than on a defect -- and it would train us to ignore the one signal the anchor exists
+        to produce.
         """
         return bool(self.masks) and self.norms_agree and self.masks_agree
 
@@ -195,8 +216,10 @@ class WandaAnchorReport:
             "masks_agree": self.masks_agree,
             "total_differing_positions": self.total_differing_positions,
             "worst_overlap": self.worst_overlap,
+            "precision_sensitive_positions": self.precision_sensitive_positions,
             "column_norms": [item.to_dict() for item in self.norms],
             "masks": [item.to_dict() for item in self.masks],
+            "precision_divergence": [item.to_dict() for item in self.precision_divergence],
             "notes": list(self.notes),
         }
 
@@ -206,9 +229,11 @@ class WandaAnchorReport:
             f"Wanda mask-agreement anchor at {self.target_sparsity:.0%} sparsity",
             f"  modules compared      : {self.modules_compared}",
             f"  column norms agree    : {self.norms_agree}",
-            f"  masks agree           : {self.masks_agree}",
+            f"  masks agree (matched) : {self.masks_agree}",
             f"  differing positions   : {self.total_differing_positions}",
             f"  worst module overlap  : {self.worst_overlap:.6f}",
+            f"  precision-sensitive   : {self.precision_sensitive_positions} "
+            f"(float32 vs float64 norms; informational)",
             f"  VERDICT               : {'PASS' if self.passes else 'INVESTIGATE'}",
         ]
         offenders = sorted(self.masks, key=lambda item: item.overlap)[:5]

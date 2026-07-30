@@ -171,6 +171,11 @@ def main(argv: list[str] | None = None) -> int:
         "Both sides use dense-model activations, isolating the criterion from the "
         "compressed-prefix propagation scheme (which has its own tests)."
     )
+    report.notes.append(
+        "The strict mask comparison feeds both selectors the same float64 norms, so it tests "
+        "selection alone. Norm precision is tested separately, and its effect on the mask is "
+        "reported as precision_sensitive_positions."
+    )
 
     for name in names:
         module = loaded.model.get_submodule(name)
@@ -180,10 +185,21 @@ def main(argv: list[str] | None = None) -> int:
 
         report.norms.append(compare_column_norms(name, ours_norms, their_norms))
 
-        scores = activation_weighted_saliency(weight, ours_norms)
-        our_mask = build_mask_from_scores(scores, sparsity=float(sparsity))
         their_mask = independent_wanda_mask(weight, their_norms, sparsity=float(sparsity))
-        report.masks.append(compare_masks(name, our_mask, their_mask, scores))
+
+        # The strict test: same norms into both selectors, so any disagreement is a selection
+        # defect and nothing else. Anything weaker conflates a real fault with the fact that
+        # float32 and float64 break exact ties differently.
+        matched_scores = activation_weighted_saliency(weight, their_norms)
+        matched_mask = build_mask_from_scores(matched_scores, sparsity=float(sparsity))
+        report.masks.append(compare_masks(name, matched_mask, their_mask, matched_scores))
+
+        # Informational: what the pipeline actually produces, from its own float32 norms.
+        as_run_scores = activation_weighted_saliency(weight, ours_norms)
+        as_run_mask = build_mask_from_scores(as_run_scores, sparsity=float(sparsity))
+        report.precision_divergence.append(
+            compare_masks(name, as_run_mask, their_mask, as_run_scores)
+        )
 
     print()
     for line in report.summary_lines():

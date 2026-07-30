@@ -400,3 +400,85 @@ class TestAccumulatorHandlesRealCaptureConditions:
 
         comparison = compare_column_norms("layer", perturbed, norms)
         assert not comparison.agrees
+
+
+class TestTheVerdictSeparatesSelectionFromPrecision:
+    """The verdict must turn on selection, not on which way float32 breaks a tie.
+
+    The first real run on Pythia-160M disagreed on 4 positions out of 84,934,656. Feeding both
+    selectors the same float64 norms dropped that to 0, and the disputed pairs turned out to tie
+    exactly in float64 while differing by 2-3 ULPs in float32. So the selectors were identical and
+    the old heuristic verdict was wrong, not the code it was judging.
+    """
+
+    def _tie_pair(self):
+        import torch
+
+        from scale_aware_compression.compression.masks import build_mask_from_scores
+
+        # Two columns with identical scores; exactly one survives, so the choice is arbitrary.
+        weight = torch.tensor([[1.0, 1.0, 5.0, 5.0]])
+        norms = torch.ones(4)
+        scores = weight.abs() * norms.unsqueeze(0)
+        ours = build_mask_from_scores(scores, sparsity=0.25)
+        flipped = ours.clone()
+        first_pruned = (~ours[0]).nonzero(as_tuple=True)[0][0].item()
+        other = 1 - first_pruned if first_pruned in (0, 1) else first_pruned
+        flipped[0, first_pruned] = True
+        flipped[0, other] = False
+        return scores, ours, flipped
+
+    def test_a_matched_norm_disagreement_fails_even_when_tie_explained(self):
+        """Identical inputs must give identical output; a tie is no longer an excuse here."""
+        scores, ours, flipped = self._tie_pair()
+        comparison = compare_masks("layer", ours, flipped, scores)
+        assert comparison.explained_by_ties  # still true as a diagnostic
+
+        report = WandaAnchorReport(target_sparsity=0.25)
+        report.masks.append(comparison)
+        report.norms.append(compare_column_norms("layer", scores[0], scores[0]))
+        assert not report.masks_agree
+        assert not report.passes
+
+    def test_precision_divergence_does_not_gate_the_verdict(self):
+        import torch
+
+        from scale_aware_compression.compression.masks import build_mask_from_scores
+        from scale_aware_compression.compression.pruning import activation_weighted_saliency
+
+        weight = torch.tensor([[1.0, 2.0, 3.0, 4.0]])
+        norms = torch.ones(4)
+        scores = activation_weighted_saliency(weight, norms)
+        mask = build_mask_from_scores(scores, sparsity=0.25)
+
+        report = WandaAnchorReport(target_sparsity=0.25)
+        report.masks.append(compare_masks("layer", mask, mask, scores))
+        report.norms.append(compare_column_norms("layer", norms, norms))
+        # A float32-versus-float64 flip, reported but not fatal.
+        _, ours, flipped = self._tie_pair()
+        report.precision_divergence.append(compare_masks("layer", ours, flipped, scores))
+
+        assert report.precision_sensitive_positions > 0
+        assert report.passes, "precision-sensitive ties must not fail the anchor"
+
+    def test_precision_sensitive_positions_sums_across_modules(self):
+        scores, ours, flipped = self._tie_pair()
+        report = WandaAnchorReport(target_sparsity=0.25)
+        for name in ("a", "b"):
+            report.precision_divergence.append(compare_masks(name, ours, flipped, scores))
+        assert report.precision_sensitive_positions == 2 * int((ours != flipped).sum())
+
+    def test_the_report_exposes_both_comparisons(self):
+        import json
+
+        scores, ours, flipped = self._tie_pair()
+        report = WandaAnchorReport(target_sparsity=0.25)
+        report.masks.append(compare_masks("a", ours, ours, scores))
+        report.norms.append(compare_column_norms("a", scores[0], scores[0]))
+        report.precision_divergence.append(compare_masks("a", ours, flipped, scores))
+
+        payload = json.loads(json.dumps(report.to_dict()))
+        assert payload["passes"] is True
+        assert payload["precision_sensitive_positions"] > 0
+        assert len(payload["precision_divergence"]) == 1
+        assert "precision-sensitive" in "\n".join(report.summary_lines())

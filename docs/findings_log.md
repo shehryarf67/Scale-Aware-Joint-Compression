@@ -729,6 +729,87 @@ to zero. **The pruning budget must be verified against `mask_sparsity`.**
 
 ---
 
+### F-19 - The mask is confirmed correct against an independent implementation {#f-19}
+
+*2026-07-30 - Pythia-160M `50f5173d` - 128 calibration sequences x 512 tokens from **train**,
+fingerprint `b0e766b25fdd6536` - 30% sparsity, per-output comparison group - GPU capture -
+**the first external check this project has ever passed***
+
+The first of Amendment A1's correctness anchors (§5.5a). **It passes.**
+
+| Quantity | Result |
+| --- | --- |
+| Modules compared | **48** (84,934,656 weights) |
+| Column norms agree | **yes** - worst relative difference **6.0e-07** |
+| Masks agree, on matched norms | **yes** - **0 differing positions** |
+| Worst per-module overlap | **1.000000** |
+| Precision-sensitive positions | 4 (informational, explained below) |
+
+Our saliency rule *is* the Wanda criterion, so an independent implementation on matched inputs must
+produce the same mask. It does, exactly, across every targeted weight in the model.
+
+**Why this is worth more than a passing test.** The two paths differ where faults would hide. Ours
+derives `||X_j||_2` from the streamed Gram as `sqrt(diag(X^T X))`; the reference sums column squares
+directly and never forms a Gram, so a streaming fault cannot cancel out. Ours computes an exact prune
+count and scatters; the reference sorts and takes top-k per row. Agreement across two different routes
+is evidence the criterion, the norm accumulation, the module selection and the comparison group are
+all right.
+
+**What it does not cover.** Reconstruction. The error-compensated column sweep is the more intricate
+half and the half where B-22 and B-23 lived; it needs the SparseGPT anchor (§5.5b), which has not run.
+So this closes the mask question and leaves the reconstruction question open.
+
+#### The 4 disagreements, and why they are not a defect
+
+The first run reported 4 differing positions out of 84,934,656 and a verdict of INVESTIGATE. Chased to
+the ground rather than dismissed:
+
+| Module | Disputed pair, float64 score | float32 gap | float32 eps at that magnitude |
+| --- | --- | --- | --- |
+| `layers.10.mlp.dense_4h_to_h` | both `7.898050546646e-01` | 1.79e-07 | 9.40e-08 |
+| `layers.11.attention.query_key_value` | both `1.520126152039e+01` | 4.77e-06 | 1.81e-06 |
+
+Two modules, one row each, two positions each, and **both arms pruned the same count** - the signature
+of a swap, not a systematic divergence. Both pairs **tie exactly in float64** and differ by 2-3 ULPs in
+float32, so which weight survives is decided by arithmetic rather than by importance.
+
+The decisive test was to rebuild our mask from the *reference's* float64 norms: **the disagreement went
+to zero.** Same norms in, identical mask out. So the selection logic is provably identical and the
+divergence is entirely attributable to our float32 Gram versus the reference's float64 accumulation.
+
+**The bug was in the anchor, not in the pipeline.** The original verdict asked whether each
+disagreement sat on a score exactly equal to our prune threshold. That test is wrong in principle: the
+tie exists in float64, and float32 has already broken it by the time the question is asked. It caught
+one of the two positions per module and called the other a fault.
+
+Fixed by separating the two questions, which is the design it should have had from the start:
+
+- the **strict** comparison feeds both selectors the same float64 norms, so a disagreement can only be
+  a selection defect - and ties cannot excuse anything, because identical inputs must give identical
+  output;
+- **norm precision** is compared separately, and its effect on the mask is reported as
+  `precision_sensitive_positions` - which deliberately does **not** gate the verdict, because failing
+  an anchor on arithmetic teaches us to ignore it.
+
+4 precision-sensitive positions in 85 million is worth recording rather than hiding: it says the
+ranking is essentially reproducible across arithmetic. A large count would have meant the mask was not
+stable to precision, which *would* have mattered.
+
+#### Two faults in the anchor itself, found by running it
+
+Both now regression-tested, and both worth noting because they are the kind that make a diagnostic
+quietly useless rather than obviously broken:
+
+| Fault | What it did |
+| --- | --- |
+| Accumulator buffer on CPU, activations on CUDA | Crashed on the first real run. Now reduces on the activation's device and moves only the length-`in_features` result, keeping float64 arithmetic off a consumer GPU |
+| Relative tolerance divided by near-zero norms | A column the calibration barely excites has a norm near zero, so float32 noise became an enormous "relative error". Denominator now floored at a fraction of the largest norm; exactly-dead columns are still counted separately, so a disagreement about *which* columns are dead is not hidden |
+
+A design rule the package enforces with a test: `anchors/` must not import the code it validates.
+A reference that calls our saliency function proves only that the call succeeded.
+
+---
+
 ### F-18 - F-17's joint-gain column is retracted. Three figures, three retractions. {#f-18}
 
 *2026-07-29 - no measurement - **retracts the joint-gain column of [F-17](#f-17)***
@@ -849,6 +930,7 @@ recording.
 | B-22 | Every arm reconstructed against its own intermediate weight, not the dense weight ([F-18](#f-18)) | The arms solved two different problems and their losses were not on a common scale; the asymmetry penalised sequential and **inflated joint gain** |
 | B-23 | Joint acceptance compared pre-canonicalisation weights, then stored the canonicalised ones ([F-18](#f-18)) | The incumbent guard chose between quantities it had not measured consistently, and the packed artefact was not the object that won |
 | B-24 | An OpenMP deadlock mitigation pinned **inter-op threads process-wide** at three entry points | Inter-op can be set only once per process, and `set_cpu_threads` only *logs* the failure to re-set it — so `CpuBenchmark.prepare()` would request the frozen 4 threads, silently run at 1, and record `requested_interop_threads: 4`. The mismatch guard checked intra-op only. Hits the pruning-only arm, which under D1 is the sole route to RQ4 |
+| B-25 | The Wanda anchor's own tie test asked whether a disagreement sat on a score equal to our float32 prune threshold ([F-19](#f-19)) | The tie exists in float64 and float32 has already broken it, so the test called 2 of 4 precision-driven swaps genuine faults and returned INVESTIGATE on a pipeline that was correct |
 | B-13 | Sweep cells inherited the base config's model revision | Every cell pinned to the *first* model's SHA — fails to load, or silently loads the wrong weights if the SHA exists in both repos |
 
 Two of these were **masked by tests that should have caught them**: B-07 (the test disabled

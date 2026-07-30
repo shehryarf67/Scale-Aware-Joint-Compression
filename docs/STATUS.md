@@ -302,13 +302,30 @@ an uncertainty estimate. The frozen budgets are *not* reopened.
 first**: if Wanda and SparseGPT disagree with us, the screening grid would have spent two hours
 measuring a pipeline we do not trust.
 
+### ✅ First anchor passed — the mask is confirmed correct
+
+**[F-19](findings_log.md#f-19).** An independent Wanda implementation, sharing no code with ours,
+produces **exactly our mask** — 0 differing positions across **48 modules and 84,934,656 weights**, on
+matched norms. Column norms agree to **6.0e-07** despite ours accumulating the Gram in float32 and the
+reference summing in float64.
+
+Four positions in 85 million flip between float32 and float64 norms. Chased down rather than dismissed:
+both disputed pairs **tie exactly in float64** and sit 2–3 ULPs apart in float32, so the choice is
+arbitrary. Rebuilding our mask from the reference's norms drops the disagreement to zero, which proves
+the selection logic is identical. The original INVESTIGATE verdict was **a bug in the anchor**
+(B-25), not in the pipeline.
+
+**This closes the mask question. It does not close the reconstruction question** — the
+error-compensated sweep is where B-22 and B-23 lived, and only the SparseGPT anchor reaches it.
+
 ### The order to work in (A1 §7)
 
 | | Step | State |
 | --- | --- | --- |
 | 1 | Write and commit Amendment A1 | ✅ done |
-| 2 | Central implementation corrections — the nine fixes | ✅ done, 804 tests |
-| **3** | **External anchors: Wanda mask agreement, then SparseGPT pruning-only** | ⬜ **next** |
+| 2 | Central implementation corrections — the nine fixes | ✅ done |
+| 3a | **Wanda mask-agreement anchor** | ✅ **PASSES** — [F-19](findings_log.md#f-19) |
+| **3b** | **SparseGPT pruning-only anchor** — validates reconstruction | ⬜ **next** |
 | 4 | Create and fingerprint the five fixed calibration draws | ⬜ |
 | 5 | Re-run validation screening on the corrected implementation | ⬜ |
 | 6 | Run both sequential orders (P→Q, Q→P) on validation | ⬜ |
