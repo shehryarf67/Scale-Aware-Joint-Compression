@@ -1,8 +1,10 @@
 # Project status
 
-**Last updated:** 2026-07-29 · second session on the HP Omen · **Phases 0, 5 and 6 complete**;
-**Phase 7 (budget screening) paused with no valid results** — two rounds of external review
-invalidated every number, the fixes are in, the grid needs re-running from scratch
+**Last updated:** 2026-07-30 · third session on the HP Omen · **Phases 0, 5 and 6 complete**;
+**Phase 7 has valid results for the first time.** The pipeline now passes three independent
+correctness anchors, the screening grid has been re-run on that anchored code, the frozen budgets
+survived a third time, and the sequential order is frozen at 160M. Governed by
+[Protocol Amendment A1](protocol_amendment_a1.md).
 
 > Read this first. It is the handoff between sessions and between machines. If it looks stale,
 > check `git log` — the truth is the commit history, this file is a summary of it.
@@ -45,12 +47,12 @@ done. **Every arm runs from a config to a run record on real Pythia-160M.**
 
 | | State |
 | --- | --- |
-| Tests | **804 passing** in ~40 s, offline |
+| Tests | **913 passing** in ~43 s, offline |
 | Lint / format | `ruff check .` and `ruff format --check .` both clean |
 | CI | `.github/workflows/ci.yml` — lint, format, tests on push/PR to `main` |
 | Environment | verified end to end: torch 2.13.0+cu126, CUDA available, sm_89 |
 | Runnable today | **all five arms** plus dense, config to run record, on a real model |
-| Not yet done | budget screening (Phase 7), downstream tasks (A4), prefill/decode split (A5) |
+| Not yet done | 410M/1B order selection, confirmatory test-split runs, downstream tasks (A4), prefill/decode split (A5) |
 
 ### What works
 
@@ -280,13 +282,17 @@ Two smaller things noticed in the same runs:
 
 ---
 
-## 🟡 Phase 7 — paused with NO valid results. Resume here.
+## 🟢 Phase 7 — screening complete on anchored code. Resume at A1 step 7.
 
 ### The state in one line
 
-**Every screening number this project has produced has been retracted.** Two rounds of external review
-found bugs that invalidated them, all the fixes are applied and pushed, and `outputs/metrics/` is
-deliberately empty. Nothing is known about joint gain right now.
+**For the first time this project has screening numbers it has reason to trust.** Three independent
+anchors passed, the grid was re-run on that code, and the headline joint gain is **+1.08 pp at 30% +
+W4** — which then survived being re-measured against the stronger of the two sequential baselines.
+Every earlier screening number remains retracted; these supersede them.
+
+**Still exploratory, deliberately.** Validation split, one calibration draw, no error bar. The
+confirmatory answer comes from A1 steps 9–10 on the **test** split with eight paired replicates.
 
 ### 📋 Read [Protocol Amendment A1](protocol_amendment_a1.md) before running anything
 
@@ -478,28 +484,33 @@ agreeing) is p = 0.0625, so no significance claim exists at any effect size, whi
 The extra hours are spent only where they buy that transition, on the two models carrying most of the
 scale-trend evidence. **R must be reported per cell** — A1 §5.1 makes that a hard requirement.
 
-### Why the numbers were retracted, in order
+### The four joint-gain figures, in order
 
-| Figure | Budget | Cause of retraction |
+Kept in full because the pattern is itself a finding, and because a reader who sees only the current
+number has no way to judge how much weight it can carry.
+
+| Figure | Budget | Status |
 | --- | --- | --- |
-| **−4.55 pp** | 30% + W4 | Joint outer loop had no acceptance test, so it discarded better solutions it had already found |
-| **+1.03 pp** | 30% + W4 | The arms minimised **different objectives** — sequential targeted its own intermediate, joint targeted dense |
-| *unknown* | — | Not yet measured on corrected code |
+| **−4.55 pp** | 30% + W4 | **Retracted.** Joint outer loop had no acceptance test, so it discarded better solutions it had already found |
+| **+1.03 pp** | 30% + W4 | **Retracted.** The arms minimised different objectives — sequential targeted its own intermediate, joint targeted dense |
+| **+1.08 pp** | 30% + W4 | **Current**, [F-23](findings_log.md#f-23). First figure from code that passes three independent anchors |
+| **+1.08 pp** | 30% + W4 | **Unchanged** against best-of-sequential, [F-24](findings_log.md#f-24) — P→Q was already the stronger baseline there |
 
-**Every bug pointed the same way: flattering the joint arm.** That belongs in the paper's limitations
-regardless of where the number lands, and it is a reason to hold the next figure loosely too. Full
-detail in [findings_log.md](findings_log.md) F-16 and F-17.
+**Every fault found so far has flattered the joint arm** — B-14, B-17, B-22, B-23, and now B-30 (running
+only the weaker sequential baseline). Not one ran the other way. That belongs in the paper's limitations
+regardless of where the number lands.
 
-### What the budgets were, before retraction
+**Two things make the current figure different from the two retractions.** It survived a rewrite that
+changed the reconstruction objective, added an acceptance guard, fixed activation grouping and altered
+packing — landing on +1.08 where the buggy code gave +1.03. And it survived being re-measured against
+the stronger of two sequential baselines. Neither could be said of the retracted numbers.
 
-The frozen pair in [protocol_freeze.md](protocol_freeze.md) is **moderate 30% + W8** and
-**aggressive 30% + W4**. Both survived the first re-run, and the *sequential* arm's retention has been
-stable across every version of the code (≈80% and ≈57%), so the budget choice is unlikely to move. It
-is the joint-versus-sequential difference that has been unstable, not the budgets.
+**Two things still keep it exploratory.** It sits barely over the pre-registered ≥1.0 pp threshold, and
+there is no uncertainty estimate. Only steps 9–10 fix that.
 
-### Nine fixes applied since the last valid run
+### The nine fixes that made the re-run possible
 
-All pushed. Suite at **804 passing**, lint and format clean.
+All pushed. Suite now at **913 passing**, lint and format clean.
 
 | Fix | What it was |
 | --- | --- |

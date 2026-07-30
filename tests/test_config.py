@@ -396,6 +396,9 @@ class TestShippedConfigs:
             # A1 step 6: both sequential orderings on validation, so the stronger baseline can be
             # frozen per (model, budget) before any test evaluation.
             "order_selection.yaml",
+            # A1 step 7: re-checks the W8 order across paired draws, because it was frozen on a
+            # +0.43 pp single-draw margin and the sign of that budget's joint gain depends on it.
+            "order_selection_w8_replicates.yaml",
         }
         for path in files:
             config = load_config(path)
