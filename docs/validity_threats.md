@@ -417,6 +417,59 @@ not absolute quality. What it does change is budget selection. The degradation c
 likely to be catastrophic at this scale — which is itself a scale-relevant observation, since larger
 models should tolerate more. Screening decides it; this is one seed on one model.
 
+## Solver Slack May Exceed the Effect Being Measured
+
+**Status: open, and directly measurable with tooling that now exists.** Raised by
+[findings_log.md F-20](findings_log.md#f-20).
+
+The exact-optimum anchor established that our reconstruction sweep captures **0.6409 of the achievable
+objective gain** on average — leaving roughly **36% of the available improvement unclaimed** versus the
+provable per-row optimum. Consistently so: 0.57–0.72 across all four module types at three depths, so
+it is a systematic property of the one-pass solver rather than noise.
+
+That is not a defect. A single pass giving up part of the optimum is the documented trade that makes
+wide layers tractable, and it is exactly why the sweep was chosen over per-row ALS (**D2**).
+
+### Why it threatens the central comparison
+
+The joint-versus-sequential difference this study exists to measure has been on the order of **1
+percentage point of retention**. Set that against a solver leaving 36% of the achievable objective gain
+on the table, and the question becomes unavoidable:
+
+**Is the sweep's slack the same for both arms?**
+
+There is no reason to assume it is:
+
+1. the arms produce **different masks** — that is the mechanism under study;
+2. different masks give different `H_SS` **conditioning**;
+3. conditioning is precisely what determines how much a one-pass error-compensated sweep recovers.
+
+So a systematic difference in solver efficiency between the arms is not merely possible, it is the
+expected consequence of the arms differing at all. If it exists and is larger than ~1 pp of retention,
+then **the measured joint gain is partly or wholly solver slack rather than the mask mechanism** — and
+no amount of care elsewhere in the protocol would reveal that.
+
+### It is cheap to settle
+
+Run `scripts/run_reconstruction_anchor.py` separately against the sequential and joint masks at a
+matched budget, and compare mean efficiency. Three outcomes:
+
+| Result | Reading |
+| --- | --- |
+| Efficiency equal between arms | The arm comparison is clean; slack cancels |
+| Joint systematically **more** efficient | Part of the joint gain is the solver, not the mask. The gain must be reported net of it, or the solver strengthened |
+| Joint systematically **less** efficient | The joint mechanism is being *understated*, and the true effect is larger than measured |
+
+**Not yet done.** Until it is, a small joint gain cannot be cleanly attributed to the joint mechanism,
+and this belongs in the paper's limitations regardless of the outcome.
+
+### The stronger remedy, if slack turns out to be arm-dependent
+
+Raise solver efficiency until the slack is small relative to the effect. Options, in increasing cost:
+more local steps; the per-row ALS solve on the narrow layers where it is affordable, sweep only on the
+wide ones; or a second sweep pass seeded from the first. Each changes the fairness unit (§3.11 counts
+local steps), so any change must be applied identically to both arms and re-frozen.
+
 ## Summary of unresolved risks
 
 | Risk | Status |
@@ -428,6 +481,9 @@ models should tolerate more. Screening decides it; this is one seed on one model
 | No automatic check that both arms saw the same module list | closed — `assert_matched_plans` checks coverage, calibration and local steps |
 | Tensor-wide mask ranking deleted whole input columns | **closed** — per-output ranking is now the default; cost was 6.7x perplexity |
 | Absolute retention at 50% on 160M is below published one-shot results | open — not chased down; affects budget choice, not the arm comparison |
+| **Solver captures only 0.64 of the achievable objective gain; slack may differ between arms** | **open — could account for a ~1 pp joint gain on its own. Cheap to measure, not yet measured ([F-20](findings_log.md#f-20))** |
+| Mask construction never checked against an independent implementation | **closed** — exact agreement over 84,934,656 weights ([F-19](findings_log.md#f-19)) |
+| Reconstruction never checked against anything outside itself | **closed for correctness** — 0 rows below the provable optimum, 0 worse than naive ([F-20](findings_log.md#f-20)). External *absolute-quality* comparison still open (A1 §5.5b2) |
 | No automatic check that a sweep's models share training settings | gap in tooling |
 | No pre-registered practically-meaningful effect size | should be set before reading results |
 | Three seeds give a weak variance estimate | accepted; report inconclusive results as inconclusive |

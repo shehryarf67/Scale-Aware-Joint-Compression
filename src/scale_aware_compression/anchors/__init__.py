@@ -16,6 +16,14 @@ alarm thresholds, not perplexities.
 
 from __future__ import annotations
 
+from scale_aware_compression.anchors.exact_reconstruction import (
+    ExactReconstructionError,
+    ExactReconstructionReport,
+    RowComparison,
+    compare_row,
+    exact_masked_row_optimum,
+    row_objective,
+)
 from scale_aware_compression.anchors.wanda import (
     AnchorError,
     ColumnNormComparison,
@@ -30,10 +38,16 @@ from scale_aware_compression.anchors.wanda import (
 __all__ = [
     "AnchorError",
     "ColumnNormComparison",
+    "ExactReconstructionError",
+    "ExactReconstructionReport",
     "MaskComparison",
+    "RowComparison",
     "WandaAnchorReport",
     "compare_column_norms",
     "compare_masks",
+    "compare_row",
+    "exact_masked_row_optimum",
     "independent_column_norms",
     "independent_wanda_mask",
+    "row_objective",
 ]

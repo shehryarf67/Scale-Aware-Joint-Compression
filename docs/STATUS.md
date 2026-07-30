@@ -315,8 +315,40 @@ arbitrary. Rebuilding our mask from the reference's norms drops the disagreement
 the selection logic is identical. The original INVESTIGATE verdict was **a bug in the anchor**
 (B-25), not in the pipeline.
 
-**This closes the mask question. It does not close the reconstruction question** — the
-error-compensated sweep is where B-22 and B-23 lived, and only the SparseGPT anchor reaches it.
+**This closes the mask question.**
+
+### ✅ Second anchor passed — and it found something that matters more
+
+**[F-20](findings_log.md#f-20).** The reconstruction sweep was checked against the **provable optimum**
+of its own objective — for a fixed mask, `ŵ_S = (H_SS)⁻¹H_{S,:}w` is the exact minimiser, solved in
+float64 over 96 rows spanning 4 module types and 3 depths. Both hard invariants hold: **0 rows below the
+optimum** (impossible, so it would prove a defect) and **0 rows worse than naive masking** (the
+accept-only-if-better guard works).
+
+This is stronger than porting SparseGPT, because SparseGPT's contribution is *speed*, not a different
+objective — a second approximation would only show two approximations agree.
+
+### 🔴 The new blocker: solver slack may be larger than the effect
+
+The same anchor measured that our sweep captures only **0.6409 of the achievable objective gain**,
+consistently (0.57–0.72 across every module type and depth). So **~36% of the available improvement is
+left unclaimed.**
+
+That is not a defect — it is the documented trade that makes wide layers tractable. But set it against
+a joint-versus-sequential difference of about **1 pp of retention** and the problem is plain:
+
+> **If solver slack differs between the arms, the measured joint gain may be solver slack rather than
+> the mask mechanism.** And it is *expected* to differ — the arms produce different masks, different
+> masks give different `H_SS` conditioning, and conditioning determines how much a one-pass sweep
+> recovers.
+
+**Cheap to settle, and it should be settled before the screening re-run:** run
+`scripts/run_reconstruction_anchor.py` against the sequential and joint masks separately and compare
+efficiency. Full reasoning and the three possible readings are in
+[validity_threats.md](validity_threats.md#solver-slack-may-exceed-the-effect-being-measured).
+
+**Still open regardless:** whether ~57% retention is *competitive*. F-20 shows the solver optimises what
+it claims to; it says nothing about absolute quality against published work (A1 §5.5b2).
 
 ### The order to work in (A1 §7)
 
@@ -325,7 +357,9 @@ error-compensated sweep is where B-22 and B-23 lived, and only the SparseGPT anc
 | 1 | Write and commit Amendment A1 | ✅ done |
 | 2 | Central implementation corrections — the nine fixes | ✅ done |
 | 3a | **Wanda mask-agreement anchor** | ✅ **PASSES** — [F-19](findings_log.md#f-19) |
-| **3b** | **SparseGPT pruning-only anchor** — validates reconstruction | ⬜ **next** |
+| 3b1 | **Exact-optimum reconstruction anchor** | ✅ **PASSES** — [F-20](findings_log.md#f-20) |
+| **3b2** | Arm-dependent solver slack — **the new blocker** | 🔴 **next**, see below |
+| 3b3 | External absolute-quality comparison (Wanda/SparseGPT numbers) | ⬜ still open |
 | 4 | Create and fingerprint the five fixed calibration draws | ⬜ |
 | 5 | Re-run validation screening on the corrected implementation | ⬜ |
 | 6 | Run both sequential orders (P→Q, Q→P) on validation | ⬜ |

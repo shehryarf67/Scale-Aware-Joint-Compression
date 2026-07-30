@@ -301,6 +301,22 @@ is affordable, choose SparseGPT over Wanda: Wanda validates the pruning criterio
 reconstruction, whereas SparseGPT exercises the Hessian / error-compensation path, which is the more
 intricate and more bug-prone half.
 
+> 📌 **Amended 2026-07-30 — (b) is split into (b1) and (b2), and only (b1) is done.**
+>
+> **(b1) Exact-optimum check — implemented, offline, no external code.** For a *fixed* mask the
+> objective `Σ_o (w−ŵ)ᵀH(w−ŵ)` has a closed-form minimiser per output row,
+> `ŵ_S = (H_SS)⁻¹H_{S,:}w`. Comparing our sweep to **that** is stronger than comparing it to another
+> heuristic, because SparseGPT's contribution is *speed*, not a different objective — so a second
+> approximation tells you the two approximations agree, whereas the exact optimum tells you how much
+> ours actually gives up. It also yields a genuine **lower bound**: a sweep result below the optimum
+> is impossible, so if one appears it proves a defect. The objective is separable across output rows,
+> which is what makes the exact solve tractable on a sample.
+>
+> **(b2) The external absolute-quality comparison — still open.** (b1) establishes that the solver
+> optimises what it claims to. It says nothing about whether ~57% retention is *competitive*. That
+> question still needs a real external run with comparable numbers, and it is the one that would
+> settle whether a remaining implementation gap exists. **Do not treat (b1) passing as closing (b).**
+
 ```
 Pythia-160M · 30% unstructured · FP32 survivors · same calibration data and module coverage
 compare: dense ppl · pruning-only ppl · per-layer reconstruction loss · achieved sparsity

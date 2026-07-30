@@ -729,6 +729,91 @@ to zero. **The pruning budget must be verified against `mask_sparsity`.**
 
 ---
 
+### F-20 - The sweep is correct, and captures 64% of the achievable gain {#f-20}
+
+*2026-07-30 - Pythia-160M `50f5173d` - 128 calibration sequences x 512 tokens from **train**,
+fingerprint `b0e766b25fdd6536` - 30% sparsity, pruning-only - 12 modules x 8 rows = **96 rows** solved
+exactly in float64*
+
+The second Amendment A1 anchor (§5.5b1). **Both hard invariants hold.**
+
+| Quantity | Result |
+| --- | --- |
+| Rows compared | **96** (12 modules, 4 module types, 3 depths) |
+| Rows scoring **below** the provable optimum | **0** - required, since it is impossible |
+| Rows ending **worse than naive** masking | **0** - required, the accept-only-if-better guard works |
+| Mean improvement over naive | **+38.65%** of the naive objective |
+| **Mean efficiency** | **0.6409** of the achievable gain |
+| Worst-row efficiency | 0.3927 |
+
+#### What was checked, and why it is stronger than a SparseGPT port
+
+For a fixed mask the objective `sum_o (w-w_hat)^T H (w-w_hat)` has a closed-form minimiser per output
+row, `w_hat_S = (H_SS)^-1 H_S,: w`. The anchor solves that exactly, in float64, with no damping, and
+compares our sweep against it.
+
+That beats reimplementing SparseGPT, and the reason is worth stating: **SparseGPT's contribution is
+speed, not a different objective.** Comparing our sweep to another approximation would only establish
+that two approximations agree. Comparing it to the exact optimum measures how much ours actually gives
+up -- and gives a genuine **lower bound**, so a result below it would prove a defect rather than
+suggest one.
+
+The objective is **separable across output rows**, which is what makes this tractable: each sampled row
+is a complete test of that row, not an approximation of the layer. A full-layer exact solve would cost
+`out_features * |S|^3`, the very cost the sweep exists to avoid.
+
+#### 🟡 The 64% is a finding in its own right, and it has a consequence
+
+Our one-pass sweep leaves roughly **36% of the achievable objective improvement unclaimed** versus the
+exact per-row optimum. That is not a defect -- a single pass giving up some of the optimum is the
+documented trade for making wide layers tractable, and it is why the sweep was chosen over ALS (D2).
+It is also remarkably **consistent**, which is what makes it worth recording:
+
+| Module type | Mean efficiency across depths |
+| --- | --- |
+| `attention.query_key_value` | 0.613, 0.612, 0.662 |
+| `attention.dense` | 0.570, 0.611, 0.609 |
+| `mlp.dense_h_to_4h` | 0.612, 0.627, 0.686 |
+| `mlp.dense_4h_to_h` | 0.674, 0.721, 0.695 |
+
+Range 0.57-0.72 across every module type and depth sampled. So this is a systematic property of the
+solver, not noise and not one bad layer.
+
+**The consequence, which is a validity threat and not just a curiosity.** The joint-versus-sequential
+difference this study exists to measure has been around **1 pp of retention**. The solver is leaving
+36% of the achievable objective gain on the table. If that slack is **not identical between the two
+arms** -- and there is no reason to assume it is, because the arms produce different masks, different
+masks give different `H_SS` conditioning, and conditioning is exactly what determines how well a
+one-pass sweep does -- then part or all of the measured arm difference could be **solver slack rather
+than the mask mechanism**.
+
+This is directly measurable with the tool that produced this finding: run the anchor separately on the
+sequential and joint masks and compare efficiency. **Not yet done.** Until it is, a small joint gain
+cannot be cleanly attributed to the joint mechanism. Recorded in
+[validity_threats.md](validity_threats.md#solver-slack-may-exceed-the-effect-being-measured).
+
+#### What this does *not* establish
+
+Whether our absolute quality is competitive. This says the solver optimises what it claims to optimise;
+it says nothing about whether ~57% retention at 30% + W4 is in line with published work. That still
+needs an external run with comparable numbers -- A1 §5.5(b2), still open. **Passing this anchor must
+not be read as closing the external-comparison question.**
+
+#### A sampling fault in the anchor's first run
+
+The first version sampled 6 modules by striding `len(names) // 6`. A GPT-NeoX block contributes four
+target modules in a fixed order, so on a 48-module model that stride is exactly 8 and returned
+`attention.query_key_value` **six times** -- never touching an MLP projection, which are the widest
+layers and the ones where a one-pass sweep has the most to compensate for. The verdict looked fine and
+covered a quarter of the model.
+
+Replaced with stratified sampling across module types and depths, which is what produced the table
+above. It also now warns when the requested count cannot be spread evenly, rather than silently
+returning fewer. Both behaviours are pinned by tests, including one that asserts the old stride would
+have failed.
+
+---
+
 ### F-19 - The mask is confirmed correct against an independent implementation {#f-19}
 
 *2026-07-30 - Pythia-160M `50f5173d` - 128 calibration sequences x 512 tokens from **train**,
@@ -931,6 +1016,7 @@ recording.
 | B-23 | Joint acceptance compared pre-canonicalisation weights, then stored the canonicalised ones ([F-18](#f-18)) | The incumbent guard chose between quantities it had not measured consistently, and the packed artefact was not the object that won |
 | B-24 | An OpenMP deadlock mitigation pinned **inter-op threads process-wide** at three entry points | Inter-op can be set only once per process, and `set_cpu_threads` only *logs* the failure to re-set it — so `CpuBenchmark.prepare()` would request the frozen 4 threads, silently run at 1, and record `requested_interop_threads: 4`. The mismatch guard checked intra-op only. Hits the pruning-only arm, which under D1 is the sole route to RQ4 |
 | B-25 | The Wanda anchor's own tie test asked whether a disagreement sat on a score equal to our float32 prune threshold ([F-19](#f-19)) | The tie exists in float64 and float32 has already broken it, so the test called 2 of 4 precision-driven swaps genuine faults and returned INVESTIGATE on a pipeline that was correct |
+| B-26 | The reconstruction anchor sampled modules by a plain stride ([F-20](#f-20)) | `48 // 6 == 8` and a block has four target modules in fixed order, so all six samples were `attention.query_key_value` and no MLP projection was ever checked -- a confident PASS over a quarter of the model |
 | B-13 | Sweep cells inherited the base config's model revision | Every cell pinned to the *first* model's SHA — fails to load, or silently loads the wrong weights if the SHA exists in both repos |
 
 Two of these were **masked by tests that should have caught them**: B-07 (the test disabled
