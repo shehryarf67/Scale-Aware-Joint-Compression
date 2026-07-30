@@ -392,18 +392,22 @@ def _run_reference_sparsegpt(
 
     captured: list[tuple] = []
 
-    class Catcher(nn.Module):
-        """Intercept the first block's inputs, then stop the forward pass."""
-
-        def __init__(self, inner):
-            super().__init__()
-            self.inner = inner
-
-        def forward(self, hidden_states, **kwargs):
-            captured.append((hidden_states.detach(), kwargs))
+    # A forward pre-hook on the real module, rather than the usual trick of swapping
+    # ``layers[0] = Catcher(layers[0])``. Their driver can swap because ``model.decoder.layers`` is the
+    # live ModuleList; our ``get_decoder_blocks`` returns ``list(current)`` -- a **copy** -- so
+    # assigning into it rebinds nothing the model will ever call. That silently captured zero inputs,
+    # and only the empty-capture guard below turned it into an error instead of a plausible number.
+    def capture_hook(_module, args, kwargs):
+        hidden = args[0] if args else kwargs.get("hidden_states")
+        if hidden is None:
             raise _StopForwardError
+        # Everything except the hidden state is replay context and must be carried forward verbatim,
+        # or the replayed block sees a different mask and different rotary embeddings.
+        forwarded = {key: value for key, value in kwargs.items() if key != "hidden_states"}
+        captured.append((hidden.detach(), forwarded))
+        raise _StopForwardError
 
-    blocks[0] = Catcher(blocks[0])
+    handle = blocks[0].register_forward_pre_hook(capture_hook, with_kwargs=True)
     try:
         with torch.no_grad():
             for batch in batches:
@@ -415,7 +419,7 @@ def _run_reference_sparsegpt(
                 with contextlib.suppress(_StopForwardError):
                     model(**payload)
     finally:
-        blocks[0] = blocks[0].inner
+        handle.remove()
 
     if not captured:
         raise SystemExit(
