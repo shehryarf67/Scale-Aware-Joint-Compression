@@ -21,6 +21,17 @@ Not matched, because it is the independent variable:
   `IST-DASLab/sparsegpt`. Only the model plumbing is ours, because their repo ships drivers for OPT,
   BLOOM and LLaMA but not GPT-NeoX.
 
+⚠️ **This bundles two differences, so a gap cannot be localised to either.** `fasterprune` chooses its
+mask *during* the sweep from ``w^2 / [H^-1]^2_jj``, whereas we choose a Wanda mask first and then
+reconstruct. So the comparison is *(Wanda mask + our sweep)* against *(SparseGPT adaptive mask +
+SparseGPT sweep)* — an honest end-to-end check, but not an isolation of the reconstruction. Their
+`fasterprune` selects internally and cannot be handed an externally chosen mask without editing it,
+which would forfeit the point of using it unmodified.
+
+What makes the end-to-end comparison still informative: [F-19](../docs/findings_log.md#f-19) already
+established our mask *is* Wanda's mask exactly, and published results put Wanda and SparseGPT close in
+quality. So a large gap here points at the reconstruction by elimination rather than by construction.
+
 **Why their `H` scaling does not matter.** They accumulate `H = (2/n) * sum(X X^T)` with a running
 rescale; we accumulate raw `X^T X`. A positive constant factor does not move the argmin of a quadratic,
 so the solutions are comparable even though the reported loss magnitudes are not.
