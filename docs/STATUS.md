@@ -369,6 +369,12 @@ All pushed. Suite at **804 passing**, lint and format clean.
 Put to an external reviewer and settled on **2026-07-30**. Full reasoning and the exact designs are in
 [protocol_amendment_a1.md](protocol_amendment_a1.md); summarised here.
 
+**Independently corroborated.** A partner working separately reached the *same* conclusions on items 1,
+2 and 5 — calibration replicates in place of run seeds, validation-for-screening with test reserved for
+final reporting, and Wanda/SparseGPT as matched sanity references that do not replace the primary
+comparison. Two reviewers converging on the same three corrections without conferring is a stronger
+signal than either alone, and it is why those three are treated as settled rather than provisional.
+
 | # | Decision | Settled as | Status |
 | --- | --- | --- | --- |
 | 1 | Run seeds | **Withdrawn.** Five paired calibration replicates; §6.3 reworded; effect-size study, no significance claims | necessary correction |
