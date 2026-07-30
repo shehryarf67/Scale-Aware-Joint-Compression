@@ -70,13 +70,9 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         0 on success, 2 on a configuration error, 3 when the pipeline is not implemented yet.
     """
-    # Windows CPU builds can deadlock in OpenMP-backed linear algebra when the
-    # reconstruction solver creates the Gram inverse. Do this before loading a
-    # model or materialising any tensor so PyTorch's inter-op pool is untouched.
-    from scale_aware_compression.hardware import set_cpu_threads
-
-    set_cpu_threads(1, interop_threads=1)
-
+    # The OpenMP deadlock mitigation lives in compress_layer, scoped to the solve, rather than
+    # process-wide here: pinning inter-op threads at an entry point is irreversible for the rest of
+    # the process and would silently override benchmark.interop_threads.
     arguments = build_parser().parse_args(argv)
 
     overrides = list(arguments.override)
