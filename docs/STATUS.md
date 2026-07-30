@@ -288,7 +288,36 @@ Two smaller things noticed in the same runs:
 found bugs that invalidated them, all the fixes are applied and pushed, and `outputs/metrics/` is
 deliberately empty. Nothing is known about joint gain right now.
 
-### To resume, one command
+### 📋 Read [Protocol Amendment A1](protocol_amendment_a1.md) before running anything
+
+Adopted **2026-07-30**, after the five protocol decisions below were put to an external reviewer and
+settled. A1 is now the governing document for how the remaining experiments run, and it changes the
+execution order.
+
+**The one thing to know:** A1 declares **every result this project has produced so far exploratory** —
+all of it is on the validation split, all of it predates the B-22/B-23 corrections, and none of it has
+an uncertainty estimate. The frozen budgets are *not* reopened.
+
+**The screening re-run is no longer the next step.** A1 §7 puts the **external correctness anchors
+first**: if Wanda and SparseGPT disagree with us, the screening grid would have spent two hours
+measuring a pipeline we do not trust.
+
+### The order to work in (A1 §7)
+
+| | Step | State |
+| --- | --- | --- |
+| 1 | Write and commit Amendment A1 | ✅ done |
+| 2 | Central implementation corrections — the nine fixes | ✅ done, 804 tests |
+| **3** | **External anchors: Wanda mask agreement, then SparseGPT pruning-only** | ⬜ **next** |
+| 4 | Create and fingerprint the five fixed calibration draws | ⬜ |
+| 5 | Re-run validation screening on the corrected implementation | ⬜ |
+| 6 | Run both sequential orders (P→Q, Q→P) on validation | ⬜ |
+| 7 | Freeze the winning order per (model, budget) | ⬜ |
+| 8 | Run the reduced S6 mechanistic control (12 runs) | ⬜ |
+| 9 | Freeze the entire confirmatory configuration | ⬜ |
+| 10 | Run test evaluation **once**, with no further tuning | ⬜ |
+
+Step 5 is still the command below, and it still writes to the exploratory (validation) configuration:
 
 ```bash
 python scripts/run_scale_sweep.py --config configs/experiments/screening.yaml     # 13 cells, ~2 h
@@ -296,11 +325,9 @@ python scripts/summarise_screening.py --model pythia-160m \
     --budgets s1_30_w8,s2_50_w8,s3_50_w4,s4_70_w4,s5_30_w4,s6_40_w8
 ```
 
-Then the 410M confirmation:
-
-```bash
-python scripts/run_scale_sweep.py --config configs/experiments/screening_410m.yaml
-```
+**Cost to know before step 10:** the confirmatory design is 3 models × 2 budgets × 2 arms × 5
+replicates = **60 runs, ~30 h of compute**. Going to 8 replicates multiplies that by 1.6 and is what
+would make a sign test informative at all. A1 §6 states the trade-off; it is a scheduling call.
 
 ### Why the numbers were retracted, in order
 
@@ -337,24 +364,32 @@ All pushed. Suite at **804 passing**, lint and format clean.
 | Independent reload | Manifest plus `load_packed_model`; the checkpoint could not previously be loaded on its own |
 | `scale_trend` + `METHOD_VERSION` | Analysis entry point was a stub; nothing detected records produced by different code |
 
-### 🔴 Five decisions waiting, all protocol-level
+### ✅ The five protocol decisions — all settled by Amendment A1
 
-None of these are code problems and none should be settled by whoever runs the next command.
+Put to an external reviewer and settled on **2026-07-30**. Full reasoning and the exact designs are in
+[protocol_amendment_a1.md](protocol_amendment_a1.md); summarised here.
 
-1. **Paired calibration replicates** replacing the run-seed axis. Blocking: [F-15](findings_log.md#f-15)
-   proved run seeds are inert, so the three-seed protocol yields three identical numbers and a seed
-   spread of exactly zero — which makes §6.3's "must exceed the seed spread" rule vacuous. **There is
-   currently no route to an error bar at all.**
-2. **Move final evaluation to the WikiText-2 test split.** Budgets were selected after seeing
-   validation results, so reporting the headline on validation is selection bias.
-3. **P→Q versus Q→P baseline policy.** `method_definition.md` promises best-of-two; the sweep runs only
-   P→Q. The documents and the grid must agree.
-4. **S6 (40% + W8) as an auxiliary control.** Its retention nearly matches 30% + W4, so running it
-   across scales would separate "compression severity" from "low-bit quantisation changes the mask".
-5. **An external Wanda / SparseGPT / GPTQ sanity anchor** at matched settings on 160M. The only thing
-   that would settle whether ~57% retention is plausible or indicates a remaining implementation gap.
+| # | Decision | Settled as | Status |
+| --- | --- | --- | --- |
+| 1 | Run seeds | **Withdrawn.** Five paired calibration replicates; §6.3 reworded; effect-size study, no significance claims | necessary correction |
+| 2 | Evaluation split | **Validation for selection, test for confirmation.** Two configs, everything else held identical | necessary correction |
+| 3 | Sequential ordering | **Both orders run; winner selected on validation**, frozen per cell before test | enforcement, not a change |
+| 4 | S6 (40% + W8) | **Secondary control only.** 2 models × 2 arms × 3 draws = 12 runs; 1B gets diagnostics only | optional addition |
+| 5 | External anchor | **Wanda mask agreement first, then SparseGPT pruning-only.** Alarm thresholds, not acceptance tests | validation, runs first |
 
-[review_brief.md](review_brief.md) is written for an outside reader and states these as open questions.
+Two points from A1 worth carrying in your head:
+
+- **The §6.3 amendment is a *loosening* of a pre-registered rule**, and the paper must say so. The
+  original rule was stricter on its face but unmeasurable in fact, because its binding clause evaluated
+  to zero. Replacing an unmeasurable criterion with a weaker measurable one is a correction *and* a
+  reduction in pre-registered strength.
+- **S6 is the weakest of the five** on the "would this have been justified before seeing results" test —
+  it became interesting because we saw 40% + W8 land near 30% + W4, which is a result. It is defensible
+  because it tests a mechanism rather than a headline, and A1 records its provenance rather than
+  presenting it as pre-planned.
+
+[review_brief.md](review_brief.md) is written for an outside reader and states these as the open
+questions they were before A1.
 
 ---
 
@@ -487,7 +522,10 @@ Full record in [protocol_freeze.md](protocol_freeze.md#environment). Summary:
 - [x] `python scripts/run_dense_baseline.py` — first real record, on a real model
 - [x] **Phase 6 — the five arms through one shared layerwise driver**, verified end to end
 - [x] Two rounds of external code review applied — nine fixes, suite at 804
-- [ ] **Re-run the 160M screening grid on the corrected code** ← **next**, ~2 h, 13 cells
-- [ ] Confirm the two budgets on 410M
-- [ ] Settle the five protocol decisions above — **human calls, not code**
-- [ ] Only then: Pythia-1B
+- [x] Settle the five protocol decisions → **[Amendment A1](protocol_amendment_a1.md)**, adopted
+- [ ] **External anchors: Wanda mask agreement, then SparseGPT pruning-only** ← **next** (A1 §7 step 3)
+- [ ] Five fixed calibration draws, fingerprinted
+- [ ] Re-run the 160M validation screening (~2 h, 13 cells)
+- [ ] Both sequential orders on validation; freeze the winner per cell
+- [ ] Reduced S6 control (12 runs)
+- [ ] Freeze the confirmatory config, then test evaluation **once** — no tuning after that

@@ -11,6 +11,12 @@ answer to "why is it set that way" for anything a later session or a reviewer as
 Changing one silently invalidates every run recorded before the change. Nothing here may be
 revised after results have been seen (§6.3).
 
+> 📋 **Amended by [Protocol Amendment A1](protocol_amendment_a1.md), 2026-07-30.** A1 withdraws the
+> §5.5 run-seed axis (the pipeline is deterministic, so it measured nothing), amends §6.3, splits
+> evaluation into validation-for-selection and test-for-confirmation, and enforces the best-of-two
+> sequential ordering §3.6 always required. **It also declares every result this project has produced
+> so far exploratory**, including the 410M table below. The frozen budgets are *not* reopened.
+
 ---
 
 ## The three decisions that were open
@@ -366,7 +372,13 @@ RQ4 under this pair, and it is easy to forget because it is not part of any budg
 Per decision **D1**, the aggressive budget contributes quality and size only and never appears in a
 latency table.
 
-### Confirmed on 410M ✅
+### Confirmed on 410M — ⚠️ exploratory only
+
+> 🔴 **Superseded as confirmatory evidence by [Amendment A1 §4](protocol_amendment_a1.md).** These
+> numbers are on the **validation** split (now a declared selection surface), predate the B-22/B-23
+> corrections that **inflated joint gain**, and carry no uncertainty estimate. The **eligibility**
+> conclusion stands — sequential retention has been stable across every version of the code — but the
+> **joint-versus-sequential columns must not be quoted.**
 
 §5.3's pre-1B requirement is satisfied. Pythia-410M, same 493 × 512 window, dense 22.17, matched solver
 budgets:
@@ -388,7 +400,9 @@ problem immediately below.
 | Item | Why it is not frozen yet |
 | --- | --- |
 | Calibration sample indices, token count, sequence length | Frozen by the config once `prepare_data.py` has run for real. The WikiText load path has still never been executed. |
-| **Seed policy (§5.5) and the practical-importance rule (§6.3)** | 🔴 **Newly broken.** The pipeline is deterministic, so three confirmatory seeds give three identical numbers and the seed spread is exactly zero — see [findings_log.md F-15](findings_log.md#f-15). The rule's "exceeds the seed spread" clause is vacuous as written. The variance that exists is in the **calibration draw**. Needs a human decision, and must be justified on the mechanism rather than on wanting error bars. |
+| ~~Seed policy (§5.5) and the practical-importance rule (§6.3)~~ | **AMENDED 2026-07-30** — [Amendment A1 §5.1](protocol_amendment_a1.md). The run-seed axis is withdrawn and replaced by **five paired calibration replicates**; §6.3 is reworded, and the loosening is declared as such. Reported as an effect-size study: five draws cannot clear p < 0.05 even when unanimous (2/2⁵ = 0.0625). Evidence: [F-15](findings_log.md#f-15). |
+| ~~Evaluation split (§4.1)~~ | **AMENDED 2026-07-30** — [Amendment A1 §5.2](protocol_amendment_a1.md). Validation for selection, **test for confirmation**. No leakage existed (calibration is from train); the defect was that budgets were selected on validation. |
+| ~~Sequential ordering (§3.6, §6.1)~~ | **ENFORCED 2026-07-30** — [Amendment A1 §5.3](protocol_amendment_a1.md). Both orders run; the winner is selected on **validation** and frozen per (model, budget) before any test evaluation. Not a change — the documents always required best-of-two; the grid did not implement it. |
 | ~~The two final budgets~~ | **FROZEN 2026-07-29** — see [The frozen compression budgets](#the-frozen-compression-budgets). Confirmation on 410M outstanding before 1B. |
 | 1.4B go/no-go | §5.2 needs measured peak VRAM against 85% of 6.0 GiB — a 5.1 GiB ceiling, which is tight. Decide after Phase 5 profiling. |
 | W4 latency via `torchao` | Deferred to Phase 6. Would lift D1's "no W4 latency row" limitation if a single 4-bit CPU path serves both arms. Needs measuring. |
