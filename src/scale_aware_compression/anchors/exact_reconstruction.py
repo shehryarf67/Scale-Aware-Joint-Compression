@@ -228,6 +228,215 @@ class ExactReconstructionReport:
         return lines
 
 
+@dataclass(frozen=True, slots=True)
+class ArmRowComparison:
+    """One output row under both arms' masks, each against its own exact optimum.
+
+    The sharp question this answers is not "how efficient is the solver" but **"does the solver rank
+    the two masks the same way the exact optimum does?"** If our sweep says the joint mask is better
+    while the optimum says the sequential mask is, then the reported joint gain on that row is a
+    solver artefact and not a property of the mask.
+    """
+
+    row: int
+    sequential: RowComparison
+    joint: RowComparison
+
+    @property
+    def sweep_prefers_joint(self) -> bool:
+        """True when our solver produced a lower objective under the joint mask."""
+        return self.joint.ours_objective < self.sequential.ours_objective
+
+    @property
+    def optimum_prefers_joint(self) -> bool:
+        """True when the *exact* optimum is lower under the joint mask."""
+        return self.joint.optimal_objective < self.sequential.optimal_objective
+
+    @property
+    def ranking_disagrees(self) -> bool:
+        """True when the solver and the optimum disagree about which mask is better.
+
+        This is the smoking gun. A row where it holds is a row whose contribution to the measured
+        joint gain has the wrong sign relative to the masks' true quality.
+        """
+        return self.sweep_prefers_joint != self.optimum_prefers_joint
+
+    @property
+    def efficiency_gap(self) -> float:
+        """Joint efficiency minus sequential efficiency.
+
+        Positive means the solver does *better* on the joint mask, which would inflate the joint gain
+        by an amount that has nothing to do with the mask mechanism.
+        """
+        return self.joint.efficiency - self.sequential.efficiency
+
+    @property
+    def sweep_advantage(self) -> float:
+        """Objective reduction the sweep attributes to the joint mask. Positive favours joint."""
+        return self.sequential.ours_objective - self.joint.ours_objective
+
+    @property
+    def optimal_advantage(self) -> float:
+        """Objective reduction genuinely available from the joint mask. Positive favours joint."""
+        return self.sequential.optimal_objective - self.joint.optimal_objective
+
+    @property
+    def advantage_fidelity(self) -> float:
+        """How faithfully the sweep's mask preference reflects the true one, as a magnitude ratio.
+
+        ``optimal_advantage / sweep_advantage``. **Read it together with the sign of
+        :attr:`sweep_advantage`, because the ratio alone is ambiguous:**
+
+        * both positive -- the joint mask genuinely wins. ``< 1`` means the sweep *overstates* the win,
+          ``> 1`` that it understates it.
+        * both negative -- the joint mask genuinely loses. ``< 1`` means the sweep *overstates the
+          loss*, ``> 1`` that it understates it.
+        * opposite signs -- the ratio is negative and the sweep has the direction wrong, which
+          :attr:`ranking_disagrees` reports directly.
+
+        Named for the magnitude relationship rather than for "joint benefit", because an earlier
+        version was called the latter and read as "64% of the joint gain is real" on a run where every
+        row's advantage was in fact *negative*.
+        """
+        if abs(self.sweep_advantage) < 1e-30:
+            return 0.0
+        return self.optimal_advantage / self.sweep_advantage
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the comparison as a JSON-serialisable mapping."""
+        return {
+            "row": self.row,
+            "sequential": self.sequential.to_dict(),
+            "joint": self.joint.to_dict(),
+            "sweep_prefers_joint": self.sweep_prefers_joint,
+            "optimum_prefers_joint": self.optimum_prefers_joint,
+            "ranking_disagrees": self.ranking_disagrees,
+            "efficiency_gap": self.efficiency_gap,
+            "sweep_advantage": self.sweep_advantage,
+            "optimal_advantage": self.optimal_advantage,
+            "attributable_fraction": self.attributable_fraction,
+        }
+
+
+@dataclass(slots=True)
+class ArmSlackReport:
+    """Whether solver slack differs between the arms enough to confound the comparison."""
+
+    bits: int
+    target_sparsity: float
+    module_rows: dict[str, list[ArmRowComparison]] = field(default_factory=dict)
+    notes: list[str] = field(default_factory=list)
+
+    def _all(self) -> list[ArmRowComparison]:
+        return [row for rows in self.module_rows.values() for row in rows]
+
+    @property
+    def rows_compared(self) -> int:
+        """Total rows compared under both masks."""
+        return len(self._all())
+
+    @property
+    def mean_sequential_efficiency(self) -> float:
+        """Mean solver efficiency under the sequential mask."""
+        rows = self._all()
+        return sum(r.sequential.efficiency for r in rows) / len(rows) if rows else 0.0
+
+    @property
+    def mean_joint_efficiency(self) -> float:
+        """Mean solver efficiency under the joint mask."""
+        rows = self._all()
+        return sum(r.joint.efficiency for r in rows) / len(rows) if rows else 0.0
+
+    @property
+    def mean_efficiency_gap(self) -> float:
+        """Joint minus sequential mean efficiency. The size of the confound."""
+        return self.mean_joint_efficiency - self.mean_sequential_efficiency
+
+    @property
+    def rows_where_ranking_disagrees(self) -> int:
+        """Rows where the solver and the optimum disagree on which mask is better."""
+        return sum(1 for r in self._all() if r.ranking_disagrees)
+
+    @property
+    def disagreement_rate(self) -> float:
+        """Fraction of rows where the solver's mask preference is not the true one."""
+        rows = self._all()
+        return self.rows_where_ranking_disagrees / len(rows) if rows else 0.0
+
+    @property
+    def rows_favouring_joint(self) -> int:
+        """Rows where the **exact optimum** gives the joint mask the lower objective.
+
+        Reported alongside the fidelity ratio because that ratio is meaningless without knowing which
+        direction it is a ratio of.
+        """
+        return sum(1 for r in self._all() if r.optimum_prefers_joint)
+
+    @property
+    def aggregate_advantage_fidelity(self) -> float:
+        """Magnitude ratio of true to swept mask advantage, aggregated over rows.
+
+        Aggregated over objectives rather than averaged over per-row ratios, because a per-row ratio
+        blows up on rows where the sweep found almost no advantage. Interpret with
+        :attr:`rows_favouring_joint` and the sign of the aggregate advantage -- see
+        :attr:`ArmRowComparison.advantage_fidelity`.
+        """
+        rows = self._all()
+        swept = sum(r.sweep_advantage for r in rows)
+        if abs(swept) < 1e-30:
+            return 0.0
+        return sum(r.optimal_advantage for r in rows) / swept
+
+    @property
+    def aggregate_sweep_advantage(self) -> float:
+        """Total objective reduction the sweep attributes to the joint mask. Negative favours seq."""
+        return sum(r.sweep_advantage for r in self._all())
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the whole report as a JSON-serialisable mapping."""
+        return {
+            "anchor": "arm_dependent_solver_slack",
+            "bits": self.bits,
+            "target_sparsity": self.target_sparsity,
+            "rows_compared": self.rows_compared,
+            "modules_compared": len(self.module_rows),
+            "mean_sequential_efficiency": self.mean_sequential_efficiency,
+            "mean_joint_efficiency": self.mean_joint_efficiency,
+            "mean_efficiency_gap": self.mean_efficiency_gap,
+            "rows_where_ranking_disagrees": self.rows_where_ranking_disagrees,
+            "disagreement_rate": self.disagreement_rate,
+            "rows_favouring_joint": self.rows_favouring_joint,
+            "aggregate_sweep_advantage": self.aggregate_sweep_advantage,
+            "aggregate_advantage_fidelity": self.aggregate_advantage_fidelity,
+            "modules": {
+                name: [row.to_dict() for row in rows] for name, rows in self.module_rows.items()
+            },
+            "notes": list(self.notes),
+        }
+
+    def summary_lines(self) -> list[str]:
+        """Return a short human-readable verdict.
+
+        There is deliberately no ``passes``. This anchor measures the size of a confound; what counts
+        as tolerable depends on the effect size it is being compared against, and that is a protocol
+        judgement rather than something a threshold here should pre-empt.
+        """
+        return [
+            f"Arm-dependent solver slack at {self.target_sparsity:.0%} sparsity, W{self.bits}",
+            f"  modules / rows            : {len(self.module_rows)} / {self.rows_compared}",
+            f"  mean efficiency, sequential: {self.mean_sequential_efficiency:.4f}",
+            f"  mean efficiency, joint     : {self.mean_joint_efficiency:.4f}",
+            f"  efficiency gap (joint-seq) : {self.mean_efficiency_gap:+.4f}",
+            f"  rows where solver misranks : {self.rows_where_ranking_disagrees} "
+            f"({self.disagreement_rate:.1%})",
+            f"  optimum favours joint on   : {self.rows_favouring_joint}/{self.rows_compared} rows",
+            f"  swept mask advantage       : {self.aggregate_sweep_advantage:+.4e} "
+            f"({'favours joint' if self.aggregate_sweep_advantage > 0 else 'favours sequential'})",
+            f"  advantage fidelity         : {self.aggregate_advantage_fidelity:.4f} "
+            f"(magnitude ratio true/swept; read with the sign above)",
+        ] + [f"  note: {note}" for note in self.notes]
+
+
 def row_objective(
     gram: torch.Tensor,
     dense_row: torch.Tensor,

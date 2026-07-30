@@ -328,7 +328,25 @@ accept-only-if-better guard works).
 This is stronger than porting SparseGPT, because SparseGPT's contribution is *speed*, not a different
 objective — a second approximation would only show two approximations agree.
 
-### 🔴 The new blocker: solver slack may be larger than the effect
+### ✅ The slack question, measured — the sign is safe
+
+**[F-21](findings_log.md#f-21).** Arm-dependent slack is **real**: solver efficiency is 0.6409 under the
+sequential mask against **0.5631** under the joint mask, a 7.8 pp gap that varies in sign by depth.
+
+But the decisive check came out clean: **across all 96 rows the solver never inverted which mask was
+better.** Whenever the sweep preferred a mask, the exact optimum agreed. So the *direction* of a measured
+joint gain is not a solver artefact — and the gap runs *against* joint, meaning the mechanism would be
+understated rather than flattered. Notable, since every previous fault ran the other way.
+
+**What stays open:** the effect on *magnitude*. It cannot be measured this way, because no exact optimum
+exists for the quantised problem — the closed-form minimiser solves a continuous least-squares problem,
+and a discrete grid makes it an integer program. Recorded as a limitation with wording ready for the
+paper.
+
+<details>
+<summary>The original framing of this blocker, kept for the record</summary>
+
+**The blocker as first stated:**
 
 The same anchor measured that our sweep captures only **0.6409 of the achievable objective gain**,
 consistently (0.57–0.72 across every module type and depth). So **~36% of the available improvement is
@@ -342,10 +360,10 @@ a joint-versus-sequential difference of about **1 pp of retention** and the prob
 > masks give different `H_SS` conditioning, and conditioning determines how much a one-pass sweep
 > recovers.
 
-**Cheap to settle, and it should be settled before the screening re-run:** run
-`scripts/run_reconstruction_anchor.py` against the sequential and joint masks separately and compare
-efficiency. Full reasoning and the three possible readings are in
+Settled by `scripts/run_arm_slack_anchor.py` — see above. Full reasoning and the residual risk in
 [validity_threats.md](validity_threats.md#solver-slack-may-exceed-the-effect-being-measured).
+
+</details>
 
 **Still open regardless:** whether ~57% retention is *competitive*. F-20 shows the solver optimises what
 it claims to; it says nothing about absolute quality against published work (A1 §5.5b2).
@@ -358,8 +376,8 @@ it claims to; it says nothing about absolute quality against published work (A1 
 | 2 | Central implementation corrections — the nine fixes | ✅ done |
 | 3a | **Wanda mask-agreement anchor** | ✅ **PASSES** — [F-19](findings_log.md#f-19) |
 | 3b1 | **Exact-optimum reconstruction anchor** | ✅ **PASSES** — [F-20](findings_log.md#f-20) |
-| **3b2** | Arm-dependent solver slack — **the new blocker** | 🔴 **next**, see below |
-| 3b3 | External absolute-quality comparison (Wanda/SparseGPT numbers) | ⬜ still open |
+| 3b2 | Arm-dependent solver slack | ✅ **measured** — [F-21](findings_log.md#f-21); sign is safe, magnitude open |
+| **3b3** | External absolute-quality comparison (Wanda/SparseGPT) | ⬜ **next** — approved 2026-07-30 |
 | 4 | Create and fingerprint the five fixed calibration draws | ⬜ |
 | 5 | Re-run validation screening on the corrected implementation | ⬜ |
 | 6 | Run both sequential orders (P→Q, Q→P) on validation | ⬜ |
@@ -376,9 +394,12 @@ python scripts/summarise_screening.py --model pythia-160m \
     --budgets s1_30_w8,s2_50_w8,s3_50_w4,s4_70_w4,s5_30_w4,s6_40_w8
 ```
 
-**Cost to know before step 10:** the confirmatory design is 3 models × 2 budgets × 2 arms × 5
-replicates = **60 runs, ~30 h of compute**. Going to 8 replicates multiplies that by 1.6 and is what
-would make a sign test informative at all. A1 §6 states the trade-off; it is a scheduling call.
+**Confirmatory cost, now decided.** Replicates are **R=8 at 160M and 410M, R=5 at 1B** — roughly
+**38 hours**, against 31 for flat R=5 and 50 for flat R=8. The reason for the split is that the
+statistical constraint is a cliff, not a slope: at R=5 the *best possible* result (every replicate
+agreeing) is p = 0.0625, so no significance claim exists at any effect size, while R=8 reaches 0.008.
+The extra hours are spent only where they buy that transition, on the two models carrying most of the
+scale-trend evidence. **R must be reported per cell** — A1 §5.1 makes that a hard requirement.
 
 ### Why the numbers were retracted, in order
 
@@ -428,7 +449,7 @@ signal than either alone, and it is why those three are treated as settled rathe
 
 | # | Decision | Settled as | Status |
 | --- | --- | --- | --- |
-| 1 | Run seeds | **Withdrawn.** Five paired calibration replicates; §6.3 reworded; effect-size study, no significance claims | necessary correction |
+| 1 | Run seeds | **Withdrawn.** Paired calibration replicates, **R=8 at 160M/410M, R=5 at 1B** (decided 2026-07-30); §6.3 reworded; R reported per cell | necessary correction |
 | 2 | Evaluation split | **Validation for selection, test for confirmation.** Two configs, everything else held identical | necessary correction |
 | 3 | Sequential ordering | **Both orders run; winner selected on validation**, frozen per cell before test | enforcement, not a change |
 | 4 | S6 (40% + W8) | **Secondary control only.** 2 models × 2 arms × 3 draws = 12 runs; 1B gets diagnostics only | optional addition |

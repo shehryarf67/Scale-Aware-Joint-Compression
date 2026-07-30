@@ -149,8 +149,17 @@ and joint alike.
 calibration_replicates: [1729, 2718, 3141, 5772, 8111]
 ```
 
-- **R = 5** is the adopted minimum; **R = 8** if the compute budget permits (see §6 — the cost
-  multiplier is substantial and this choice is not free).
+- **R is set per scale, decided 2026-07-30:**
+
+  | Model | R | Reasoning |
+  | --- | --- | --- |
+  | Pythia-160M | **8** | Cheap, and a sign test needs ≥ 6 to be able to reach p < 0.05 at all |
+  | Pythia-410M | **8** | Same; these two models carry most of the evidence for the scale trend |
+  | Pythia-1B | **5** | The floor. Twenty hours a scale is where the cost stops being worth the power |
+
+  §5.1 does not require R to be constant across scales, **provided the actual R is reported per
+  cell** — which is now a hard requirement of this amendment, not a courtesy. A table that shows
+  error bars from 8 draws next to error bars from 5 without saying so would misrepresent both.
 - Within a replicate, all arms use byte-identical calibration data. §3.11 requires identical
   calibration *between arms within a comparison*, not across repeats, so the fairness invariant is
   preserved — and pairing is what §6.3 asks for anyway.
@@ -358,12 +367,18 @@ the measured screening rate (13 cells ≈ 2 h at 160M, so ≈9 min per 160M cell
 count, the confirmatory stage alone is on the order of **30 hours of compute**, before the Q→P
 validation stage, the S6 control and the anchors.
 
-**R = 8 multiplies the confirmatory stage by 1.6.** That is the real trade-off behind the R = 5 versus
-R = 8 choice: R = 8 is what makes a permutation or sign test informative at all (§5.1), and it costs
-roughly 18 additional hours. **This is a scheduling decision, not a methodological one, and it is
-recorded here so that it is made deliberately.** R = 5 is adopted as the floor; going to 8 is a
-compute-availability call and may be taken per model — for example 8 at 160M and 410M, 5 at 1B — since
-nothing in §5.1 requires R to be constant across scales, provided the actual R is reported per cell.
+**Decided 2026-07-30: the hybrid — R = 8 at 160M and 410M, R = 5 at 1B.** Roughly **38 hours**,
+against 31 for flat R = 5 and 50 for flat R = 8.
+
+The reasoning is that the statistical constraint is not gradual, it is a cliff. With R = 5 the *best
+possible* outcome — every replicate agreeing in sign — carries an exact two-sided probability of
+2 / 2⁵ = **0.0625**, so no significance claim is available at any effect size. R = 6 reaches 0.031 and
+R = 8 reaches 0.008. Spending the extra hours only where they buy that transition, and only on the two
+models that carry most of the scale-trend evidence, is where the marginal hour does the most work. At
+1B a replicate costs roughly four times what it costs at 160M, which is where the trade stops paying.
+
+**This was a scheduling decision, not a methodological one**, and it is recorded with its cost so the
+choice is auditable rather than implicit.
 
 ---
 

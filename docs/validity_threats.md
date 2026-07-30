@@ -460,8 +460,36 @@ matched budget, and compare mean efficiency. Three outcomes:
 | Joint systematically **more** efficient | Part of the joint gain is the solver, not the mask. The gain must be reported net of it, or the solver strengthened |
 | Joint systematically **less** efficient | The joint mechanism is being *understated*, and the true effect is larger than measured |
 
-**Not yet done.** Until it is, a small joint gain cannot be cleanly attributed to the joint mechanism,
-and this belongs in the paper's limitations regardless of the outcome.
+### ✅ Measured 2026-07-30 — [F-21](findings_log.md#f-21)
+
+**The confound is real, but it does not threaten the *direction* of the result.**
+
+| Question | Answer |
+| --- | --- |
+| Does solver slack differ between arms? | **Yes** — 0.6409 sequential vs 0.5631 joint, a **7.8 pp gap**, varying in sign by depth |
+| Can the solver invert which mask is better? | **No** — 0 of 96 rows misranked |
+| Does that change the **sign** of a reported joint gain? | **No**, on this evidence |
+| Does it change the **magnitude**? | **Unknown, and not answerable this way** |
+
+So the outcome fell in the third column of the table above — joint is the arm the solver handles *less*
+well — which would mean the joint mechanism is being **understated**, not flattered. Notable, because
+every previous fault in this project ran the other way.
+
+**Two limits on that conclusion, and the second is hard:**
+
+1. The measurement reconstructed **pruning-only** for both arms to isolate the mask. But the joint mask
+   is selected under a quantised grid (**D3**), so a pruning-only objective disadvantages it by
+   construction — both arms' advantages came out negative on all 96 rows, unanimously under sweep *and*
+   optimum. That comparison is not the study's comparison.
+2. **No exact optimum exists for the quantised problem.** The closed-form minimiser solves a
+   *continuous* least-squares problem; constrain weights to a discrete grid and it becomes an integer
+   program with no closed form. So the reference that makes this a lower bound is unavailable in the
+   regime the study reports.
+
+**Residual risk, and the wording for the paper.** The reconstruction solver is approximate; its
+approximation quality differs measurably between the two arms' masks; the study reports a difference the
+solver provably ranks correctly but may not scale correctly. That belongs in the limitations regardless
+of where the final number lands.
 
 ### The stronger remedy, if slack turns out to be arm-dependent
 
@@ -481,7 +509,8 @@ local steps), so any change must be applied identically to both arms and re-froz
 | No automatic check that both arms saw the same module list | closed — `assert_matched_plans` checks coverage, calibration and local steps |
 | Tensor-wide mask ranking deleted whole input columns | **closed** — per-output ranking is now the default; cost was 6.7x perplexity |
 | Absolute retention at 50% on 160M is below published one-shot results | open — not chased down; affects budget choice, not the arm comparison |
-| **Solver captures only 0.64 of the achievable objective gain; slack may differ between arms** | **open — could account for a ~1 pp joint gain on its own. Cheap to measure, not yet measured ([F-20](findings_log.md#f-20))** |
+| Solver captures only 0.64 of the achievable objective gain | **characterised** — systematic, 0.57–0.72 across module types ([F-20](findings_log.md#f-20)) |
+| Slack differs between arms and could confound the comparison | **partially closed** — real (7.8 pp gap) but **never inverts mask ranking** (0/96 rows), so the *sign* is safe; magnitude effect unmeasurable because no exact optimum exists for the quantised problem ([F-21](findings_log.md#f-21)) |
 | Mask construction never checked against an independent implementation | **closed** — exact agreement over 84,934,656 weights ([F-19](findings_log.md#f-19)) |
 | Reconstruction never checked against anything outside itself | **closed for correctness** — 0 rows below the provable optimum, 0 worse than naive ([F-20](findings_log.md#f-20)). External *absolute-quality* comparison still open (A1 §5.5b2) |
 | No automatic check that a sweep's models share training settings | gap in tooling |

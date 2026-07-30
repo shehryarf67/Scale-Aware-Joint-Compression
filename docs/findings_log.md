@@ -729,6 +729,80 @@ to zero. **The pruning budget must be verified against `mask_sparsity`.**
 
 ---
 
+### F-21 - Solver slack IS arm-dependent, but it never inverted a mask ranking {#f-21}
+
+*2026-07-30 - Pythia-160M `50f5173d` - calibration fingerprint `b0e766b25fdd6536` - 30% sparsity, joint
+mask scored at W4 - 12 modules x 8 rows = **96 rows** solved exactly - **partially answers the
+[F-20](#f-20) confound***
+
+| Quantity | Result |
+| --- | --- |
+| Mask divergence between arms | **7.8% - 12.6%** per module (consistent with [F-05](#f-05)'s 8.86%) |
+| Mean solver efficiency, **sequential** mask | **0.6409** |
+| Mean solver efficiency, **joint** mask | **0.5631** |
+| **Efficiency gap (joint − sequential)** | **−0.0778** |
+| **Rows where the solver misranks the masks** | **0 of 96 (0.0%)** |
+
+#### The reassuring half
+
+**The solver never got the direction wrong.** On all 96 rows, whenever the sweep said one mask gave a
+lower objective, the exact optimum agreed. The sweep does not invert mask quality, so the *sign* of a
+measured arm difference is not a solver artefact.
+
+#### The confound is confirmed real
+
+**Solver efficiency differs systematically by mask shape: 0.6409 versus 0.5631, a 7.8 percentage-point
+gap.** So the [F-20](#f-20) worry was not hypothetical -- slack *is* arm-dependent. The mechanism is the
+expected one: the joint mask is a different shape, different shapes give different `H[S,S]` conditioning,
+and conditioning determines how much a one-pass sweep recovers.
+
+The gap is also not uniform in sign across depth. Layers 0 and 4 favour the sequential mask by 0.06-0.33;
+layer 8 favours the **joint** mask by 0.10-0.20. So this is not a constant offset that would cancel in a
+difference -- it varies by layer and could partially cancel or partially accumulate depending on the
+model.
+
+#### 🔴 What this measurement does NOT settle, and why
+
+**The design cannot isolate the effect on the headline joint gain, and I first described it as though it
+could.** Two reasons, and the second is a hard limit rather than a fixable oversight:
+
+1. **Reconstruction ran pruning-only for both arms**, deliberately, to isolate the mask's effect on
+   solver efficiency from quantisation. But the joint mask is *selected under a quantised grid* (D3), so
+   scoring it on a pruning-only objective disadvantages it by construction. Both `sweep_advantage` and
+   `optimal_advantage` came out **negative on all 96 rows** -- the sequential mask wins the pruning-only
+   objective unanimously, under both the sweep and the exact optimum. That is expected and says nothing
+   about the arms' real comparison.
+
+2. **No exact optimum exists for the quantised problem.** The closed-form masked minimiser
+   `(H_SS)^-1 H_S,: w` solves a *continuous* least-squares problem. With weights constrained to a
+   discrete grid the problem is an integer program with no closed form, so the anchor's reference -- the
+   thing that makes it a lower bound at all -- is unavailable in the regime the study actually reports.
+
+A metric-naming error worth recording because it nearly propagated: the aggregate ratio was originally
+called `attributable_joint_benefit` and printed as "1.0 = entirely real, 0.0 = entirely solver". On this
+run it read **+0.6425**, which invites "64% of the joint gain is real" -- when in fact every row's
+advantage was negative and the number is the ratio of two *disadvantages*, meaning the sweep
+**overstates the joint mask's penalty by about 1.56x**. Renamed `advantage_fidelity`, documented for
+both sign cases, and now printed next to the sign of the advantage it is a ratio of.
+
+#### Where this leaves the confound
+
+| Question | Status |
+| --- | --- |
+| Does solver slack differ between arms? | **Yes, 7.8 pp, and it varies in sign by depth** |
+| Can the solver invert which mask is better? | **No -- 0 of 96 rows** |
+| Does that change the sign of the reported joint gain? | **No**, on this evidence |
+| Does it change the *magnitude* of the reported joint gain? | **Unknown, and not answerable this way** |
+
+So a ~1 pp joint gain cannot be dismissed as a solver artefact in *direction*, which is the part that
+matters most for the research question. Its *magnitude* remains subject to a 7.8 pp efficiency
+difference whose net effect on end-to-end perplexity is unmeasured. **This belongs in the paper's
+limitations either way**, stated as: the reconstruction solver is approximate, its approximation quality
+differs measurably between the two arms' masks, and the study reports a difference that the solver
+provably ranks correctly but may not scale correctly.
+
+---
+
 ### F-20 - The sweep is correct, and captures 64% of the achievable gain {#f-20}
 
 *2026-07-30 - Pythia-160M `50f5173d` - 128 calibration sequences x 512 tokens from **train**,
@@ -1017,6 +1091,7 @@ recording.
 | B-24 | An OpenMP deadlock mitigation pinned **inter-op threads process-wide** at three entry points | Inter-op can be set only once per process, and `set_cpu_threads` only *logs* the failure to re-set it — so `CpuBenchmark.prepare()` would request the frozen 4 threads, silently run at 1, and record `requested_interop_threads: 4`. The mismatch guard checked intra-op only. Hits the pruning-only arm, which under D1 is the sole route to RQ4 |
 | B-25 | The Wanda anchor's own tie test asked whether a disagreement sat on a score equal to our float32 prune threshold ([F-19](#f-19)) | The tie exists in float64 and float32 has already broken it, so the test called 2 of 4 precision-driven swaps genuine faults and returned INVESTIGATE on a pipeline that was correct |
 | B-26 | The reconstruction anchor sampled modules by a plain stride ([F-20](#f-20)) | `48 // 6 == 8` and a block has four target modules in fixed order, so all six samples were `attention.query_key_value` and no MLP projection was ever checked -- a confident PASS over a quarter of the model |
+| B-27 | The arm-slack metric was named `attributable_joint_benefit` and printed as "1.0 = entirely real" ([F-21](#f-21)) | On a run where every row's advantage was negative it read +0.6425 and invited "64% of the joint gain is real", when it was the ratio of two disadvantages meaning the sweep overstates joint's penalty by 1.56x |
 | B-13 | Sweep cells inherited the base config's model revision | Every cell pinned to the *first* model's SHA — fails to load, or silently loads the wrong weights if the SHA exists in both repos |
 
 Two of these were **masked by tests that should have caught them**: B-07 (the test disabled
