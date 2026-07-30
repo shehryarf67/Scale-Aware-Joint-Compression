@@ -328,6 +328,28 @@ either retraction.
 **Still exploratory.** Barely over the ≥1.0 pp threshold, one calibration draw so no error bar, and the
 validation split is a declared selection surface. The confirmatory answer comes from steps 9–10.
 
+### ✅ Sequential order selected — and it differs by budget
+
+**[F-24](findings_log.md#f-24).** Q→P had never been run end to end in this project, though §3.6 and
+§6.1 always required joint gain to be measured against **best-of {P→Q, Q→P}**.
+
+| Budget | P→Q | Q→P | Joint | **Frozen order** |
+| --- | --- | --- | --- | --- |
+| moderate 30% + W8 | 80.20% | **80.63%** | 80.27% | **Q→P** |
+| aggressive 30% + W4 | **56.66%** | 52.40% | **57.73%** | **P→Q** |
+
+**The moderate budget's joint gain flips sign:** +0.07 pp against P→Q alone becomes **−0.36 pp** against
+best-of, because Q→P beats both P→Q and joint at W8. Not running Q→P had been flattering joint — the
+same direction as every other fault here. It is also *more* consistent with F-05, which says the
+mechanism is inert at W8; an inert mechanism should not show a positive gain.
+
+**The aggressive headline is unchanged at +1.08 pp**, because P→Q was already the stronger order there
+and Q→P trails by 4.26 pp. So the effect has now survived a solver rewrite *and* a stronger baseline.
+
+Both P→Q cells reproduced F-23 to three decimals under different budget labels and a different config
+file — the plumbing verified rather than assumed. Frozen orders recorded in
+[protocol_freeze.md](protocol_freeze.md#the-frozen-sequential-order-a1-step-7).
+
 ### ✅ First anchor passed — the mask is confirmed correct
 
 **[F-19](findings_log.md#f-19).** An independent Wanda implementation, sharing no code with ours,
@@ -435,8 +457,8 @@ it claims to; it says nothing about absolute quality against published work (A1 
 | 3b3 | External SparseGPT comparison | ✅ **done** — [F-22](findings_log.md#f-22); our numbers are credible |
 | 4 | Calibration replicate axis, **R=8 / 8 / 5** | ✅ **done** — `05008dc`, 37 tests |
 | 5 | Re-run the 160M validation screening | ✅ **done** — [F-23](findings_log.md#f-23) |
-| **6** | **Both sequential orders (P→Q, Q→P) on validation** | ⬜ **next** |
-| 7 | Freeze the winning order per (model, budget) | ⬜ |
+| 6 | Both sequential orders (P→Q, Q→P) on validation | ✅ **done** — [F-24](findings_log.md#f-24) |
+| 7 | Freeze the winning order per (model, budget) | 🟡 **160M frozen**; 410M and 1B outstanding |
 | 8 | Run the reduced S6 mechanistic control (12 runs) | ⬜ |
 | 9 | Freeze the entire confirmatory configuration | ⬜ |
 | 10 | Run test evaluation **once**, with no further tuning | ⬜ |

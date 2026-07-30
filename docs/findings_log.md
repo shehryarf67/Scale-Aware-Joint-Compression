@@ -729,6 +729,99 @@ to zero. **The pruning budget must be verified against `mask_sparsity`.**
 
 ---
 
+### F-24 - The winning sequential order differs by budget, and the headline survives best-of {#f-24}
+
+*2026-07-30 - Pythia-160M `50f5173d` - 493 x 512 **validation** window, dense **36.9741** - 128
+calibration sequences from train, one draw - `METHOD_VERSION = 4` - **42 min**, 5 cells -
+**closes [A1](protocol_amendment_a1.md) step 6***
+
+`method_definition.md` (plan §3.6, §6.1) has always required joint gain to be measured against
+**best-of {P→Q, Q→P}**, with the winning order recorded. The sweep only ever ran P→Q. Q→P had never
+been run end to end in this project until now.
+
+| Budget | Arm | Perplexity | Retention |
+| --- | --- | --- | --- |
+| **moderate** 30% + W8 | sequential **P→Q** | 46.101 | 80.20% |
+| | sequential **Q→P** | **45.856** | **80.63%** ← best |
+| | joint | 46.064 | 80.27% |
+| **aggressive** 30% + W4 | sequential **P→Q** | **65.261** | **56.66%** ← best |
+| | sequential **Q→P** | 70.557 | 52.40% |
+| | joint | **64.041** | **57.73%** |
+
+#### The winning order genuinely differs by budget
+
+| Budget | Winner | Margin over the loser |
+| --- | --- | --- |
+| moderate 30% + W8 | **Q→P** | +0.43 pp |
+| aggressive 30% + W4 | **P→Q** | +4.26 pp |
+
+A1 §5.3 anticipated this explicitly — "the winning order may legitimately differ by model and by
+budget" — but it is worth noting that it *does*, because a single global choice would have been wrong
+at one of the two budgets.
+
+#### Consequence 1: the moderate budget's joint gain flips sign
+
+| Baseline | Joint gain at moderate |
+| --- | --- |
+| P→Q only, as [F-23](#f-23) reported it | **+0.07 pp** |
+| **best-of-sequential** | **−0.36 pp** |
+
+Q→P beats both P→Q *and* joint at W8. So the small positive gain at the control budget becomes a small
+negative one once the baseline is the one the documents always required.
+
+This is exactly the omission §3.6 existed to prevent, and it ran the direction the rest of this
+project's bugs ran: **not running Q→P was flattering joint.** It is also, notably, *more* consistent
+with [F-05](#f-05) than +0.07 was — F-05 predicts the joint mechanism is inert at W8, and a mechanism
+that is inert should not produce a positive gain.
+
+#### Consequence 2: the headline is unchanged
+
+**At the aggressive budget P→Q was already the stronger order, so the +1.08 pp joint gain stands
+exactly as [F-23](#f-23) measured it.** Best-of-sequential does not erode it. Q→P is 4.26 pp *behind*
+P→Q there, so it never becomes the baseline.
+
+That is the more important half of this finding. The headline effect had already survived a solver
+rewrite (F-23); it has now also survived being measured against the stronger of two baselines.
+
+#### Why Q→P wins at W8 and loses badly at W4
+
+A coherent mechanistic reading, offered as interpretation rather than as measurement:
+
+* **At W8 quantisation is nearly lossless** ([F-07](#f-07): W8-only retention 99.8%). Quantising first
+  costs almost nothing, and the mask is then chosen on weights that already sit on their final grid —
+  so pruning reconstruction optimises the deployed representation directly rather than an FP32 proxy.
+* **At W4 the order is punishing.** Q→P commits to a coarse grid before pruning, and by construction it
+  **reuses the dense-fitted scales without refitting** — that non-refit is what keeps it a *sequential*
+  arm rather than a joint one. Those dense-fitted scales are badly matched to the post-pruning weight
+  distribution at 4 bits, and unlike joint it never gets to revise them.
+
+This also predicts the asymmetry in the margins: +0.43 pp at W8 against −4.26 pp at W4. The penalty for
+a frozen grid grows as the grid gets coarser.
+
+#### Two consistency checks that passed
+
+**Both P→Q cells reproduced [F-23](#f-23) exactly** — 46.101 and 65.261, to three decimals, under
+different budget labels (`moderate`/`aggressive` against `s1_30_w8`/`s5_30_w4`) and from a different
+config file. The budget-label plumbing changes nothing, which is worth having verified rather than
+assumed.
+
+Dense also reproduced at **36.974**, matching F-23 rather than the F-22 anchor's 36.9744 — consistent
+with the thread-configuration sensitivity F-23 recorded, since both runs went through the same runner.
+
+#### What to freeze
+
+| Model | Budget | Frozen sequential order |
+| --- | --- | --- |
+| pythia-160m | moderate | **Q→P** |
+| pythia-160m | aggressive | **P→Q** |
+
+**Still outstanding before the confirmatory stage:** the same selection at 410M and 1B. Pythia-1B is
+not downloaded yet. One draw per cell was enough here because both margins (+0.43 pp, +4.26 pp) exceed
+anything a single draw's noise plausibly explains — the aggressive margin by a wide factor. Had they
+landed within noise, replicates would have been added before freezing.
+
+---
+
 ### F-23 - Screening on anchored code. The frozen budgets hold, and S6 answers the mechanism question {#f-23}
 
 *2026-07-30 - Pythia-160M `50f5173d` - 493 x 512 **validation** window, dense **36.9741** - 128
@@ -1289,6 +1382,7 @@ recording.
 | B-27 | The arm-slack metric was named `attributable_joint_benefit` and printed as "1.0 = entirely real" ([F-21](#f-21)) | On a run where every row's advantage was negative it read +0.6425 and invited "64% of the joint gain is real", when it was the ratio of two disadvantages meaning the sweep overstates joint's penalty by 1.56x |
 | B-28 | Reference SparseGPT driver replayed blocks with `use_cache=True` and a live `Cache` ([F-22](#f-22)) | The cache would accumulate across replays, growing the key/value length and silently changing the activations SparseGPT fits to. Caught before the reference stage ran |
 | B-29 | `blocks[0] = Catcher(...)` mutated a **copy**, because `get_decoder_blocks` returns `list(current)` ([F-22](#f-22)) | The model kept calling the real block, so zero calibration inputs were captured; SparseGPT would have pruned against nothing and still produced a perplexity. Only an empty-capture guard turned it into an error |
+| B-30 | Joint gain was measured against P→Q only, though §3.6 and §6.1 always required best-of {P→Q, Q→P} ([F-24](#f-24)) | Q→P beats P→Q *and* joint at 30% + W8, so the moderate budget's joint gain was reported as +0.07 pp when against the required baseline it is −0.36 pp. Another omission that flattered joint |
 | B-13 | Sweep cells inherited the base config's model revision | Every cell pinned to the *first* model's SHA — fails to load, or silently loads the wrong weights if the SHA exists in both repos |
 
 Two of these were **masked by tests that should have caught them**: B-07 (the test disabled

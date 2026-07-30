@@ -395,6 +395,37 @@ Full detail, including the joint gain changing sign between scales, in
 [findings_log.md F-14](findings_log.md#f-14). **That sign flip is not yet a finding** — see the seed
 problem immediately below.
 
+## The frozen sequential order (A1 step 7)
+
+Plan §3.6 and §6.1 require joint gain to be measured against **best-of {P→Q, Q→P}**, with the winning
+order recorded. Selected on the **validation** split so the choice never touches the confirmatory
+split — validation picks the method, test estimates its performance. Evidence:
+[findings_log.md F-24](findings_log.md#f-24).
+
+| Model | Budget | **Frozen order** | Margin over the loser |
+| --- | --- | --- | --- |
+| pythia-160m | moderate 30% + W8 | **Q→P** | +0.43 pp |
+| pythia-160m | aggressive 30% + W4 | **P→Q** | +4.26 pp |
+| pythia-410m | both | ⬜ not yet selected | — |
+| pythia-1b | both | ⬜ not yet selected (model not downloaded) | — |
+
+**The winner differs by budget, which A1 §5.3 anticipated.** A single global choice would have been
+wrong at one of the two.
+
+Two consequences, and the second is the one that matters:
+
+- **The moderate budget's joint gain flips sign.** Q→P beats P→Q *and* joint at W8, so the gain goes
+  from **+0.07 pp** (against P→Q alone) to **−0.36 pp** against the required baseline. Not running Q→P
+  had been flattering joint — the same direction as every other fault found in this project. It is also
+  *more* consistent with **F-05**, which predicts the mechanism is inert at W8: an inert mechanism
+  should not produce a positive gain.
+- **The aggressive budget's headline is unchanged at +1.08 pp**, because P→Q was already the stronger
+  order there. Q→P trails it by 4.26 pp and never becomes the baseline. So the headline effect has now
+  survived both a solver rewrite and being measured against the stronger of two baselines.
+
+One draw per cell was sufficient because both margins exceed what a single draw's noise plausibly
+explains. Had they landed within noise, replicates would have been added before freezing anything.
+
 ## Still open
 
 | Item | Why it is not frozen yet |
