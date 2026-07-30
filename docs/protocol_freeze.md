@@ -402,29 +402,50 @@ order recorded. Selected on the **validation** split so the choice never touches
 split — validation picks the method, test estimates its performance. Evidence:
 [findings_log.md F-24](findings_log.md#f-24).
 
-| Model | Budget | **Frozen order** | Margin over the loser |
-| --- | --- | --- | --- |
-| pythia-160m | moderate 30% + W8 | **Q→P** | +0.43 pp |
-| pythia-160m | aggressive 30% + W4 | **P→Q** | +4.26 pp |
-| pythia-410m | both | ⬜ not yet selected | — |
-| pythia-1b | both | ⬜ not yet selected (model not downloaded) | — |
+| Model | Budget | **Order** | Margin | Status |
+| --- | --- | --- | --- | --- |
+| pythia-160m | aggressive 30% + W4 | **P→Q** | +4.26 pp | ✅ **frozen** |
+| pythia-410m | aggressive 30% + W4 | **P→Q** | +6.82 pp | ✅ **frozen** |
+| pythia-160m | moderate 30% + W8 | Q→P | +0.43 pp | 🔴 **contested** |
+| pythia-410m | moderate 30% + W8 | P→Q | +0.04 pp | 🔴 **contested** |
+| pythia-1b | both | — | — | ⬜ model not downloaded |
 
-**The winner differs by budget, which A1 §5.3 anticipated.** A single global choice would have been
-wrong at one of the two.
+### W4 — frozen, decisively, at both scales
 
-Two consequences, and the second is the one that matters:
+**P→Q wins at 4 bits and the margin grows with scale**: +4.26 pp at 160M, +6.82 pp at 410M. On the
+additive scale the Q→P penalty is 0.078 nats at 160M and 0.124 at 410M.
 
-- **The moderate budget's joint gain flips sign.** Q→P beats P→Q *and* joint at W8, so the gain goes
-  from **+0.07 pp** (against P→Q alone) to **−0.36 pp** against the required baseline. Not running Q→P
-  had been flattering joint — the same direction as every other fault found in this project. It is also
-  *more* consistent with **F-05**, which predicts the mechanism is inert at W8: an inert mechanism
-  should not produce a positive gain.
-- **The aggressive budget's headline is unchanged at +1.08 pp**, because P→Q was already the stronger
-  order there. Q→P trails it by 4.26 pp and never becomes the baseline. So the headline effect has now
-  survived both a solver rewrite and being measured against the stronger of two baselines.
+Consistent with the mechanism in [F-24](findings_log.md#f-24): Q→P reuses the dense-fitted scales
+without refitting, which is what keeps it a *sequential* arm rather than a joint one. That is nearly
+free at W8 where quantisation is almost lossless, and punishing at W4 where a coarse grid is badly
+matched to the post-pruning distribution — worse at scale, because a larger model has more channels
+whose distributions shift.
 
-One draw per cell was sufficient because both margins exceed what a single draw's noise plausibly
-explains. Had they landed within noise, replicates would have been added before freezing anything.
+**The aggressive headline is unaffected by best-of**, because P→Q was already the stronger order. Joint
+gain stands at +1.08 pp (160M) and +0.68 pp (410M).
+
+### 🔴 W8 — contested. Do not freeze yet.
+
+**The direction reverses between scales and both margins are noise**: Q→P by 0.43 pp at 160M, P→Q by
+0.04 pp at 410M. At 410M all three arms — P→Q, Q→P and joint — sit within **0.017 perplexity** of one
+another.
+
+This matters because the *sign* of the moderate budget's joint gain depends on the choice: **+0.07 pp
+against P→Q, −0.36 pp against Q→P.**
+
+An earlier revision of this file froze Q→P here on the 160M margin alone, describing one draw as
+sufficient because "both margins exceed what a single draw's noise plausibly explains". That was true of
+the W4 margin and was an **assertion** for W8. [F-25](findings_log.md#f-25) contradicts it.
+
+`configs/experiments/order_selection_w8_replicates.yaml` re-checks W8 across five paired calibration
+draws, and pre-declared the decision rule before any of this was measured:
+
+> Q→P ahead in all five → the freeze stands, and now on evidence. The sign varying → the two orders are
+> indistinguishable at W8. Freeze **P→Q**, the pre-registered primary order (§3.6), and record that the
+> choice is arbitrary. Do **not** pick the winner of a coin toss and report a joint gain against it.
+
+The sign has already varied across **scales**. The replicate run tests whether it also varies across
+draws. **P→Q is the pre-declared fallback.**
 
 ## Still open
 

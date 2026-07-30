@@ -334,6 +334,36 @@ either retraction.
 **Still exploratory.** Barely over the ≥1.0 pp threshold, one calibration draw so no error bar, and the
 validation split is a declared selection surface. The confirmatory answer comes from steps 9–10.
 
+### 🔵 410M complete — and the joint gain SHRINKS with scale
+
+**[F-25](findings_log.md#f-25).** 7 cells, 3 h 18 m. Dense 22.166.
+
+| Scale | Sequential (best-of) | Joint | **Joint gain** | Excess NLL advantage |
+| --- | --- | --- | --- | --- |
+| **160M** | 56.66% | 57.74% | **+1.08 pp** | +0.0189 nats |
+| **410M** | 58.56% | 59.24% | **+0.68 pp** | +0.0116 nats |
+| | | | ratio **0.63** | ratio **0.61** |
+
+**Joint wins at both scales, but by ~40% less at the larger one.** Two metrics of different functional
+form — retention exponential, excess NLL additive — agree on the ratio to within 0.02.
+
+**This runs against the study's motivating hypothesis.** The question was whether joint pays off *more*
+as models grow; on this evidence it pays off **less**. And at 410M it **fails the pre-registered
+≥1.0 pp bar** (§6.3) that 160M clears by 0.08.
+
+**Not a trend.** Two points, one draw each, validation split. The plan already says three points cannot
+fit a scaling law; two cannot support one. This is a *direction*, and Pythia-1B is the point that would
+make it checkable. Not downloaded yet.
+
+**Both frozen budgets confirmed at 410M** — 76.17% and 58.56% retention, inside §5.3's band. The pre-1B
+requirement is satisfied.
+
+**The W8 control gives a clean null at both scales** — +0.07 pp at 160M, **+0.00 pp** at 410M. F-05
+predicted the mechanism is inert at 8 bits, and two scales agree it produces nothing. The same pipeline
+yielding zero when the mechanism is off is what makes the W4 result hard to dismiss as noise.
+
+### 🔴 The W8 order freeze is contested — and it was my error to freeze it
+
 ### ✅ Sequential order selected — and it differs by budget
 
 **[F-24](findings_log.md#f-24).** Q→P had never been run end to end in this project, though §3.6 and
@@ -353,7 +383,14 @@ mechanism is inert at W8; an inert mechanism should not show a positive gain.
 and Q→P trails by 4.26 pp. So the effect has now survived a solver rewrite *and* a stronger baseline.
 
 Both P→Q cells reproduced F-23 to three decimals under different budget labels and a different config
-file — the plumbing verified rather than assumed. Frozen orders recorded in
+file — the plumbing verified rather than assumed.
+
+**Correction.** The W8 half of this freeze does not hold. [F-25](findings_log.md#f-25) found the
+direction *reverses* at 410M — P→Q by 0.04 pp, against Q→P by 0.43 pp at 160M — and at 410M all three
+arms sit within 0.017 perplexity. I froze Q→P on a single-draw margin and justified it by asserting the
+margin exceeded plausible noise; that was true of the W4 margin and unverified for W8.
+`order_selection_w8_replicates.yaml` re-checks it across five paired draws, with **P→Q** as the
+pre-declared fallback if the sign varies. Current status in
 [protocol_freeze.md](protocol_freeze.md#the-frozen-sequential-order-a1-step-7).
 
 ### ✅ First anchor passed — the mask is confirmed correct
@@ -464,7 +501,7 @@ it claims to; it says nothing about absolute quality against published work (A1 
 | 4 | Calibration replicate axis, **R=8 / 8 / 5** | ✅ **done** — `05008dc`, 37 tests |
 | 5 | Re-run the 160M validation screening | ✅ **done** — [F-23](findings_log.md#f-23) |
 | 6 | Both sequential orders (P→Q, Q→P) on validation | ✅ **done** — [F-24](findings_log.md#f-24) |
-| 7 | Freeze the winning order per (model, budget) | 🟡 **160M frozen**; 410M and 1B outstanding |
+| 7 | Freeze the winning order per (model, budget) | 🟡 **W4 frozen at 160M+410M**; W8 contested, replicate run queued; 1B outstanding |
 | 8 | Run the reduced S6 mechanistic control (12 runs) | ⬜ |
 | 9 | Freeze the entire confirmatory configuration | ⬜ |
 | 10 | Run test evaluation **once**, with no further tuning | ⬜ |

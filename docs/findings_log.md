@@ -729,7 +729,128 @@ to zero. **The pruning budget must be verified against `mask_sparsity`.**
 
 ---
 
+### F-25 - 410M: budgets confirmed, W4 order confirmed, and the joint gain SHRINKS with scale {#f-25}
+
+*2026-07-30 - Pythia-410M `dd47b0e` - 493 x 512 **validation** window, dense **22.166** - 128
+calibration sequences from train, one draw - `METHOD_VERSION = 4` - **3 h 18 m**, 7 cells -
+**supersedes [F-14](#f-14)***
+
+One grid answering three questions: do the frozen budgets hold at 410M, which sequential order wins
+there, and does the joint gain change with scale.
+
+| Budget | Arm | Perplexity | Retention | Excess NLL |
+| --- | --- | --- | --- | --- |
+| **moderate** 30% + W8 | sequential P→Q | 29.102 | 76.17% | 0.2722 |
+| | sequential Q→P | 29.117 | 76.13% | 0.2728 |
+| | joint | **29.100** | 76.17% | 0.2722 |
+| **aggressive** 30% + W4 | sequential **P→Q** | 37.851 | **58.56%** | 0.5351 |
+| | sequential Q→P | 42.843 | 51.74% | 0.6590 |
+| | **joint** | **37.415** | **59.24%** | **0.5235** |
+
+#### 1. Both frozen budgets are confirmed at 410M
+
+76.17% and 58.56% sequential retention — both inside §5.3's measurable-but-not-catastrophic band, well
+above the 50% floor and far below the 99% ceiling. **§5.3's pre-1B requirement is satisfied.**
+
+#### 2. The W4 order is confirmed, decisively, at both scales
+
+| Budget | 160M | 410M |
+| --- | --- | --- |
+| **W4 aggressive** | P→Q by **+4.26 pp** | P→Q by **+6.82 pp** |
+| W8 moderate | Q→P by +0.43 pp | **P→Q by +0.04 pp** |
+
+**P→Q is unambiguously right at W4, and the margin grows with scale.** On the additive scale the Q→P
+penalty is 0.078 nats at 160M and 0.124 at 410M. That is consistent with the mechanism proposed in
+[F-24](#f-24): Q→P reuses the dense-fitted scales without refitting — nearly free at W8 where
+quantisation is almost lossless, punishing at W4 where a coarse grid is badly matched to the
+post-pruning distribution, and worse at scale because a larger model has more channels whose
+distributions shift.
+
+#### 🔴 3. The W8 order freeze is CONTESTED and must not stand as F-24 recorded it
+
+**The W8 direction flips between scales, and both margins are noise.** 160M gave Q→P by 0.43 pp; 410M
+gives P→Q by 0.04 pp — 0.0006 nats. At 410M all three arms sit within **0.017 perplexity** of one
+another.
+
+[F-24](#f-24) froze Q→P at W8 on the 160M single-draw margin, and this contradicts it. The consequence
+is not cosmetic: the moderate budget's joint gain is **+0.07 pp against P→Q** and **−0.36 pp against
+Q→P**, so the *sign* of that budget's headline depends on which order is frozen.
+
+`order_selection_w8_replicates.yaml` re-checks it across five paired calibration draws. That config
+pre-declared the rule before any of this was seen: *if the sign varies, the orders are indistinguishable
+at W8 — freeze **P→Q**, the pre-registered primary order (§3.6), and record that the choice is
+arbitrary. Do not pick the winner of a coin toss and report a gain against it.* The sign has now varied
+across **scales**; the replicate run tests whether it also varies across draws.
+
+**Provisional status: W8 order contested, P→Q the pre-declared fallback.** Not finalised until the
+replicate evidence lands.
+
+#### 4. The W8 control gives a clean null at both scales
+
+| Scale | Joint gain at W8 |
+| --- | --- |
+| 160M | +0.07 pp |
+| 410M | **+0.00 pp** |
+
+This matters more than it looks. [F-05](#f-05) predicted the joint mechanism is inert at 8 bits (0.46%
+mask divergence against 8.86% at W4), and two independent scales now agree it produces nothing there.
+**The same pipeline yields zero when the mechanism is switched off**, which is what makes a non-zero
+result at W4 hard to dismiss as pipeline noise.
+
+#### 🔵 5. The headline: the joint gain SHRINKS with scale
+
+Against best-of-sequential, which is P→Q at both scales:
+
+| Scale | Sequential | Joint | **Joint gain** | Excess NLL advantage |
+| --- | --- | --- | --- | --- |
+| **160M** | 56.66% | 57.74% | **+1.08 pp** | **+0.0189 nats** |
+| **410M** | 58.56% | 59.24% | **+0.68 pp** | **+0.0116 nats** |
+| | | | ratio **0.63** | ratio **0.61** |
+
+**Joint wins at both scales, but by roughly 40% less at the larger one.** The two metrics agree on the
+ratio to within 0.02 despite being different functional forms — retention is exponential, excess NLL
+additive — which is at least internally coherent rather than an artefact of one scale.
+
+**This runs against the study's motivating hypothesis.** The question was whether joint compression pays
+off *more* as models grow. On this evidence it pays off **less**.
+
+**And at 410M it no longer clears the pre-registered bar.** §6.3 sets practical importance at
+**≥ 1.0 pp retention**. 160M's +1.08 pp passes by 0.08; 410M's +0.68 pp **fails**. So the effect is
+positive at both scales but practically important at only the smaller one.
+
+#### What this is not
+
+**Not a trend.** Two scale points, one calibration draw each, on the validation split. The research plan
+already states that *three* points cannot fit a scaling law; two cannot support one either. What this
+establishes is a **direction**, and a direction that two independent metrics agree on.
+
+**Not confirmatory.** Validation is a declared selection surface ([A1 §4](protocol_amendment_a1.md)),
+and there is no uncertainty estimate. A +0.68 pp gain with no error bar cannot be distinguished from
++1.08 pp with no error bar; the ratio of 0.63 could be entirely calibration noise. That is precisely
+what the eight paired replicates on the test split exist to settle.
+
+**Pythia-1B is the point that matters.** With three points a direction becomes checkable rather than
+merely stated. 1B is not downloaded yet.
+
+#### Incidental: 410M is damaged more at W8, less at W4
+
+| Budget | 160M excess NLL | 410M excess NLL |
+| --- | --- | --- |
+| moderate 30% + W8 | 0.221 | **0.272** |
+| aggressive 30% + W4 | **0.568** | 0.535 |
+
+The sign of the scale effect on *sequential* damage differs by budget. At W4, where damage is large, the
+larger model tolerates it better — the expected redundancy story. At W8 the damage is small in absolute
+terms and runs the other way, which one draw cannot separate from noise. Recorded because an earlier
+reading of the moderate cell alone suggested "410M is damaged more", and the aggressive cell reverses
+it.
+
+---
+
 ### F-24 - The winning sequential order differs by budget, and the headline survives best-of {#f-24}
+
+> 🔴 **The W8 freeze below is CONTESTED by [F-25](#f-25)**, which found the direction reverses at
+> 410M on a 0.04 pp margin. The W4 freeze is confirmed and strengthened. See F-25 §3.
 
 *2026-07-30 - Pythia-160M `50f5173d` - 493 x 512 **validation** window, dense **36.9741** - 128
 calibration sequences from train, one draw - `METHOD_VERSION = 4` - **42 min**, 5 cells -
