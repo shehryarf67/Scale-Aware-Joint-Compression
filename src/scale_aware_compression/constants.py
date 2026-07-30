@@ -231,7 +231,7 @@ EPSILON: Final[float] = 1e-12
 # ---------------------------------------------------------------------------
 RESULT_SCHEMA_VERSION: Final[str] = "2"
 
-METHOD_VERSION: Final[str] = "3"
+METHOD_VERSION: Final[str] = "4"
 """Version of the compression *algorithm*, bumped by hand when a change invalidates old records.
 
 Distinct from the schema version, which describes the record's shape. This describes what produced
@@ -244,6 +244,10 @@ History:
   2  per-output masks, matched solver budgets
   3  common dense objective for every arm, joint incumbent guard, dependency-group recapture,
      packing that reuses the solver's exact codes and scales
+  4  solver runs under a scoped intra-op thread cap (B-24). Algorithmically identical, but a
+     different BLAS thread count changes floating-point reduction order, and F-19 showed a 2-ULP
+     score difference is enough to flip a mask entry. Bumped because it *can* move a number, not
+     because the method changed -- and it was free to bump, since no records existed at the time.
 """
 """Bumped to 2 when ``status`` was added: a failed run is now recorded rather than dropped, and
 a reader must be able to filter those out."""
