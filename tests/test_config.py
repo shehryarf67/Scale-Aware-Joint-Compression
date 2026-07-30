@@ -393,6 +393,9 @@ class TestShippedConfigs:
             "qwen_validation.yaml",
             "screening.yaml",
             "screening_410m.yaml",
+            # A1 step 6: both sequential orderings on validation, so the stronger baseline can be
+            # frozen per (model, budget) before any test evaluation.
+            "order_selection.yaml",
         }
         for path in files:
             config = load_config(path)
@@ -492,6 +495,38 @@ class TestShippedConfigs:
         # numbers of calibration draws -- which is exactly the mismatch this test exists to catch.
         assert sweep.sweep.replicates == validation.sweep.replicates
         assert sweep.sweep.seeds == validation.sweep.seeds
+
+    def test_order_selection_uses_the_frozen_budgets(self, configs_dir: Path):
+        """The order chosen on validation must apply to the baseline the confirmatory stage runs.
+
+        A budget that drifted between the two files would freeze a winning sequential order for a
+        budget nothing else uses. This exact failure mode -- a value copied into a second config and
+        then left behind when the first changed -- has already happened twice here: once during the
+        budget freeze and once when the seed axis was withdrawn.
+        """
+        sweep = load_config(configs_dir / "experiments" / "main_scale_sweep.yaml")
+        order = load_config(configs_dir / "experiments" / "order_selection.yaml")
+
+        for label in ("moderate", "aggressive"):
+            expected = sweep.sweep.budget_overrides[label]["compression"]
+            actual = order.sweep.budget_overrides[label]["compression"]
+            assert actual["pruning"]["sparsity"] == expected["pruning"]["sparsity"], (
+                f"{label} sparsity differs between main_scale_sweep and order_selection"
+            )
+            assert actual["quantisation"]["bits"] == expected["quantisation"]["bits"], (
+                f"{label} bit width differs between main_scale_sweep and order_selection"
+            )
+
+    def test_order_selection_runs_both_sequential_orders(self, configs_dir: Path):
+        """§3.6 and §6.1 require best-of {P->Q, Q->P}; running one order cannot select between them."""
+        order = load_config(configs_dir / "experiments" / "order_selection.yaml")
+        assert CompressionMethod.SEQUENTIAL in order.sweep.methods
+        assert CompressionMethod.SEQUENTIAL_QP in order.sweep.methods
+
+    def test_order_selection_stays_on_validation(self, configs_dir: Path):
+        """Selecting on test would spend the confirmatory split on a method choice (A1 §5.3)."""
+        order = load_config(configs_dir / "experiments" / "order_selection.yaml")
+        assert order.data.eval_split == "validation"
 
 
 class TestSweepScope:
