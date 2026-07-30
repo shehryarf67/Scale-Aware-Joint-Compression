@@ -9,13 +9,12 @@ quantisation in decoder-only language models?**
 
 Compressing a language model usually means two things: removing weights (**pruning**) and
 reducing the numerical precision of the weights that remain (**quantisation**). In practice these
-are applied one after the other — prune, recover, then quantise. An alternative is to optimise for
-both objectives at the same time, so that the pruning decision is aware of the quantisation grid
-and vice versa (**joint pruning-aware quantisation**).
+are applied one after the other — prune, then quantise what remains. An alternative is to decide both
+together, so the pruning decision is aware of the quantisation grid and vice versa (**joint
+compression**).
 
-Joint optimisation is more expensive to train. The question this repository investigates is
-whether that extra cost pays off, and specifically whether it pays off *more as models get
-bigger*:
+Joint optimisation costs more to run. The question this repository investigates is whether that extra
+cost pays off, and specifically whether it pays off *more as models get bigger*:
 
 > How does model scale influence the effectiveness of joint versus sequential pruning and
 > quantisation in decoder-only language models?
@@ -63,13 +62,22 @@ must use a pinned commit SHA** — see [reproducibility.md](docs/reproducibility
 
 ## Compression methods compared
 
-| ID             | Method                            | Pipeline                                                                                         |
-| -------------- | --------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `dense`        | Dense FP32 baseline               | reference point for every other row                                                              |
-| `pruning`      | Pruning only                      | dense → prune → recover                                                                          |
-| `quantisation` | Quantisation only                 | dense → calibrate → quantise → convert                                                           |
-| `sequential`   | Sequential pruning → quantisation | dense → prune → recover → quantise → convert                                                     |
-| `joint`        | Joint pruning-aware quantisation  | dense → fake-quantisation prep → gradual pruning during optimisation → joint fine-tune → convert |
+All five arms are **layerwise post-training reconstruction** (plan §3.1) through one shared solver —
+not full-model fine-tuning. For each linear layer they minimise `‖X·Wᵀ − X·(M∘Q_b(W))ᵀ‖²_F` using only
+the Gram matrix `H = XᵀX` from a fixed calibration set. The arms differ in *call order*, nothing else.
+
+| ID              | Method                            | Pipeline                                                                    |
+| --------------- | --------------------------------- | --------------------------------------------------------------------------- |
+| `dense`         | Dense FP32 baseline               | reference point for every other row                                         |
+| `pruning`       | Pruning only                      | score → mask → reconstruct (stays FP32; the only arm in a latency table)     |
+| `quantisation`  | Quantisation only                 | fit scales → quantise → reconstruct                                         |
+| `sequential`    | Sequential P→Q                    | mask → reconstruct → fit scales on that result → quantise → reconstruct     |
+| `sequential_qp` | Reverse sequential Q→P            | fit scales on dense → quantise → mask → reconstruct, **reusing** those scales |
+| `joint`         | Joint                             | mask scored on the *quantised* weights, refit each iteration, best kept      |
+
+The joint arm's defining property is **decision D3**: it scores saliency as
+`S_ij = |Q_b(W_ij)| · ‖X_j‖₂`, so the mask is chosen against the grid the weights will actually live
+on. An outer loop alternates mask and scales, keeping a proposal only when it improves the objective.
 
 The central quantity of interest is **joint gain**: the quality of the joint pipeline minus the
 quality of the sequential pipeline at a matched compression budget. See
@@ -77,16 +85,36 @@ quality of the sequential pipeline at a matched compression budget. See
 
 The study compares **one specific sequential implementation against one specific joint
 implementation** and does not claim to represent pruning or quantisation in general. The joint arm is
-*joint magnitude pruning with quantisation-aware fine-tuning*, not a universal joint compression
-algorithm. Nothing in the design presumes it wins: a null or negative joint gain is a valid outcome.
+*quantisation-aware mask selection inside layerwise reconstruction*, not a universal joint compression
+algorithm. Nothing in the design presumes it wins: a null or negative joint gain is a valid outcome,
+and the sequential arm has in fact been ahead at several measured budgets.
 Exact definitions — compressible modules, pruning and quantisation methods, mask scoring, and the
 matched-budget requirements — are in [method_definition.md](docs/method_definition.md), and what could
 still make the results wrong is in [validity_threats.md](docs/validity_threats.md).
 
-### Bit widths and the 4-bit backend risk
+### The frozen budgets
 
-The moderate budget is 50% sparsity at **INT8**; the aggressive budget is 70% sparsity at **4-bit**.
-The second carries a real risk that must be resolved before the main experiments:
+**Moderate is 30% sparsity at INT8; aggressive is 30% sparsity at 4-bit.** Frozen 2026-07-29 from the
+Phase 7 screening grid — see [protocol_freeze.md](docs/protocol_freeze.md#the-frozen-compression-budgets).
+
+The superseded pair was 50% + INT8 and 70% + 4-bit. Screening measured **both as catastrophic** on
+Pythia-160M — 22.9% and 0.8% retention — and since the smallest model sets the ceiling for all three,
+neither was usable anywhere.
+
+Two consequences worth reading before interpreting any table:
+
+- **The frozen pair varies precision, not sparsity.** Both budgets prune 30%. So the sparsity-versus-
+  latency curve research question 4 asks for does **not** come from these budgets; it comes from
+  benchmark-only runs of the pruning-only arm at several sparsities, which are cheap because that arm
+  stays FP32.
+- **4-bit was chosen because it is the only regime where the joint mechanism is measurably live** —
+  8.86% mask divergence at W4 against 0.46% at W8. Two 8-bit budgets could not detect the effect this
+  study exists to measure, and would produce a confident null that was an artefact of the design.
+  INT8 is therefore the **control**, where a near-zero joint gain is the expected result.
+
+### The 4-bit backend risk
+
+The aggressive budget carries a real constraint, resolved as **decision D1**:
 
 - PyTorch's native CPU quantisation support is **strongest for INT8**.
 - **4-bit weight-only CPU deployment may require a separate backend** — a packed-weight custom linear
@@ -94,18 +122,16 @@ The second carries a real risk that must be resolved before the main experiments
 - **Latency and size results are not comparable if the moderate and aggressive settings use different
   runtimes or artefact formats.** The same applies across arms with more force: a 4-bit joint artefact
   measured against an INT8 sequential artefact is not a joint-gain measurement at all.
-- **The final backend decision must be made before the main experiments**, not after seeing results.
+**Resolved as D1:** PyTorch native CPU **INT8**, engine **`onednn`**, is the sole latency backend. W4
+contributes quality and checkpoint size only and **never appears in a latency table**. Research
+question 4 survives because the sparsity→latency curve comes from the pruning-only arm, whose weights
+stay FP32.
 
-Documented fallback if a single 4-bit CPU path cannot be implemented for both arms:
-
-| Budget                  | Sparsity | Bit width |
-| ----------------------- | -------- | --------- |
-| Moderate                | 50%      | INT8      |
-| Aggressive (fallback)   | 70%      | INT8      |
-
-This keeps every row on one runtime and one artefact format, at the cost of making precision a
-constant rather than a second compression axis. 4-bit support stays in the configuration system
-either way; what the fallback changes is whether the *main study* uses it.
+One correction found by probing rather than reading documentation: every PyTorch tutorial names the
+engine `x86`, but on the pinned torch 2.13.0+cu126 `supported_engines` is **`['onednn']` only**. The
+shipped configs said `x86`, so conversion would have failed *after* the compression compute was spent.
+A `requires_torch` test now asserts the shipped backend against the installed torch, so an upgrade that
+renames engines fails a test rather than a run.
 
 ## Experimental workflow
 
@@ -139,12 +165,12 @@ by experiment ID. See [docs/experiment_protocol.md](docs/experiment_protocol.md)
 produced on CPU.** GPUs are used only for work that does not appear in a reported deployment
 number:
 
-| Allowed on GPU                   | Must be CPU                       |
-| -------------------------------- | --------------------------------- |
-| fine-tuning, pruning recovery    | latency (mean / median / p95)     |
-| quantisation calibration         | throughput (tokens/s)             |
-| joint compression training       | peak process memory               |
-| exploratory quality evaluation   | final reported quality evaluation |
+| Allowed on GPU                     | Must be CPU                       |
+| ---------------------------------- | --------------------------------- |
+| activation capture, Gram matrices  | latency (mean / median / p95)     |
+| layerwise reconstruction solves    | throughput (tokens/s)             |
+| correctness anchors and diagnostics| peak process memory               |
+| exploratory quality evaluation     | final reported quality evaluation |
 
 Benchmarks pin the PyTorch CPU thread count, fix batch size and sequence length, run warm-up
 iterations before measurement, and report median and p95 rather than a single timing. Every
@@ -236,7 +262,8 @@ The same operations are available through the `sajc` console script, e.g.
 │   ├── experiments/   run records, tracker, scale sweep, external validation
 │   ├── metrics/       sparsity, compression ratio, retention, joint gain
 │   ├── models/        registry, safe loader, architecture adapters
-│   ├── training/      trainer, pruning recovery, callbacks
+│   ├── anchors/       independent references that check our own (Wanda, exact optimum)
+│   ├── training/      superseded fine-tuning scaffold; importable, unregistered
 │   └── visualisation/ plots and tables
 ├── tests/             lightweight tests; no downloads, no training
 ├── outputs/           RAW, UNVERIFIED run artefacts -- safe to delete, never cited
