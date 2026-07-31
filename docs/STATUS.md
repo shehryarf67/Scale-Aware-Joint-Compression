@@ -433,7 +433,36 @@ predicted the mechanism is inert at 8 bits, and two scales agree it produces not
 
 </details>
 
-### 🔴 The W8 order freeze is contested — and it was my error to freeze it
+### ✅ The W8 order is resolved — indistinguishable, so P→Q by the pre-declared rule
+
+**[F-28](findings_log.md#f-28).** Five paired draws at the moderate budget:
+
+| Margin, Q→P − P→Q | rep0 | rep1 | rep2 | rep3 | rep4 | mean |
+| --- | --- | --- | --- | --- | --- | --- |
+| | +0.43 | **−0.09** | +0.21 | +0.22 | +0.14 | **+0.18 pp**, sd 0.19 |
+
+**4/5 favour Q→P but the sign is not consistent** (p = 0.375, mean 0.97 sd from zero). The rule fixed in
+the config before the run says: sign varies → the orders are indistinguishable → **freeze P→Q**, the
+§3.6 pre-registered primary, and record the choice as arbitrary rather than measured.
+
+**So the moderate joint gain is +0.07 pp** — a clean null, as F-05 predicts for an inert mechanism. The
+−0.36 pp figure F-24 derived is withdrawn with the Q→P freeze it rested on.
+
+**My expectation was wrong twice here, in opposite directions**, and the pre-declared rule is why that
+cost nothing. First I expected indistinguishability from the W4 noise level; then, seeing each arm's sd
+was only 0.13 pp, I said 0.43 pp "could be a genuine difference". Both wrong: the relevant spread is the
+*paired margin's* (0.19 pp), not each arm's, because the arms do not move together — a draw changes which
+mask each order picks. F-26 found the same at W4.
+
+**More draws will not resolve it.** W8 is near-lossless, so both the signal and the noise are small; R≈12
+would be needed, on the control budget, for a question that does not touch the headline.
+
+**Unaffected:** the aggressive budget, where P→Q wins by +4.26 pp (160M) and +6.82 pp (410M).
+
+<details>
+<summary>The contested phase, kept for the record</summary>
+
+### The W8 order freeze was contested
 
 ### ✅ Sequential order selected — and it differs by budget
 
@@ -463,6 +492,8 @@ margin exceeded plausible noise; that was true of the W4 margin and unverified f
 `order_selection_w8_replicates.yaml` re-checks it across five paired draws, with **P→Q** as the
 pre-declared fallback if the sign varies. Current status in
 [protocol_freeze.md](protocol_freeze.md#the-frozen-sequential-order-a1-step-7).
+
+</details>
 
 ### ✅ First anchor passed — the mask is confirmed correct
 
@@ -572,7 +603,7 @@ it claims to; it says nothing about absolute quality against published work (A1 
 | 4 | Calibration replicate axis, **R=8 / 8 / 5** | ✅ **done** — `05008dc`, 37 tests |
 | 5 | Re-run the 160M validation screening | ✅ **done** — [F-23](findings_log.md#f-23) |
 | 6 | Both sequential orders (P→Q, Q→P) on validation | ✅ **done** — [F-24](findings_log.md#f-24) |
-| 7 | Freeze the winning order per (model, budget) | 🟡 **W4 frozen at 160M+410M**; W8 contested, replicate run queued; 1B outstanding |
+| 7 | Freeze the winning order per (model, budget) | ✅ **W4 and W8 both frozen at 160M+410M** — [F-28](findings_log.md#f-28); 1B outstanding |
 | 8 | Run the reduced S6 mechanistic control (12 runs) | ⬜ |
 | 9 | Freeze the entire confirmatory configuration | ⬜ |
 | 10 | Run test evaluation **once**, with no further tuning | ⬜ |

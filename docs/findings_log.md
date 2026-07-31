@@ -729,6 +729,89 @@ to zero. **The pruning budget must be verified against `mask_sparsity`.**
 
 ---
 
+### F-28 - The W8 sequential orders are indistinguishable. P→Q is frozen by the pre-declared rule {#f-28}
+
+*2026-07-31 - Pythia-160M `50f5173d` - 493 x 512 **validation** window, dense **36.9741** - five paired
+calibration draws - `METHOD_VERSION = 4` - **1 h 42 m**, 11 cells - **resolves the contested W8 freeze
+in [F-24](#f-24) / [F-25](#f-25)***
+
+[F-24](#f-24) froze **Q→P** as the moderate-budget order on a **+0.43 pp margin from one draw**.
+[F-25](#f-25) then found the direction *reversed* at 410M. This settles it across draws.
+
+| Draw | P→Q | Q→P | Margin (Q→P − P→Q) |
+| --- | --- | --- | --- |
+| rep0 | 80.20% | 80.63% | **+0.43 pp** |
+| rep1 | 80.44% | 80.35% | **−0.09 pp** |
+| rep2 | 80.10% | 80.31% | +0.21 pp |
+| rep3 | 80.33% | 80.55% | +0.22 pp |
+| rep4 | 80.20% | 80.34% | +0.14 pp |
+| | | **mean** | **+0.18 pp**, sd 0.19, SE 0.08 |
+
+**Q→P ahead in 4 of 5 draws. Sign not consistent. Sign-test p = 0.375. Mean / sd = 0.97.**
+
+#### The pre-declared rule applies, and its second branch fires
+
+`order_selection_w8_replicates.yaml` fixed the decision *before* any of this was measured:
+
+> Q→P ahead in all five → the freeze stands, and now on evidence. **The sign varying → the two orders
+> are indistinguishable at W8. Freeze P→Q, the pre-registered primary order (§3.6), and record that the
+> choice is arbitrary. Do not pick the winner of a coin toss and report a joint gain against it.**
+
+The sign varies. **W8 is therefore frozen at P→Q**, and the choice is recorded as arbitrary rather than
+as a measured preference.
+
+Note what this is *not*: it is not "P→Q is better." It is "the two are not distinguishable, so the
+pre-registered primary order is used." Q→P is ahead on the mean. Choosing it anyway would mean picking a
++0.18 pp winner out of noise and then reporting a joint gain against it — and that choice would flip the
+sign of the moderate budget's headline, which is precisely why the rule existed.
+
+#### The consequence for the moderate budget's joint gain
+
+| Baseline | Moderate joint gain |
+| --- | --- |
+| P→Q — **now frozen** | **+0.07 pp** |
+| Q→P — F-24's contested choice | −0.36 pp |
+
+So the moderate budget's gain is **+0.07 pp**: a clean null, which is what [F-05](#f-05) predicts for a
+mechanism that is inert at 8 bits. The −0.36 pp figure F-24 derived is withdrawn along with the Q→P
+freeze it rested on.
+
+#### An expectation of mine that was wrong twice, in both directions
+
+Worth recording because it shows how easily a plausible variance argument misleads.
+
+**First I expected the orders to be indistinguishable**, reasoning from the aggressive budget where
+draws move retention by 0.63–0.78 pp — far more than 0.43 pp.
+
+**Then, seeing P→Q's five draws span only 0.34 pp with sd 0.13, I reversed** and said the 0.43 pp margin
+was "over three standard deviations, which could be a genuine difference."
+
+**Both were wrong, for the same reason.** The relevant spread is not each arm's, it is the **paired
+margin's** — sd 0.19 pp, from which the mean of +0.18 pp sits 0.97 sd away. Each arm is tight *and* the
+margin is still noise, because the arms do not move together: a draw changes which mask each order
+picks, and they respond differently by construction. [F-26](#f-26) found the same thing at W4, where the
+paired difference was noisier than either arm.
+
+**The rule was fixed in advance, so being wrong twice changed nothing.** That is the entire argument for
+pre-declaring decision rules.
+
+#### Why W8 noise is small and the margin still is not resolvable
+
+W8 quantisation is near-lossless ([F-07](#f-07): 99.8% retention W8-only), so there is little damage for
+a calibration draw to modulate — hence each arm's sd of 0.13 pp against 0.63+ at W4. But the *difference*
+between two orderings at W8 is also tiny, because with an almost-lossless quantiser it barely matters
+which operation runs first. **Small signal and small noise, in roughly equal measure.** No affordable
+replicate count fixes that: at sd 0.19 pp, resolving a +0.18 pp margin at p < 0.05 would need R ≈ 12,
+spent on the *control* budget to settle a question that does not affect the headline.
+
+#### What is unaffected
+
+The **aggressive** budget, which carries the study. P→Q wins there by **+4.26 pp at 160M and +6.82 pp at
+410M** — margins twenty to thirty times this one, in the same direction at both scales. That freeze
+stands on evidence, and the [F-27](#f-27) headline is measured against it.
+
+---
+
 ### F-27 - 160M replicates cleanly. The effect is real there, and it does shrink with scale {#f-27}
 
 *2026-07-31 - Pythia-160M `50f5173d` and Pythia-410M `dd47b0e` - 493 x 512 **validation** window -
@@ -1052,8 +1135,10 @@ it.
 
 ### F-24 - The winning sequential order differs by budget, and the headline survives best-of {#f-24}
 
-> 🔴 **The W8 freeze below is CONTESTED by [F-25](#f-25)**, which found the direction reverses at
-> 410M on a 0.04 pp margin. The W4 freeze is confirmed and strengthened. See F-25 §3.
+> 🔴 **The W8 freeze below is WITHDRAWN — resolved by [F-28](#f-28).** Across five paired draws the
+> orders are indistinguishable (mean +0.18 pp, sd 0.19, 4/5, p = 0.375), so the pre-declared
+> fallback applies and W8 is frozen at **P→Q**. The moderate joint gain is therefore **+0.07 pp**,
+> not the −0.36 pp derived here. The W4 freeze is confirmed and strengthened.
 
 *2026-07-30 - Pythia-160M `50f5173d` - 493 x 512 **validation** window, dense **36.9741** - 128
 calibration sequences from train, one draw - `METHOD_VERSION = 4` - **42 min**, 5 cells -
