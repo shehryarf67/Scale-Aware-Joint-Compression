@@ -15,6 +15,8 @@ import importlib.metadata
 import os
 import platform
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from scale_aware_compression.constants import Device
@@ -141,6 +143,59 @@ def set_cpu_threads(num_threads: int, interop_threads: int | None = None) -> dic
     report["torch_num_interop_threads"] = torch.get_num_interop_threads()
     LOGGER.debug("CPU threads pinned: %s", report)
     return report
+
+
+SOLVER_INTRA_OP_THREADS = 1
+"""Intra-op threads used inside the reconstruction solver.
+
+Windows CPU builds can deadlock in OpenMP-backed linear algebra while the solver factorises the
+Gram matrix. Capping the intra-op pool for the duration of the solve avoids it. This is a
+**deadlock mitigation, not a protocol value** -- unlike ``benchmark.num_threads`` it does not affect
+any reported measurement, only how fast compression runs. Raise it if the deadlock proves not to
+reproduce.
+"""
+
+
+@contextmanager
+def cpu_thread_limit(num_threads: int) -> Iterator[int]:
+    """Cap the intra-op thread count for a block, restoring the previous value on exit.
+
+    Deliberately narrow: this touches **only** the intra-op pool, and **only** at runtime. It does
+    not set the inter-op pool and does not touch the thread environment variables, both of which are
+    process-global and effectively one-shot -- ``torch.set_num_interop_threads`` cannot be called
+    again once parallel work has started, and the BLAS libraries read the environment variables at
+    first use.
+
+    That distinction is the whole point. A process-wide pin applied at an entry point silently
+    overrides whatever ``benchmark.num_threads`` and ``benchmark.interop_threads`` ask for later in
+    the same run, so latencies get measured under conditions the run record does not describe. Use
+    this around compute that is not being measured; use
+    :func:`set_cpu_threads` for the benchmark itself.
+
+    Args:
+        num_threads: Intra-op threads to use inside the block. Must be >= 1.
+
+    Yields:
+        The thread count actually in effect inside the block.
+
+    Raises:
+        ValueError: If ``num_threads`` is less than 1.
+    """
+    if num_threads < 1:
+        raise ValueError(f"num_threads must be >= 1, got {num_threads}")
+
+    try:
+        import torch
+    except ImportError:
+        yield num_threads
+        return
+
+    previous = torch.get_num_threads()
+    torch.set_num_threads(num_threads)
+    try:
+        yield torch.get_num_threads()
+    finally:
+        torch.set_num_threads(previous)
 
 
 def get_hardware_info() -> dict[str, Any]:

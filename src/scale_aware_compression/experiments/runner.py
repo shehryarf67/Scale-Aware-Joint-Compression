@@ -127,28 +127,40 @@ def make_experiment_id(
     seed: int,
     sparsity: float,
     bits: int,
+    replicate: int | None = None,
 ) -> str:
     """Build a deterministic, filename-safe experiment identifier.
 
     Deterministic rather than random, so re-running a cell overwrites its own record instead of
     accumulating near-duplicates that later get averaged together.
 
+    ``replicate`` is what distinguishes the paired calibration draws A1 §5.1 introduced, and it must
+    appear here: eight replicates of one cell are eight *different* compressed models, so an
+    identifier that omitted the replicate would have each one overwrite the last and leave a single
+    record where the error bar should be.
+
+    The run ``seed`` is retained in the identifier only when no replicate is given. The seed is inert
+    under this method (F-15), so it distinguishes nothing -- but records taken before A1 are named by
+    it, and changing their names would orphan them.
+
     Args:
         model_name: Registry short name.
         method: Compression method.
         budget_label: Compression budget label.
-        seed: Run seed.
+        seed: Run seed. Ignored when ``replicate`` is given.
         sparsity: Target sparsity.
         bits: Target weight bit width.
+        replicate: Calibration replicate index, or ``None`` for a single-draw run.
 
     Returns:
-        An identifier such as ``pythia-410m_joint_moderate_s50_b8_seed1234``.
+        An identifier such as ``pythia-410m_joint_moderate_s50_b8_rep3``, or
+        ``..._seed1234`` when no replicate is given.
     """
     method_value = method.value if isinstance(method, CompressionMethod) else str(method)
     safe_model = model_name.replace("/", "-").replace(" ", "-")
+    suffix = f"rep{replicate}" if replicate is not None else f"seed{seed}"
     return (
-        f"{safe_model}_{method_value}_{budget_label}"
-        f"_s{round(sparsity * 100):02d}_b{bits}_seed{seed}"
+        f"{safe_model}_{method_value}_{budget_label}_s{round(sparsity * 100):02d}_b{bits}_{suffix}"
     )
 
 
@@ -235,6 +247,7 @@ class ExperimentRecord:
             seed=config.runtime.seed,
             sparsity=compression.effective_sparsity,
             bits=compression.effective_bits,
+            replicate=config.data.calibration_replicate,
         )
         # §5.6's convention, so a record is keyed by everything that makes it a distinct measurement.
         # Taking `experiment.id` alone meant two runs differing only in seed shared one identifier and
@@ -467,6 +480,12 @@ class ExperimentTracker:
             ("eval_split", config.data.eval_split),
             ("sequence_length", config.data.sequence_length),
             ("calibration_seed", config.data.calibration_seed),
+            # The replicate index is what actually distinguishes the draws, and it must be compared
+            # separately: `to_dict` serialises dataclass *fields*, so the record carries the
+            # configured `calibration_seed` rather than the effective one. Comparing the effective
+            # seed against a recorded raw seed would never match, and skip_existing would silently
+            # stop working -- fail-safe, but it would re-run the whole grid every time.
+            ("calibration_replicate", config.data.calibration_replicate),
             ("calibration_samples", config.data.calibration_samples),
         ):
             if recorded_data.get(key) != expected:

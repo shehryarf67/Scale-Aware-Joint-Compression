@@ -195,6 +195,75 @@ class TestCpuOnlyPolicy:
             BenchmarkConfig(device=Device.CUDA)
 
 
+class TestThreadPinIsHonoured:
+    """A latency measured under an unrequested thread count is not comparable to any other.
+
+    Inter-op threads are the dangerous case: torch allows them to be set once per process, so an
+    entry point that pins them early makes every later request unsatisfiable, and ``set_cpu_threads``
+    only logs that. These tests pin the guard that turns it into a failure.
+    """
+
+    def _prepare_with_report(self, monkeypatch, config: BenchmarkConfig, report: dict):
+        runner = CpuBenchmarkRunner(config)
+        monkeypatch.setattr(
+            "scale_aware_compression.benchmarking.cpu.set_cpu_threads",
+            lambda *args, **kwargs: report,
+        )
+        return runner.prepare()
+
+    def test_interop_mismatch_fails_loudly(self, monkeypatch):
+        config = BenchmarkConfig(num_threads=4, interop_threads=4, fail_on_thread_mismatch=True)
+        report = {
+            "torch_num_threads": 4,
+            "torch_num_interop_threads": 1,
+        }
+        with pytest.raises(BenchmarkError, match="inter-op threads"):
+            self._prepare_with_report(monkeypatch, config, report)
+
+    def test_interop_mismatch_warns_when_configured_to(self, monkeypatch):
+        config = BenchmarkConfig(num_threads=4, interop_threads=4, fail_on_thread_mismatch=False)
+        report = {"torch_num_threads": 4, "torch_num_interop_threads": 1}
+        assert self._prepare_with_report(monkeypatch, config, report) is report
+
+    def test_unset_interop_is_not_checked(self, monkeypatch):
+        """``interop_threads=None`` means "do not pin", so any reported value is acceptable."""
+        config = BenchmarkConfig(num_threads=4, interop_threads=None, fail_on_thread_mismatch=True)
+        report = {"torch_num_threads": 4, "torch_num_interop_threads": 8}
+        assert self._prepare_with_report(monkeypatch, config, report) is report
+
+    def test_matching_interop_passes(self, monkeypatch):
+        config = BenchmarkConfig(num_threads=4, interop_threads=2, fail_on_thread_mismatch=True)
+        report = {"torch_num_threads": 4, "torch_num_interop_threads": 2}
+        assert self._prepare_with_report(monkeypatch, config, report) is report
+
+
+class TestEntryPointsDoNotPinThreadsGlobally:
+    """The OpenMP deadlock mitigation must stay scoped to the solver.
+
+    A process-wide ``set_cpu_threads(1, interop_threads=1)`` at an entry point is irreversible for
+    inter-op and silently overrides ``benchmark.interop_threads`` for the rest of the run. It was
+    added once; this test is what stops it coming back.
+    """
+
+    @pytest.mark.parametrize(
+        "module_path",
+        [
+            "src/scale_aware_compression/cli.py",
+            "scripts/run_scale_sweep.py",
+        ],
+    )
+    def test_no_interop_pin_at_entry_points(self, module_path: str):
+        from pathlib import Path
+
+        source = Path(module_path).read_text(encoding="utf-8")
+        assert "interop_threads=1" not in source, (
+            f"{module_path} pins inter-op threads process-wide. Inter-op can only be set once per "
+            "process, so this overrides benchmark.interop_threads and every latency measured "
+            "afterwards is recorded under a thread configuration it did not run under. Scope the "
+            "mitigation to the solver with hardware.cpu_thread_limit instead."
+        )
+
+
 class TestRunnerProtocol:
     def test_runs_the_full_protocol(self, fast_config: BenchmarkConfig):
         calls = 0

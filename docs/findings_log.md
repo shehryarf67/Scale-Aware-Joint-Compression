@@ -668,7 +668,7 @@ as frozen on current code.
 *2026-07-29 - Pythia-160M `50f5173d` - 493 x 512 window - dense **36.97** - one seed - matched solver
 budgets (96 passes both arms, verified) - **supersedes [F-10](#f-10) and [F-13](#f-13)***
 
-> 🔴 **The joint-gain column below is retracted — see [F-18](#f-18).** Two further faults were found
+> 🔴 **Superseded by [F-23](#f-23); the joint-gain column below was already retracted by [F-18](#f-18).** Two further faults were found
 > in the comparison itself, and the one with a direction inflated joint gain. The perplexities are
 > retained as the record of what that version of the code produced; the **gain** must not be quoted.
 
@@ -726,6 +726,655 @@ three quantities reach the record and that they add up.
 The distinction is real and visible now: at W4 the numeric sparsity exceeds the mask sparsity by
 roughly 1.8 percentage points (0.3176 against 0.30 at S5), all of it survivors that rounding collapsed
 to zero. **The pruning budget must be verified against `mask_sparsity`.**
+
+---
+
+### F-25 - 410M: budgets confirmed, W4 order confirmed, and the joint gain SHRINKS with scale {#f-25}
+
+*2026-07-30 - Pythia-410M `dd47b0e` - 493 x 512 **validation** window, dense **22.166** - 128
+calibration sequences from train, one draw - `METHOD_VERSION = 4` - **3 h 18 m**, 7 cells -
+**supersedes [F-14](#f-14)***
+
+One grid answering three questions: do the frozen budgets hold at 410M, which sequential order wins
+there, and does the joint gain change with scale.
+
+| Budget | Arm | Perplexity | Retention | Excess NLL |
+| --- | --- | --- | --- | --- |
+| **moderate** 30% + W8 | sequential P→Q | 29.102 | 76.17% | 0.2722 |
+| | sequential Q→P | 29.117 | 76.13% | 0.2728 |
+| | joint | **29.100** | 76.17% | 0.2722 |
+| **aggressive** 30% + W4 | sequential **P→Q** | 37.851 | **58.56%** | 0.5351 |
+| | sequential Q→P | 42.843 | 51.74% | 0.6590 |
+| | **joint** | **37.415** | **59.24%** | **0.5235** |
+
+#### 1. Both frozen budgets are confirmed at 410M
+
+76.17% and 58.56% sequential retention — both inside §5.3's measurable-but-not-catastrophic band, well
+above the 50% floor and far below the 99% ceiling. **§5.3's pre-1B requirement is satisfied.**
+
+#### 2. The W4 order is confirmed, decisively, at both scales
+
+| Budget | 160M | 410M |
+| --- | --- | --- |
+| **W4 aggressive** | P→Q by **+4.26 pp** | P→Q by **+6.82 pp** |
+| W8 moderate | Q→P by +0.43 pp | **P→Q by +0.04 pp** |
+
+**P→Q is unambiguously right at W4, and the margin grows with scale.** On the additive scale the Q→P
+penalty is 0.078 nats at 160M and 0.124 at 410M. That is consistent with the mechanism proposed in
+[F-24](#f-24): Q→P reuses the dense-fitted scales without refitting — nearly free at W8 where
+quantisation is almost lossless, punishing at W4 where a coarse grid is badly matched to the
+post-pruning distribution, and worse at scale because a larger model has more channels whose
+distributions shift.
+
+#### 🔴 3. The W8 order freeze is CONTESTED and must not stand as F-24 recorded it
+
+**The W8 direction flips between scales, and both margins are noise.** 160M gave Q→P by 0.43 pp; 410M
+gives P→Q by 0.04 pp — 0.0006 nats. At 410M all three arms sit within **0.017 perplexity** of one
+another.
+
+[F-24](#f-24) froze Q→P at W8 on the 160M single-draw margin, and this contradicts it. The consequence
+is not cosmetic: the moderate budget's joint gain is **+0.07 pp against P→Q** and **−0.36 pp against
+Q→P**, so the *sign* of that budget's headline depends on which order is frozen.
+
+`order_selection_w8_replicates.yaml` re-checks it across five paired calibration draws. That config
+pre-declared the rule before any of this was seen: *if the sign varies, the orders are indistinguishable
+at W8 — freeze **P→Q**, the pre-registered primary order (§3.6), and record that the choice is
+arbitrary. Do not pick the winner of a coin toss and report a gain against it.* The sign has now varied
+across **scales**; the replicate run tests whether it also varies across draws.
+
+**Provisional status: W8 order contested, P→Q the pre-declared fallback.** Not finalised until the
+replicate evidence lands.
+
+#### 4. The W8 control gives a clean null at both scales
+
+| Scale | Joint gain at W8 |
+| --- | --- |
+| 160M | +0.07 pp |
+| 410M | **+0.00 pp** |
+
+This matters more than it looks. [F-05](#f-05) predicted the joint mechanism is inert at 8 bits (0.46%
+mask divergence against 8.86% at W4), and two independent scales now agree it produces nothing there.
+**The same pipeline yields zero when the mechanism is switched off**, which is what makes a non-zero
+result at W4 hard to dismiss as pipeline noise.
+
+#### 🔵 5. The headline: the joint gain SHRINKS with scale
+
+Against best-of-sequential, which is P→Q at both scales:
+
+| Scale | Sequential | Joint | **Joint gain** | Excess NLL advantage |
+| --- | --- | --- | --- | --- |
+| **160M** | 56.66% | 57.74% | **+1.08 pp** | **+0.0189 nats** |
+| **410M** | 58.56% | 59.24% | **+0.68 pp** | **+0.0116 nats** |
+| | | | ratio **0.63** | ratio **0.61** |
+
+**Joint wins at both scales, but by roughly 40% less at the larger one.** The two metrics agree on the
+ratio to within 0.02 despite being different functional forms — retention is exponential, excess NLL
+additive — which is at least internally coherent rather than an artefact of one scale.
+
+**This runs against the study's motivating hypothesis.** The question was whether joint compression pays
+off *more* as models grow. On this evidence it pays off **less**.
+
+**And at 410M it no longer clears the pre-registered bar.** §6.3 sets practical importance at
+**≥ 1.0 pp retention**. 160M's +1.08 pp passes by 0.08; 410M's +0.68 pp **fails**. So the effect is
+positive at both scales but practically important at only the smaller one.
+
+#### What this is not
+
+**Not a trend.** Two scale points, one calibration draw each, on the validation split. The research plan
+already states that *three* points cannot fit a scaling law; two cannot support one either. What this
+establishes is a **direction**, and a direction that two independent metrics agree on.
+
+**Not confirmatory.** Validation is a declared selection surface ([A1 §4](protocol_amendment_a1.md)),
+and there is no uncertainty estimate. A +0.68 pp gain with no error bar cannot be distinguished from
++1.08 pp with no error bar; the ratio of 0.63 could be entirely calibration noise. That is precisely
+what the eight paired replicates on the test split exist to settle.
+
+**Pythia-1B is the point that matters.** With three points a direction becomes checkable rather than
+merely stated. 1B is not downloaded yet.
+
+#### Incidental: 410M is damaged more at W8, less at W4
+
+| Budget | 160M excess NLL | 410M excess NLL |
+| --- | --- | --- |
+| moderate 30% + W8 | 0.221 | **0.272** |
+| aggressive 30% + W4 | **0.568** | 0.535 |
+
+The sign of the scale effect on *sequential* damage differs by budget. At W4, where damage is large, the
+larger model tolerates it better — the expected redundancy story. At W8 the damage is small in absolute
+terms and runs the other way, which one draw cannot separate from noise. Recorded because an earlier
+reading of the moderate cell alone suggested "410M is damaged more", and the aggressive cell reverses
+it.
+
+---
+
+### F-24 - The winning sequential order differs by budget, and the headline survives best-of {#f-24}
+
+> 🔴 **The W8 freeze below is CONTESTED by [F-25](#f-25)**, which found the direction reverses at
+> 410M on a 0.04 pp margin. The W4 freeze is confirmed and strengthened. See F-25 §3.
+
+*2026-07-30 - Pythia-160M `50f5173d` - 493 x 512 **validation** window, dense **36.9741** - 128
+calibration sequences from train, one draw - `METHOD_VERSION = 4` - **42 min**, 5 cells -
+**closes [A1](protocol_amendment_a1.md) step 6***
+
+`method_definition.md` (plan §3.6, §6.1) has always required joint gain to be measured against
+**best-of {P→Q, Q→P}**, with the winning order recorded. The sweep only ever ran P→Q. Q→P had never
+been run end to end in this project until now.
+
+| Budget | Arm | Perplexity | Retention |
+| --- | --- | --- | --- |
+| **moderate** 30% + W8 | sequential **P→Q** | 46.101 | 80.20% |
+| | sequential **Q→P** | **45.856** | **80.63%** ← best |
+| | joint | 46.064 | 80.27% |
+| **aggressive** 30% + W4 | sequential **P→Q** | **65.261** | **56.66%** ← best |
+| | sequential **Q→P** | 70.557 | 52.40% |
+| | joint | **64.041** | **57.73%** |
+
+#### The winning order genuinely differs by budget
+
+| Budget | Winner | Margin over the loser |
+| --- | --- | --- |
+| moderate 30% + W8 | **Q→P** | +0.43 pp |
+| aggressive 30% + W4 | **P→Q** | +4.26 pp |
+
+A1 §5.3 anticipated this explicitly — "the winning order may legitimately differ by model and by
+budget" — but it is worth noting that it *does*, because a single global choice would have been wrong
+at one of the two budgets.
+
+#### Consequence 1: the moderate budget's joint gain flips sign
+
+| Baseline | Joint gain at moderate |
+| --- | --- |
+| P→Q only, as [F-23](#f-23) reported it | **+0.07 pp** |
+| **best-of-sequential** | **−0.36 pp** |
+
+Q→P beats both P→Q *and* joint at W8. So the small positive gain at the control budget becomes a small
+negative one once the baseline is the one the documents always required.
+
+This is exactly the omission §3.6 existed to prevent, and it ran the direction the rest of this
+project's bugs ran: **not running Q→P was flattering joint.** It is also, notably, *more* consistent
+with [F-05](#f-05) than +0.07 was — F-05 predicts the joint mechanism is inert at W8, and a mechanism
+that is inert should not produce a positive gain.
+
+#### Consequence 2: the headline is unchanged
+
+**At the aggressive budget P→Q was already the stronger order, so the +1.08 pp joint gain stands
+exactly as [F-23](#f-23) measured it.** Best-of-sequential does not erode it. Q→P is 4.26 pp *behind*
+P→Q there, so it never becomes the baseline.
+
+That is the more important half of this finding. The headline effect had already survived a solver
+rewrite (F-23); it has now also survived being measured against the stronger of two baselines.
+
+#### Why Q→P wins at W8 and loses badly at W4
+
+A coherent mechanistic reading, offered as interpretation rather than as measurement:
+
+* **At W8 quantisation is nearly lossless** ([F-07](#f-07): W8-only retention 99.8%). Quantising first
+  costs almost nothing, and the mask is then chosen on weights that already sit on their final grid —
+  so pruning reconstruction optimises the deployed representation directly rather than an FP32 proxy.
+* **At W4 the order is punishing.** Q→P commits to a coarse grid before pruning, and by construction it
+  **reuses the dense-fitted scales without refitting** — that non-refit is what keeps it a *sequential*
+  arm rather than a joint one. Those dense-fitted scales are badly matched to the post-pruning weight
+  distribution at 4 bits, and unlike joint it never gets to revise them.
+
+This also predicts the asymmetry in the margins: +0.43 pp at W8 against −4.26 pp at W4. The penalty for
+a frozen grid grows as the grid gets coarser.
+
+#### Two consistency checks that passed
+
+**Both P→Q cells reproduced [F-23](#f-23) exactly** — 46.101 and 65.261, to three decimals, under
+different budget labels (`moderate`/`aggressive` against `s1_30_w8`/`s5_30_w4`) and from a different
+config file. The budget-label plumbing changes nothing, which is worth having verified rather than
+assumed.
+
+Dense also reproduced at **36.974**, matching F-23 rather than the F-22 anchor's 36.9744 — consistent
+with the thread-configuration sensitivity F-23 recorded, since both runs went through the same runner.
+
+#### What to freeze
+
+| Model | Budget | Frozen sequential order |
+| --- | --- | --- |
+| pythia-160m | moderate | **Q→P** |
+| pythia-160m | aggressive | **P→Q** |
+
+**Still outstanding before the confirmatory stage:** the same selection at 410M and 1B. Pythia-1B is
+not downloaded yet. One draw per cell was enough here because both margins (+0.43 pp, +4.26 pp) exceed
+anything a single draw's noise plausibly explains — the aggressive margin by a wide factor. Had they
+landed within noise, replicates would have been added before freezing.
+
+---
+
+### F-23 - Screening on anchored code. The frozen budgets hold, and S6 answers the mechanism question {#f-23}
+
+*2026-07-30 - Pythia-160M `50f5173d` - 493 x 512 **validation** window, dense **36.9741** - 128
+calibration sequences from train, one draw - `METHOD_VERSION = 4` - **2 h 08 m**, 13 cells -
+**supersedes [F-17](#f-17)***
+
+The first screening grid produced by code that has passed three independent correctness anchors
+([F-19](#f-19), [F-20](#f-20), [F-22](#f-22)).
+
+| Budget | Sparsity | Bits | Seq ppl | Joint ppl | Seq ret. | Joint ret. | **Joint gain** | Verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **S1** | 30% | W8 | 46.10 | 46.06 | **80.2%** | 80.3% | **+0.07 pp** | **ELIGIBLE** |
+| S2 | 50% | W8 | 177.76 | 175.48 | 20.8% | 21.1% | +0.27 pp | catastrophic |
+| S3 | 50% | W4 | 254.53 | 240.99 | 14.5% | 15.3% | +0.82 pp | catastrophic |
+| S4 | 70% | W4 | 5041.61 | 5895.00 | 0.7% | 0.6% | −0.11 pp | catastrophic |
+| **S5** | 30% | W4 | 65.26 | **64.04** | **56.7%** | **57.7%** | **+1.08 pp** | **ELIGIBLE** |
+| **S6** | 40% | W8 | 67.93 | 68.22 | **54.4%** | 54.2% | **−0.23 pp** | **ELIGIBLE** |
+
+#### The frozen budgets survive a third time
+
+The same three budgets are eligible and the same two stay frozen, so
+[protocol_freeze.md](protocol_freeze.md) is unchanged. Sequential retention across every version of
+this code:
+
+| Budget | F-14 | F-17 | **F-23** |
+| --- | --- | --- | --- |
+| S1 30% + W8 | 80.4% | 80.3% | **80.2%** |
+| S5 30% + W4 | 56.0% | 57.1% | **56.7%** |
+
+Within half a percentage point across three rewrites of the solver. None of the retracted bugs touched
+the sequential arm's first stage, and this is what that looks like.
+
+#### 🔵 S6 answers the question A1 planned a separate experiment for
+
+**S5 and S6 are quality-matched by two different recipes, and only the low-bit one shows a joint gain.**
+
+| | Sparsity | Bits | Seq retention | Joint gain |
+| --- | --- | --- | --- | --- |
+| **S5** | 30% | **W4** | 56.7% | **+1.08 pp** |
+| **S6** | 40% | **W8** | 54.4% | **−0.23 pp** |
+
+Sequential retention differs by 2.3 pp — comparable damage from very different settings — yet the joint
+gain differs by 1.31 pp and changes sign. Among all three *eligible* budgets the pattern is clean: both
+W8 budgets give gains indistinguishable from zero (+0.07, −0.23) and the only W4 budget gives +1.08.
+
+This is exactly the discrimination [A1 §5.4](protocol_amendment_a1.md) commissioned a 12-run control to
+make: **it supports a precision-specific mechanism rather than a compression-severity effect.** It is
+what [F-05](#f-05) predicts from mask divergence of 8.86% at W4 against 0.46% at W8.
+
+**It arrived free, as a by-product of screening**, which is worth noting because A1 flagged S6 as the
+weakest of its five decisions on the "would this have been justified before seeing results" test. It no
+longer costs anything at 160M. The 410M half and the paired replicates are still outstanding.
+
+**Do not over-read it.** One draw, one model, validation split. The catastrophic budgets do *not*
+support the same pattern — S2 is W8 with +0.27 and S4 is W4 with −0.11 — but at 21% and 0.6% retention
+those models are rubble and the differences carry no information.
+
+#### The headline figure, and a prediction that failed
+
+**S5 joint gain is +1.08 pp, against the retracted +1.03 pp.**
+
+The prediction on record before this run was that it would come out *below* +1.03, since the B-22
+correction removed a bias that flattered joint. It did not move. That prediction was wrong.
+
+What the stability does buy: the figure survived a rewrite that changed the reconstruction objective,
+added an acceptance guard, fixed activation grouping, and altered the packing path. **Two very
+different code versions landing on +1.03 and +1.08 is genuine evidence the effect is not a bug
+artefact** — which could not be said of either retracted number.
+
+What it does not buy:
+
+- it still sits **barely over** the pre-registered ≥ 1.0 pp threshold, the same discomfort F-17 recorded;
+- **no uncertainty estimate** — one calibration draw, by design for screening;
+- **validation split**, which A1 §4 declares a selection surface.
+
+One consideration that cuts *toward* joint: [F-21](#f-21) measured the solver as handling the joint mask
+**less** well (efficiency 0.5631 against 0.6409), so solver slack works against joint here. If anything
++1.08 understates.
+
+#### Two incidental observations, both worth keeping
+
+**Equal wall-clock corroborates the matched solver budgets.** Every compressed cell took ~9.3 minutes,
+joint and sequential alike. §3.11 requires matched optimisation budgets and B-14 was a violation of it;
+equal wall-clock is independent evidence the fix holds in practice and not only in the step counter.
+One outlier: sequential S3 took 20.6 min against ~9.3 for everything else, cause unknown, result
+consistent with its neighbours.
+
+**Dense perplexity is not bit-reproducible across thread configurations.** This run measured dense at
+**36.9741**; the [F-22](#f-22) anchor measured **36.9744** on the identical model and identical data an
+hour earlier. A relative difference of 8e-6, from floating-point reduction order under a different CPU
+thread count. Negligible in itself — but dense perplexity is the *denominator of every retention
+figure*, so retention is reproducible to about four significant figures rather than exactly. Worth
+stating before someone treats a 0.01 pp retention difference as signal.
+
+---
+
+### F-22 - External SparseGPT comparison: our absolute numbers are credible {#f-22}
+
+*2026-07-30 - Pythia-160M `50f5173d` - 493 x 512 **validation** window, dense **36.9744** - 128
+calibration sequences from train, fingerprint `b0e766b25fdd6536` - 30% sparsity, pruning-only -
+reference is `IST-DASLab/sparsegpt` `SparseGPT.fasterprune`, **unmodified** - **closes A1 §5.5b2***
+
+The only check that speaks to *absolute* quality rather than internal consistency. Matched on model,
+revision, calibration draw, module coverage and evaluation loader; the compression algorithm is the
+only unmatched variable.
+
+| Arm | Perplexity | Retention |
+| --- | --- | --- |
+| Dense | **36.9744** | 100% |
+| **Ours**, per-output-row mask + sweep | **45.6644** | **80.97%** |
+| **Ours**, *tensor-wide* mask + sweep | **59.9617** | **61.66%** |
+| **Reference SparseGPT**, unmodified | **66.0355** | **55.99%** |
+
+All at measured sparsity 0.2997-0.3000.
+
+#### We beat the canonical implementation by 25 points, and that was a reason for suspicion
+
+The raw gap is **+24.98 pp retention** in our favour, **-30.85%** relative perplexity -- eight times the
+A1 alarm threshold. A result that flattering against a well-cited reference is far more likely to be a
+misconfiguration than a genuine win, so it was chased rather than reported.
+
+**Predicted direction was wrong.** [F-20](#f-20) found our sweep captures only 0.6409 of the achievable
+objective gain, so the expectation on record before running this was that SparseGPT would come out
+*ahead*. It did not, by a wide margin, and in the direction that most needed scepticism.
+
+#### The cause, read from their source and then measured
+
+`fasterprune` selects its mask like this:
+
+```python
+tmp = W1**2 / (torch.diag(Hinv1).reshape((1, -1))) ** 2
+thresh = torch.sort(tmp.flatten())[0][int(tmp.numel() * sparsity)]
+mask1 = tmp <= thresh
+```
+
+`W1` is `(out_features, 128)` and `tmp.flatten()` thresholds **jointly across all output rows** within
+each 128-column block. That is a tensor-wide comparison group. Ours is **per-output-row** -- and
+[F-07](#f-07) had already measured that exact difference as worth 6.7x perplexity on this model, because
+tensor-wide ranking lets a low-energy input column be deleted in every row at once.
+
+**So the control was to run our own pipeline with their comparison group.** Result:
+
+| | Retention gap | Share of the 24.98 pp |
+| --- | --- | --- |
+| Explained by the comparison group | **19.31 pp** | **77.3%** |
+| Residual after matching it | 5.67 pp | 22.7% |
+
+Residual relative perplexity is **-9.20%**, just inside A1's 10% alarm band.
+
+**Three-quarters of the gap is the mask comparison group.** Not our reconstruction, and not a defect in
+either implementation -- theirs is their *documented default*, and SparseGPT is published on models like
+OPT-175B where a 160M model's lack of redundancy is not a factor. This is an external corroboration of
+[F-07](#f-07) from a direction we did not choose.
+
+#### The residual 5.67 pp, and what it is not
+
+Not separable from this run. The remaining candidates:
+
+* **the criterion.** Theirs is `w^2 / [H^-1]^2_jj`; ours is Wanda's `|w| * ||X_j||_2`. The Wanda paper
+  reports its criterion matching or beating SparseGPT at moderate sparsity, so a residual in this
+  direction is consistent with published work rather than surprising.
+* **the pool shape.** Their threshold is per 128-column block, ours is over the whole tensor -- so their
+  mask is *more* constrained (exactly 30% per block), which should if anything help them.
+* **the reconstruction.** Cannot be isolated here, because `fasterprune` chooses its mask internally and
+  cannot be handed an external one without editing it, which would forfeit running it unmodified.
+
+#### What this settles
+
+**Our absolute retention is not implausibly high.** ~81% at 30% pruning-only is what a per-output-row
+Wanda mask plus error compensation produces, it reproduces bit-for-bit across runs, and when matched on
+comparison group it sits within ~9% relative perplexity of the canonical SparseGPT. The open question
+from [F-20](#f-20) -- "is ~57% retention plausible or does it indicate a remaining implementation gap?"
+-- is answered: **plausible.**
+
+**What it does not settle:** whether our *reconstruction* specifically is competitive. That would need
+their sweep driven by our mask, which their code does not permit without modification.
+
+#### Three faults in the driver, all of which would have produced numbers rather than errors
+
+Recorded because the pattern is the point. Only the second one crashed.
+
+| Fault | Would have looked like |
+| --- | --- |
+| Live KV cache across block replays (B-28) | a slightly different algorithm |
+| `DatasetSummary.token_fingerprint` -- wrong attribute | *(crashed; the harmless kind)* |
+| `blocks[0] = Catcher(...)` on a **copy** (B-29) | SparseGPT run on **zero** calibration data |
+
+The third is the instructive one. Every published driver uses that swap trick, because in their repos
+`model.decoder.layers` is the live `nn.ModuleList`. Our `get_decoder_blocks` returns `list(current)` --
+a copy -- so the assignment rebound a throwaway list while the model went on calling the real block.
+**The only reason it surfaced is an empty-capture guard added an hour earlier for unrelated reasons.**
+Without it, SparseGPT would have pruned against nothing and the number would have been reported.
+
+---
+
+### F-21 - Solver slack IS arm-dependent, but it never inverted a mask ranking {#f-21}
+
+*2026-07-30 - Pythia-160M `50f5173d` - calibration fingerprint `b0e766b25fdd6536` - 30% sparsity, joint
+mask scored at W4 - 12 modules x 8 rows = **96 rows** solved exactly - **partially answers the
+[F-20](#f-20) confound***
+
+| Quantity | Result |
+| --- | --- |
+| Mask divergence between arms | **7.8% - 12.6%** per module (consistent with [F-05](#f-05)'s 8.86%) |
+| Mean solver efficiency, **sequential** mask | **0.6409** |
+| Mean solver efficiency, **joint** mask | **0.5631** |
+| **Efficiency gap (joint − sequential)** | **−0.0778** |
+| **Rows where the solver misranks the masks** | **0 of 96 (0.0%)** |
+
+#### The reassuring half
+
+**The solver never got the direction wrong.** On all 96 rows, whenever the sweep said one mask gave a
+lower objective, the exact optimum agreed. The sweep does not invert mask quality, so the *sign* of a
+measured arm difference is not a solver artefact.
+
+#### The confound is confirmed real
+
+**Solver efficiency differs systematically by mask shape: 0.6409 versus 0.5631, a 7.8 percentage-point
+gap.** So the [F-20](#f-20) worry was not hypothetical -- slack *is* arm-dependent. The mechanism is the
+expected one: the joint mask is a different shape, different shapes give different `H[S,S]` conditioning,
+and conditioning determines how much a one-pass sweep recovers.
+
+The gap is also not uniform in sign across depth. Layers 0 and 4 favour the sequential mask by 0.06-0.33;
+layer 8 favours the **joint** mask by 0.10-0.20. So this is not a constant offset that would cancel in a
+difference -- it varies by layer and could partially cancel or partially accumulate depending on the
+model.
+
+#### 🔴 What this measurement does NOT settle, and why
+
+**The design cannot isolate the effect on the headline joint gain, and I first described it as though it
+could.** Two reasons, and the second is a hard limit rather than a fixable oversight:
+
+1. **Reconstruction ran pruning-only for both arms**, deliberately, to isolate the mask's effect on
+   solver efficiency from quantisation. But the joint mask is *selected under a quantised grid* (D3), so
+   scoring it on a pruning-only objective disadvantages it by construction. Both `sweep_advantage` and
+   `optimal_advantage` came out **negative on all 96 rows** -- the sequential mask wins the pruning-only
+   objective unanimously, under both the sweep and the exact optimum. That is expected and says nothing
+   about the arms' real comparison.
+
+2. **No exact optimum exists for the quantised problem.** The closed-form masked minimiser
+   `(H_SS)^-1 H_S,: w` solves a *continuous* least-squares problem. With weights constrained to a
+   discrete grid the problem is an integer program with no closed form, so the anchor's reference -- the
+   thing that makes it a lower bound at all -- is unavailable in the regime the study actually reports.
+
+A metric-naming error worth recording because it nearly propagated: the aggregate ratio was originally
+called `attributable_joint_benefit` and printed as "1.0 = entirely real, 0.0 = entirely solver". On this
+run it read **+0.6425**, which invites "64% of the joint gain is real" -- when in fact every row's
+advantage was negative and the number is the ratio of two *disadvantages*, meaning the sweep
+**overstates the joint mask's penalty by about 1.56x**. Renamed `advantage_fidelity`, documented for
+both sign cases, and now printed next to the sign of the advantage it is a ratio of.
+
+#### Where this leaves the confound
+
+| Question | Status |
+| --- | --- |
+| Does solver slack differ between arms? | **Yes, 7.8 pp, and it varies in sign by depth** |
+| Can the solver invert which mask is better? | **No -- 0 of 96 rows** |
+| Does that change the sign of the reported joint gain? | **No**, on this evidence |
+| Does it change the *magnitude* of the reported joint gain? | **Unknown, and not answerable this way** |
+
+So a ~1 pp joint gain cannot be dismissed as a solver artefact in *direction*, which is the part that
+matters most for the research question. Its *magnitude* remains subject to a 7.8 pp efficiency
+difference whose net effect on end-to-end perplexity is unmeasured. **This belongs in the paper's
+limitations either way**, stated as: the reconstruction solver is approximate, its approximation quality
+differs measurably between the two arms' masks, and the study reports a difference that the solver
+provably ranks correctly but may not scale correctly.
+
+---
+
+### F-20 - The sweep is correct, and captures 64% of the achievable gain {#f-20}
+
+*2026-07-30 - Pythia-160M `50f5173d` - 128 calibration sequences x 512 tokens from **train**,
+fingerprint `b0e766b25fdd6536` - 30% sparsity, pruning-only - 12 modules x 8 rows = **96 rows** solved
+exactly in float64*
+
+The second Amendment A1 anchor (§5.5b1). **Both hard invariants hold.**
+
+| Quantity | Result |
+| --- | --- |
+| Rows compared | **96** (12 modules, 4 module types, 3 depths) |
+| Rows scoring **below** the provable optimum | **0** - required, since it is impossible |
+| Rows ending **worse than naive** masking | **0** - required, the accept-only-if-better guard works |
+| Mean improvement over naive | **+38.65%** of the naive objective |
+| **Mean efficiency** | **0.6409** of the achievable gain |
+| Worst-row efficiency | 0.3927 |
+
+#### What was checked, and why it is stronger than a SparseGPT port
+
+For a fixed mask the objective `sum_o (w-w_hat)^T H (w-w_hat)` has a closed-form minimiser per output
+row, `w_hat_S = (H_SS)^-1 H_S,: w`. The anchor solves that exactly, in float64, with no damping, and
+compares our sweep against it.
+
+That beats reimplementing SparseGPT, and the reason is worth stating: **SparseGPT's contribution is
+speed, not a different objective.** Comparing our sweep to another approximation would only establish
+that two approximations agree. Comparing it to the exact optimum measures how much ours actually gives
+up -- and gives a genuine **lower bound**, so a result below it would prove a defect rather than
+suggest one.
+
+The objective is **separable across output rows**, which is what makes this tractable: each sampled row
+is a complete test of that row, not an approximation of the layer. A full-layer exact solve would cost
+`out_features * |S|^3`, the very cost the sweep exists to avoid.
+
+#### 🟡 The 64% is a finding in its own right, and it has a consequence
+
+Our one-pass sweep leaves roughly **36% of the achievable objective improvement unclaimed** versus the
+exact per-row optimum. That is not a defect -- a single pass giving up some of the optimum is the
+documented trade for making wide layers tractable, and it is why the sweep was chosen over ALS (D2).
+It is also remarkably **consistent**, which is what makes it worth recording:
+
+| Module type | Mean efficiency across depths |
+| --- | --- |
+| `attention.query_key_value` | 0.613, 0.612, 0.662 |
+| `attention.dense` | 0.570, 0.611, 0.609 |
+| `mlp.dense_h_to_4h` | 0.612, 0.627, 0.686 |
+| `mlp.dense_4h_to_h` | 0.674, 0.721, 0.695 |
+
+Range 0.57-0.72 across every module type and depth sampled. So this is a systematic property of the
+solver, not noise and not one bad layer.
+
+**The consequence, which is a validity threat and not just a curiosity.** The joint-versus-sequential
+difference this study exists to measure has been around **1 pp of retention**. The solver is leaving
+36% of the achievable objective gain on the table. If that slack is **not identical between the two
+arms** -- and there is no reason to assume it is, because the arms produce different masks, different
+masks give different `H_SS` conditioning, and conditioning is exactly what determines how well a
+one-pass sweep does -- then part or all of the measured arm difference could be **solver slack rather
+than the mask mechanism**.
+
+This is directly measurable with the tool that produced this finding: run the anchor separately on the
+sequential and joint masks and compare efficiency. **Not yet done.** Until it is, a small joint gain
+cannot be cleanly attributed to the joint mechanism. Recorded in
+[validity_threats.md](validity_threats.md#solver-slack-may-exceed-the-effect-being-measured).
+
+#### What this does *not* establish
+
+Whether our absolute quality is competitive. This says the solver optimises what it claims to optimise;
+it says nothing about whether ~57% retention at 30% + W4 is in line with published work. That still
+needs an external run with comparable numbers -- A1 §5.5(b2), still open. **Passing this anchor must
+not be read as closing the external-comparison question.**
+
+#### A sampling fault in the anchor's first run
+
+The first version sampled 6 modules by striding `len(names) // 6`. A GPT-NeoX block contributes four
+target modules in a fixed order, so on a 48-module model that stride is exactly 8 and returned
+`attention.query_key_value` **six times** -- never touching an MLP projection, which are the widest
+layers and the ones where a one-pass sweep has the most to compensate for. The verdict looked fine and
+covered a quarter of the model.
+
+Replaced with stratified sampling across module types and depths, which is what produced the table
+above. It also now warns when the requested count cannot be spread evenly, rather than silently
+returning fewer. Both behaviours are pinned by tests, including one that asserts the old stride would
+have failed.
+
+---
+
+### F-19 - The mask is confirmed correct against an independent implementation {#f-19}
+
+*2026-07-30 - Pythia-160M `50f5173d` - 128 calibration sequences x 512 tokens from **train**,
+fingerprint `b0e766b25fdd6536` - 30% sparsity, per-output comparison group - GPU capture -
+**the first external check this project has ever passed***
+
+The first of Amendment A1's correctness anchors (§5.5a). **It passes.**
+
+| Quantity | Result |
+| --- | --- |
+| Modules compared | **48** (84,934,656 weights) |
+| Column norms agree | **yes** - worst relative difference **6.0e-07** |
+| Masks agree, on matched norms | **yes** - **0 differing positions** |
+| Worst per-module overlap | **1.000000** |
+| Precision-sensitive positions | 4 (informational, explained below) |
+
+Our saliency rule *is* the Wanda criterion, so an independent implementation on matched inputs must
+produce the same mask. It does, exactly, across every targeted weight in the model.
+
+**Why this is worth more than a passing test.** The two paths differ where faults would hide. Ours
+derives `||X_j||_2` from the streamed Gram as `sqrt(diag(X^T X))`; the reference sums column squares
+directly and never forms a Gram, so a streaming fault cannot cancel out. Ours computes an exact prune
+count and scatters; the reference sorts and takes top-k per row. Agreement across two different routes
+is evidence the criterion, the norm accumulation, the module selection and the comparison group are
+all right.
+
+**What it does not cover.** Reconstruction. The error-compensated column sweep is the more intricate
+half and the half where B-22 and B-23 lived; it needs the SparseGPT anchor (§5.5b), which has not run.
+So this closes the mask question and leaves the reconstruction question open.
+
+#### The 4 disagreements, and why they are not a defect
+
+The first run reported 4 differing positions out of 84,934,656 and a verdict of INVESTIGATE. Chased to
+the ground rather than dismissed:
+
+| Module | Disputed pair, float64 score | float32 gap | float32 eps at that magnitude |
+| --- | --- | --- | --- |
+| `layers.10.mlp.dense_4h_to_h` | both `7.898050546646e-01` | 1.79e-07 | 9.40e-08 |
+| `layers.11.attention.query_key_value` | both `1.520126152039e+01` | 4.77e-06 | 1.81e-06 |
+
+Two modules, one row each, two positions each, and **both arms pruned the same count** - the signature
+of a swap, not a systematic divergence. Both pairs **tie exactly in float64** and differ by 2-3 ULPs in
+float32, so which weight survives is decided by arithmetic rather than by importance.
+
+The decisive test was to rebuild our mask from the *reference's* float64 norms: **the disagreement went
+to zero.** Same norms in, identical mask out. So the selection logic is provably identical and the
+divergence is entirely attributable to our float32 Gram versus the reference's float64 accumulation.
+
+**The bug was in the anchor, not in the pipeline.** The original verdict asked whether each
+disagreement sat on a score exactly equal to our prune threshold. That test is wrong in principle: the
+tie exists in float64, and float32 has already broken it by the time the question is asked. It caught
+one of the two positions per module and called the other a fault.
+
+Fixed by separating the two questions, which is the design it should have had from the start:
+
+- the **strict** comparison feeds both selectors the same float64 norms, so a disagreement can only be
+  a selection defect - and ties cannot excuse anything, because identical inputs must give identical
+  output;
+- **norm precision** is compared separately, and its effect on the mask is reported as
+  `precision_sensitive_positions` - which deliberately does **not** gate the verdict, because failing
+  an anchor on arithmetic teaches us to ignore it.
+
+4 precision-sensitive positions in 85 million is worth recording rather than hiding: it says the
+ranking is essentially reproducible across arithmetic. A large count would have meant the mask was not
+stable to precision, which *would* have mattered.
+
+#### Two faults in the anchor itself, found by running it
+
+Both now regression-tested, and both worth noting because they are the kind that make a diagnostic
+quietly useless rather than obviously broken:
+
+| Fault | What it did |
+| --- | --- |
+| Accumulator buffer on CPU, activations on CUDA | Crashed on the first real run. Now reduces on the activation's device and moves only the length-`in_features` result, keeping float64 arithmetic off a consumer GPU |
+| Relative tolerance divided by near-zero norms | A column the calibration barely excites has a norm near zero, so float32 noise became an enormous "relative error". Denominator now floored at a fraction of the largest norm; exactly-dead columns are still counted separately, so a disagreement about *which* columns are dead is not hidden |
+
+A design rule the package enforces with a test: `anchors/` must not import the code it validates.
+A reference that calls our saliency function proves only that the call succeeded.
 
 ---
 
@@ -848,6 +1497,13 @@ recording.
 | B-16 | Three-seed confirmatory protocol produces three identical numbers ([F-15](#f-15)) | The paper would report a seed spread of zero as though the protocol had been followed, and §6.3's practical-importance rule would be vacuous |
 | B-22 | Every arm reconstructed against its own intermediate weight, not the dense weight ([F-18](#f-18)) | The arms solved two different problems and their losses were not on a common scale; the asymmetry penalised sequential and **inflated joint gain** |
 | B-23 | Joint acceptance compared pre-canonicalisation weights, then stored the canonicalised ones ([F-18](#f-18)) | The incumbent guard chose between quantities it had not measured consistently, and the packed artefact was not the object that won |
+| B-24 | An OpenMP deadlock mitigation pinned **inter-op threads process-wide** at three entry points | Inter-op can be set only once per process, and `set_cpu_threads` only *logs* the failure to re-set it — so `CpuBenchmark.prepare()` would request the frozen 4 threads, silently run at 1, and record `requested_interop_threads: 4`. The mismatch guard checked intra-op only. Hits the pruning-only arm, which under D1 is the sole route to RQ4 |
+| B-25 | The Wanda anchor's own tie test asked whether a disagreement sat on a score equal to our float32 prune threshold ([F-19](#f-19)) | The tie exists in float64 and float32 has already broken it, so the test called 2 of 4 precision-driven swaps genuine faults and returned INVESTIGATE on a pipeline that was correct |
+| B-26 | The reconstruction anchor sampled modules by a plain stride ([F-20](#f-20)) | `48 // 6 == 8` and a block has four target modules in fixed order, so all six samples were `attention.query_key_value` and no MLP projection was ever checked -- a confident PASS over a quarter of the model |
+| B-27 | The arm-slack metric was named `attributable_joint_benefit` and printed as "1.0 = entirely real" ([F-21](#f-21)) | On a run where every row's advantage was negative it read +0.6425 and invited "64% of the joint gain is real", when it was the ratio of two disadvantages meaning the sweep overstates joint's penalty by 1.56x |
+| B-28 | Reference SparseGPT driver replayed blocks with `use_cache=True` and a live `Cache` ([F-22](#f-22)) | The cache would accumulate across replays, growing the key/value length and silently changing the activations SparseGPT fits to. Caught before the reference stage ran |
+| B-29 | `blocks[0] = Catcher(...)` mutated a **copy**, because `get_decoder_blocks` returns `list(current)` ([F-22](#f-22)) | The model kept calling the real block, so zero calibration inputs were captured; SparseGPT would have pruned against nothing and still produced a perplexity. Only an empty-capture guard turned it into an error |
+| B-30 | Joint gain was measured against P→Q only, though §3.6 and §6.1 always required best-of {P→Q, Q→P} ([F-24](#f-24)) | Q→P beats P→Q *and* joint at 30% + W8, so the moderate budget's joint gain was reported as +0.07 pp when against the required baseline it is −0.36 pp. Another omission that flattered joint |
 | B-13 | Sweep cells inherited the base config's model revision | Every cell pinned to the *first* model's SHA — fails to load, or silently loads the wrong weights if the SHA exists in both repos |
 
 Two of these were **masked by tests that should have caught them**: B-07 (the test disabled

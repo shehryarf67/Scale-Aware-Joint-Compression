@@ -13,7 +13,7 @@ placeholder.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from scale_aware_compression.config import EvaluationConfig
@@ -44,6 +44,19 @@ class PerplexityResult:
     dataset_fingerprint: str | None = None
     """Fingerprint of the evaluation token stream. Two perplexities with different
     fingerprints were not measured on the same data and must not be compared."""
+    window_nll: list[float] = field(default_factory=list)
+    """Summed NLL for each evaluation window, in loader order.
+
+    The unit of resampling for the paired block bootstrap A1 §5.1 requires. Neighbouring tokens are
+    dependent, so a token-level bootstrap understates the interval; complete windows are the block.
+    Per **sequence** rather than per batch, so the block structure is invariant to batch size and a
+    160M run at batch 4 is comparable with a 410M run at batch 2.
+
+    Two arms must be bootstrapped over the **same resampled window indices**, which is what makes the
+    comparison paired -- hence loader order matters and the loader never shuffles.
+    """
+    window_tokens: list[int] = field(default_factory=list)
+    """Predicted-token count for each window, parallel to :attr:`window_nll`."""
 
     @property
     def bits_per_token(self) -> float:
@@ -65,6 +78,8 @@ class PerplexityResult:
             "bits_per_token": self.bits_per_token,
             "evaluation_device": self.device,
             "dataset_fingerprint": self.dataset_fingerprint,
+            "window_nll": list(self.window_nll),
+            "window_tokens": list(self.window_tokens),
         }
 
 
@@ -176,6 +191,8 @@ def compute_perplexity(
     num_sequences = 0
     sequence_length = 0
     num_batches = 0
+    window_nll: list[float] = []
+    window_tokens: list[int] = []
 
     try:
         with torch.inference_mode():
@@ -202,13 +219,25 @@ def compute_perplexity(
                 # no predecessor, so a window of L tokens contributes L-1 predictions.
                 shift_logits = logits[:, :-1, :].float()
                 shift_labels = input_ids[:, 1:]
-                batch_nll = functional.cross_entropy(
+                # `reduction="none"` then summed per row, rather than a single summed scalar, so each
+                # evaluation window's NLL is retained. A1 §5.1 requires a paired block bootstrap that
+                # resamples COMPLETE WINDOWS -- neighbouring tokens are dependent, so a token-level
+                # bootstrap understates the interval. Aggregates alone make that analysis impossible,
+                # and discovering it after the ~38 h confirmatory stage would mean re-running all of it.
+                #
+                # Per SEQUENCE, not per batch, deliberately: batch size differs between configs (4 at
+                # 160M, 2 at 410M for memory), and a per-batch block structure would not be comparable
+                # across scales. Per-sequence blocks are invariant to batching.
+                token_nll = functional.cross_entropy(
                     shift_logits.reshape(-1, shift_logits.size(-1)),
                     shift_labels.reshape(-1),
-                    reduction="sum",
+                    reduction="none",
                 )
+                per_window = token_nll.reshape(shift_labels.shape).sum(dim=1)
 
-                total_nll += float(batch_nll.item())
+                window_nll.extend(float(value) for value in per_window)
+                window_tokens.extend([int(shift_labels.shape[1])] * int(shift_labels.shape[0]))
+                total_nll += float(per_window.sum().item())
                 total_tokens += int(shift_labels.numel())
                 num_sequences += int(input_ids.shape[0])
                 sequence_length = int(input_ids.shape[1])
@@ -232,7 +261,34 @@ def compute_perplexity(
         sequence_length=sequence_length,
         device=str(device),
         dataset_fingerprint=dataset_fingerprint,
+        window_nll=window_nll,
+        window_tokens=window_tokens,
     )
+    # The blocks must reconstruct the aggregate, or a bootstrap over them estimates the uncertainty of
+    # a different quantity from the one reported. Checked rather than assumed, because the two are now
+    # computed by different code paths.
+    #
+    # The tolerance is relative 1e-5 and cannot be tighter. `total_nll` accumulates one **float32**
+    # tensor reduction per batch, while `block_total` sums the extracted per-window values in float64,
+    # so the two differ by float32 association error that grows with batch size. Deliberately NOT fixed
+    # by recomputing `total_nll` from the blocks: that would be marginally more accurate but would
+    # change every reported perplexity, and the 18 records already written today would need ~3 hours of
+    # recompute for a ~1e-7 relative difference -- smaller than the thread-configuration sensitivity
+    # already documented in F-23.
+    #
+    # This tolerance still catches what the guard is for: a wrong reshape, a dropped batch, or
+    # double-counted windows are off by orders of magnitude, not by float32 noise.
+    block_total = sum(window_nll)
+    if abs(block_total - total_nll) > max(1e-4, 1e-5 * abs(total_nll)):
+        raise EvaluationError(
+            f"per-window NLL sums to {block_total!r} but the aggregate is {total_nll!r}. The block "
+            "decomposition does not reconstruct the reported perplexity, so a paired block bootstrap "
+            "over these windows would not describe the reported number."
+        )
+    if sum(window_tokens) != total_tokens:
+        raise EvaluationError(
+            f"per-window tokens sum to {sum(window_tokens)} but the aggregate is {total_tokens}"
+        )
     LOGGER.info(
         "Perplexity %.4f over %d tokens (%d sequences of %d) on %s",
         result.perplexity,

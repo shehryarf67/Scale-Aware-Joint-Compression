@@ -1,0 +1,99 @@
+# Re-check the W8 sequential order decision across paired calibration draws.
+#
+# WHY THIS EXISTS. F-24 froze Q->P as the moderate-budget order on a margin of **+0.43 pp**, measured
+# on ONE calibration draw. The config that produced it said one draw was enough because "both margins
+# exceed anything a single draw's noise plausibly explains" -- which was true of the aggressive margin
+# (+4.26 pp, a factor of ten larger) and was an ASSERTION rather than a measurement for W8.
+#
+# 0.43 pp is small. Nothing established that a different calibration draw would not reverse it, and the
+# consequence is not cosmetic: the moderate budget's joint gain is **+0.07 pp against P->Q** and
+# **-0.36 pp against Q->P**, so the SIGN of that budget's headline depends on which order is frozen.
+# Freezing an order on an unverified margin would put a sign flip on a coin toss.
+#
+# WHAT IT RUNS. Both sequential orders at 30% + W8 only, across five paired calibration replicates.
+# Replicate r uses CALIBRATION_REPLICATE_SEEDS[r] and BOTH arms see draw r, which is what makes the
+# comparison paired (§3.11 requires identical calibration between arms within a comparison; across
+# repeats it must differ, and that is the point).
+#
+# Five rather than eight: this is a selection decision on the validation split, not a confirmatory
+# estimate, and five paired draws is already enough to see whether a 0.43 pp margin is stable in sign.
+# Replicate 0 reproduces F-24 exactly, so the existing result is one of the five rather than a separate
+# thing to reconcile.
+#
+# WHAT WOULD CHANGE THE FREEZE:
+#   * Q->P ahead in all five draws  -> the freeze stands, and now on evidence
+#   * the sign varying across draws -> the two orders are indistinguishable at W8. Freeze P->Q, the
+#     pre-registered primary order (§3.6 names it primary), and record that the choice is arbitrary.
+#     Do NOT pick the winner of a coin toss and report a joint gain against it.
+#
+# Aggressive is NOT re-run. Its margin is 4.26 pp, an order of magnitude clear of anything a draw
+# could move, and spending five 4-bit replicates to confirm the obvious is not a good use of the
+# machine.
+
+include:
+  - ../models/pythia_160m.yaml
+  - ../compression/sequential.yaml
+  - ../evaluation/quality.yaml
+  - ../evaluation/cpu_benchmark.yaml
+
+experiment:
+  id: order_selection_w8_replicates
+  name: W8 sequential order, across five paired calibration draws
+  description: >-
+    Re-checks the moderate-budget order decision from F-24 across five paired calibration replicates,
+    because it was frozen on a +0.43 pp margin from a single draw and the sign of that budget's joint
+    gain depends on it.
+  tags:
+    - exploratory
+    - order-selection
+    - a1-step-7
+    - not-a-result
+
+runtime:
+  seed: 1234
+  deterministic: true
+  output_dir: outputs
+  log_level: INFO
+
+data:
+  # Matched to F-24 exactly, so replicate 0 reproduces it rather than measuring something adjacent.
+  calibration_samples: 128
+  calibration_split: train
+  sequence_length: 512
+  max_eval_samples: 512
+  batch_size: 4
+
+compression:
+  reconstruction:
+    solver: sweep
+    local_steps: 1
+    joint_iterations: 2
+    comparison_group: output
+    scale_search: false
+    keep_benefit_saliency: false
+
+sweep:
+  models:
+    - pythia-160m
+  # Dense is included so retention comes from a record written under this config's own ids. It is
+  # deduplicated to one run: dense depends on neither the budget nor the calibration draw.
+  methods:
+    - dense
+    - sequential
+    - sequential_qp
+  # W8 only. See the header.
+  budgets:
+    - moderate
+  replicates: 5
+
+  budget_overrides:
+    moderate:
+      compression:
+        budget_label: moderate
+        pruning:
+          sparsity: 0.3
+        quantisation:
+          bits: 8
+
+  skip_existing: true
+  continue_on_error: true

@@ -36,10 +36,28 @@ runtime:
   output_dir: outputs
   log_level: INFO
 
+<<<<<<< HEAD
 # Keep external validation on the same held-out evaluation split as the main Phase 8 sweep.
 data:
   eval_split: test
   max_eval_samples: 512
+=======
+# CONFIRMATORY EVALUATION USES THE HELD-OUT TEST SPLIT (Amendment A1 §5.2).
+#
+# The budgets were chosen by looking at validation results, which makes validation a SELECTION
+# SURFACE: reporting the headline on it would compute the primary evidence on data already used to
+# make a choice. Screening, order selection and the mechanistic controls stay on validation; only
+# final reporting moves here.
+#
+# There is no leakage either way -- calibration is drawn from `train` and always was. This is about
+# selection bias, not contamination.
+#
+# Credit where due: this was caught by the partner's phase7-close-phase8-setup branch. The replicate
+# axis was implemented here without switching the split, so the confirmatory configs would have run
+# eight paired draws and then reported them on the selection surface.
+data:
+  eval_split: test
+>>>>>>> origin/main
 
 sweep:
   models:
@@ -53,11 +71,19 @@ sweep:
   budgets:
     - moderate
     - aggressive
+<<<<<<< HEAD
   # Calibration-replicate identifiers; see main_scale_sweep.yaml.
   seeds:
     - 1234
     - 2345
     - 3456
+=======
+  # Eight paired calibration replicates, matching main_scale_sweep.yaml. The run-seed axis it used to
+  # carry was withdrawn by Amendment A1 §5.1: seeds are inert under this method (F-15), so three of
+  # them produced three identical numbers. This check only means something if the external model is
+  # compressed and measured under the *same* protocol as the Pythia sweep, replicate count included.
+  replicates: 8
+>>>>>>> origin/main
 
   # Identical to main_scale_sweep.yaml. Keep the two in step: a budget that differs between the
   # sweep and the validation makes the transfer check meaningless.

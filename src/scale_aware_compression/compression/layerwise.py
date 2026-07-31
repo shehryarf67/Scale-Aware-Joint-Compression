@@ -455,15 +455,22 @@ def compress_layer(
 ) -> LayerOutcome:
     """Compress one layer without constructing an autograd graph.
 
-    Sequential and joint compression both enter through this shared function.
-    Their reconstruction path forms Gram products and factorises a Hessian-like
-    matrix, none of which participates in training. Keeping the full path in
-    :func:`torch.no_grad` prevents graph retention and avoids autograd work
-    compounding CPU resource pressure during those operations.
+    Sequential and joint compression both enter through this shared function. Their reconstruction
+    path forms Gram products and factorises a Hessian-like matrix, none of which participates in
+    training, so :func:`torch.no_grad` prevents graph retention over the whole path.
+
+    The intra-op thread cap is a **deadlock mitigation** for OpenMP-backed linear algebra on Windows
+    CPU builds, scoped to this call and restored on exit. It is deliberately not applied
+    process-wide at an entry point: inter-op threads can only be set once per process, so an early
+    global pin silently overrides the frozen ``benchmark`` thread configuration for the rest of the
+    run, and latency then gets measured under conditions the run record does not describe. See
+    :func:`~scale_aware_compression.hardware.cpu_thread_limit`.
     """
     import torch
 
-    with torch.no_grad():
+    from scale_aware_compression.hardware import SOLVER_INTRA_OP_THREADS, cpu_thread_limit
+
+    with torch.no_grad(), cpu_thread_limit(SOLVER_INTRA_OP_THREADS):
         return _compress_layer_impl(weight, statistics, plan, arm=arm)
 
 

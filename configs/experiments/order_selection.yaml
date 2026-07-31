@@ -1,0 +1,103 @@
+# Sequential ORDER SELECTION -- Protocol Amendment A1 §5.3, execution step 6.
+#
+# `method_definition.md` (plan §3.6, §6.1) has always required joint gain to be computed against
+# BEST-OF {P->Q, Q->P}, with the winning order recorded. The sweep only ever ran P->Q. This is not a
+# protocol change, it is enforcement of a rule frozen at the outset -- so it cannot be post-hoc by
+# construction.
+#
+# WHY THE WINNER IS PICKED HERE AND NOT ON TEST.
+#
+# Taking the better of two TEST scores per cell would give joint a deliberately conservative baseline,
+# but it would also spend the confirmatory split on a method-selection decision, and the maximum of two
+# noisy test results is pessimistically biased against joint. Selecting on VALIDATION separates the two
+# jobs cleanly: validation chooses the sequential method, test estimates its performance, and the test
+# comparison is never touched by the choice.
+#
+# The winning order may legitimately differ by model and by budget. Where it does, that is recorded in
+# protocol_freeze.md and reported.
+#
+# STAGED DELIBERATELY. This runs ONE calibration draw first. If the two orders separate clearly, one
+# draw settles it and there is no reason to spend more. If they land within noise of each other, a
+# selection made on one draw is a coin flip, and replicates get added before anything is frozen. That
+# decision belongs to the measured gap, not to a guess made in advance.
+#
+# Only the two FROZEN budgets are run. Q->P at a catastrophic budget would be measuring the difference
+# between two destroyed models.
+
+include:
+  - ../models/pythia_160m.yaml
+  - ../compression/sequential.yaml
+  - ../evaluation/quality.yaml
+  - ../evaluation/cpu_benchmark.yaml
+
+experiment:
+  id: order_selection
+  name: Sequential order selection (P->Q vs Q->P)
+  description: >-
+    Both sequential orderings at the two frozen budgets on the validation split, so the stronger
+    baseline can be frozen per (model, budget) before any test evaluation. Exploratory by
+    construction: this is a selection surface, not a reported result.
+  tags:
+    - exploratory
+    - order-selection
+    - a1-step-6
+    - not-a-result
+
+runtime:
+  seed: 1234
+  deterministic: true
+  output_dir: outputs
+  log_level: INFO
+
+data:
+  # Matched to the screening grid exactly, so the P->Q numbers here are directly comparable with
+  # F-23's S1 and S5 cells. Reproducing them is a free consistency check on the budget-label plumbing.
+  calibration_samples: 128
+  calibration_split: train
+  sequence_length: 512
+  max_eval_samples: 512
+  batch_size: 4
+
+compression:
+  reconstruction:
+    solver: sweep
+    local_steps: 1
+    joint_iterations: 2
+    comparison_group: output
+    scale_search: false
+    keep_benefit_saliency: false
+
+sweep:
+  models:
+    - pythia-160m
+  # Dense included so retention is computed from a record written under this config's own experiment
+  # ids, rather than depending on the cross-config dense lookup finding the screening grid's record.
+  # Five minutes to remove a silent-failure mode.
+  methods:
+    - dense
+    - sequential
+    - sequential_qp
+  budgets:
+    - moderate
+    - aggressive
+  # One draw. See the staging note at the top.
+  seeds:
+    - 1234
+
+  budget_overrides:
+    # The frozen pair, copied verbatim from main_scale_sweep.yaml. A budget that differed between the
+    # two files would make this selection apply to a baseline the confirmatory stage never runs.
+    moderate:
+      compression:
+        budget_label: moderate
+        pruning:
+          sparsity: 0.3
+        quantisation:
+          bits: 8
+    aggressive:
+      compression:
+        budget_label: aggressive
+        pruning:
+          sparsity: 0.3
+        quantisation:
+          bits: 4

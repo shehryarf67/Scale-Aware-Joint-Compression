@@ -13,8 +13,14 @@
 #     redundancy and should tolerate the same budget better, but it is the check being made
 #   * the moderate budget rising above ~99% retention, which would make it too mild to compare arms
 #
-# WHAT THIS RUN IS NOT: a result. One seed, and §6.3 requires a joint gain to exceed the seed spread
-# before it counts. The confirmatory three-seed runs happen in Phase 8 on these frozen budgets.
+# IT ALSO SELECTS THE SEQUENTIAL ORDER AT 410M (Amendment A1 step 7). Both P->Q and Q->P run, so the
+# stronger baseline can be frozen per budget before any test evaluation. At 160M the winner differed by
+# budget -- Q->P at W8, P->Q at W4 (F-24) -- so 410M cannot inherit that choice and must measure it.
+#
+# WHAT THIS RUN IS NOT: a result. One calibration draw, on the validation split, which A1 §4 declares a
+# selection surface. The confirmatory runs use eight paired calibration replicates on the TEST split
+# (A1 §5.1, §5.2). The old "must exceed the seed spread" rule this file used to cite was withdrawn as
+# vacuous -- run seeds are inert here (F-15), so the spread was exactly zero.
 #
 # Evaluation window matches the 160M screening exactly (493 x 512), so the two are comparable --
 # though note the DENSE REFERENCE differs per model, and retention is always against a model's own
@@ -65,6 +71,14 @@ sweep:
   methods:
     - dense
     - sequential
+    # A1 step 7: the reverse order, so the stronger sequential baseline can be frozen at 410M as it
+    # was at 160M. Folded into this grid rather than run as a separate pass, because it needs the same
+    # model, the same calibration draw and the same evaluation window -- running 410M twice to get
+    # them would cost hours and risk the two passes drifting apart.
+    #
+    # At 160M the winner differed BY BUDGET: Q->P at W8, P->Q at W4 (F-24). So there is no basis for
+    # assuming 410M picks the same order at either budget, and both must be measured.
+    - sequential_qp
     - joint
   budgets:
     - moderate

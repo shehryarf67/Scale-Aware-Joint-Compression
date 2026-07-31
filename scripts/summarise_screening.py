@@ -6,8 +6,12 @@ rule. The output is the *evidence* §5.3 asks to be recorded alongside the froze
 written to disk as well as printed.
 
 Deliberately does not choose the budgets. The rule has a judgement clause ("enough separation to test
-whether joint gain changes with scale") that depends on the seed spread, and only one seed is run at
-screening. This tool lays out the evidence; a human freezes the choice in protocol_freeze.md.
+whether joint gain changes with scale") that no single draw can settle, and screening runs one draw by
+design. This tool lays out the evidence; a human freezes the choice in protocol_freeze.md.
+
+Everything it emits is **exploratory** under Amendment A1 §4: validation split, one calibration draw,
+no uncertainty estimate. The output says so, because a table that does not say so gets quoted as
+though it were confirmatory.
 
 Usage::
 
@@ -213,8 +217,9 @@ def main(argv: list[str] | None = None) -> int:
     lines.append("")
     window = next(iter(windows), (None, None))
     lines.append(
-        f"Evaluation window: **{window[0]} sequences x {window[1]} tokens**. Single seed "
-        "(§5.5 gives screening one seed)."
+        f"Evaluation window: **{window[0]} sequences x {window[1]} tokens** on the "
+        "**validation** split. One calibration draw (§5.5 gives exploratory screening a single "
+        "draw)."
     )
     lines.append("")
     if dense:
@@ -267,9 +272,14 @@ def main(argv: list[str] | None = None) -> int:
 
     lines.append("")
     lines.append(
-        "**Joint gain is a single seed here.** §5.5 gives screening one seed, and §6.3 requires a "
-        "gain to exceed the seed spread before it counts as a finding. No sign in this table is "
-        "interpretable as evidence for or against joint compression."
+        "**EXPLORATORY. Not confirmatory evidence, and no sign in this table is interpretable as "
+        "evidence for or against joint compression.** Three reasons, per Protocol Amendment A1 §4: "
+        "this is the validation split, which is a selection surface because the budgets were chosen "
+        "by looking at it; it is a single calibration draw, so there is no uncertainty estimate; and "
+        "the confirmatory comparison uses paired calibration replicates on the **test** split. "
+        "A1 §5.1 withdrew the old 'must exceed the seed spread' rule, which was vacuous here -- run "
+        "seeds are inert under this method (F-15), so the spread was exactly zero and any nonzero "
+        "gain passed it trivially."
     )
 
     report = "\n".join(lines)

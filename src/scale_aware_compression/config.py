@@ -31,6 +31,7 @@ from typing import Any, TypeVar, Union, get_args, get_origin, get_type_hints
 import yaml
 
 from scale_aware_compression.constants import (
+    CALIBRATION_REPLICATE_SEEDS,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_SEED,
     SUPPORTED_WEIGHT_BITS,
@@ -159,10 +160,11 @@ class DataConfig:
     calibration_samples: int = 128
     calibration_split: str = "train"
     calibration_seed: int = DEFAULT_SEED
+    calibration_replicate: int | None = None
     cache_dir: Path | None = None
 
     def __post_init__(self) -> None:
-        """Validate window sizes and sample counts."""
+        """Validate window sizes, sample counts, and the replicate index."""
         _require_positive("data.sequence_length", self.sequence_length)
         _require_positive("data.batch_size", self.batch_size)
         _require_positive("data.calibration_samples", self.calibration_samples)
@@ -172,6 +174,33 @@ class DataConfig:
             _require_positive("data.max_eval_samples", self.max_eval_samples)
         if self.cache_dir is not None:
             self.cache_dir = Path(self.cache_dir)
+        if self.calibration_replicate is not None and not (
+            0 <= self.calibration_replicate < len(CALIBRATION_REPLICATE_SEEDS)
+        ):
+            raise ConfigError(
+                f"data.calibration_replicate must be in "
+                f"[0, {len(CALIBRATION_REPLICATE_SEEDS) - 1}] or null, got "
+                f"{self.calibration_replicate}. Add a seed to "
+                "constants.CALIBRATION_REPLICATE_SEEDS to allow more -- appending only, because the "
+                "1B runs use the first R entries and reordering would change which draws a completed "
+                "run used."
+            )
+
+    @property
+    def effective_calibration_seed(self) -> int:
+        """The seed the calibration draw actually uses.
+
+        When ``calibration_replicate`` is set it wins, because a replicate index is a claim about
+        *which* draw this run is and must not be silently overridden by a stale
+        ``calibration_seed``. When it is unset the explicit ``calibration_seed`` is used, so
+        single-shot runs and every record taken before A1 keep working unchanged.
+
+        Replicate 0 maps to :data:`~scale_aware_compression.constants.DEFAULT_SEED`, so it reproduces
+        the pre-amendment draw exactly rather than starting a fresh incomparable series.
+        """
+        if self.calibration_replicate is None:
+            return self.calibration_seed
+        return CALIBRATION_REPLICATE_SEEDS[self.calibration_replicate]
 
 
 @dataclass(slots=True)
@@ -553,6 +582,25 @@ class SweepConfig:
     methods: list[CompressionMethod] = field(default_factory=list)
     budgets: list[str] = field(default_factory=lambda: ["moderate"])
     seeds: list[int] = field(default_factory=list)
+    replicates_by_model: dict[str, int] = field(default_factory=dict)
+    """Per-model override of :attr:`replicates`, for scales where the cost changes the trade.
+
+    A1 §6 sets 8 at 160M and 410M but 5 at 1B, because a 1B replicate costs roughly four times a 160M
+    one. Expressed here rather than by splitting the sweep into separate files, so one config still
+    states the full three-scale design (§2.5) instead of leaving a reader to infer it.
+
+    A smaller count always takes the **first** entries of
+    :data:`~scale_aware_compression.constants.CALIBRATION_REPLICATE_SEEDS`, so the reduced set is a
+    strict subset: replicate 3 is the same calibration draw at every scale.
+    """
+    replicates: int = 0
+    """Number of paired calibration replicates per cell (A1 §5.1). ``0`` disables the axis.
+
+    Replaces the ``seeds`` axis, which is inert under this method (F-15). Replicate *r* uses
+    ``CALIBRATION_REPLICATE_SEEDS[r]`` and **every arm in a comparison uses the same r**, which is
+    what makes the comparison paired. A1 §6 sets 8 at 160M and 410M, 5 at 1B; the smaller count takes
+    the first entries, so the 1B draws are a subset of the others.
+    """
     budget_overrides: dict[str, Any] = field(default_factory=dict)
     """Per-budget override fragments, e.g.
     ``{"aggressive": {"compression": {"pruning": {"sparsity": 0.7}}}}``."""
@@ -568,6 +616,34 @@ class SweepConfig:
             raise ConfigError(
                 f"sweep.budget_overrides has entries for unlisted budgets: {sorted(unknown)}"
             )
+        if self.replicates < 0:
+            raise ConfigError(f"sweep.replicates must be >= 0, got {self.replicates}")
+        if self.replicates > len(CALIBRATION_REPLICATE_SEEDS):
+            raise ConfigError(
+                f"sweep.replicates={self.replicates} exceeds the "
+                f"{len(CALIBRATION_REPLICATE_SEEDS)} seeds in "
+                "constants.CALIBRATION_REPLICATE_SEEDS. Append more there rather than reusing a "
+                "draw, or the extra replicates would be duplicates and the error bar would be too "
+                "narrow."
+            )
+        if self.replicates and len(self.seeds) > 1:
+            raise ConfigError(
+                f"sweep.replicates={self.replicates} and sweep.seeds={self.seeds} both expand the "
+                "grid, giving replicates x seeds cells that differ only in an inert run seed "
+                "(F-15). A1 §5.1 replaced the seed axis; set sweep.seeds to at most one entry."
+            )
+        for model_name, count in self.replicates_by_model.items():
+            if self.models and model_name not in self.models:
+                raise ConfigError(
+                    f"sweep.replicates_by_model names {model_name!r}, which is not in sweep.models "
+                    f"{self.models}. A per-model override for a model the sweep never runs is dead "
+                    "configuration that reads as though it took effect."
+                )
+            if not 0 < count <= len(CALIBRATION_REPLICATE_SEEDS):
+                raise ConfigError(
+                    f"sweep.replicates_by_model[{model_name!r}]={count} must be in "
+                    f"[1, {len(CALIBRATION_REPLICATE_SEEDS)}]"
+                )
 
 
 # ---------------------------------------------------------------------------

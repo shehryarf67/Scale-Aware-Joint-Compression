@@ -1021,3 +1021,41 @@ class TestPatternsAndGranularities:
         for arm in ARMS:
             outcome = compress_layer(weight, statistics, moderate_plan(solver=solver), arm=arm)
             assert outcome.weight.shape == weight.shape
+
+
+class TestSolverThreadCapIsScoped:
+    """The OpenMP deadlock mitigation must not leak out of the solve.
+
+    If it leaked, the benchmark's own thread pin would be fighting a value nothing recorded, and
+    the frozen ``benchmark.num_threads = 4`` would silently not be what latency ran under.
+    """
+
+    def test_thread_count_is_restored_after_compress_layer(self, layer_inputs):
+        import torch
+
+        weight, statistics = layer_inputs
+        before = torch.get_num_threads()
+        compress_layer(weight, statistics, moderate_plan(), arm="joint")
+        assert torch.get_num_threads() == before
+
+    def test_thread_count_is_restored_even_when_the_solve_raises(self, layer_inputs):
+        import torch
+
+        from scale_aware_compression.hardware import cpu_thread_limit
+
+        before = torch.get_num_threads()
+        with pytest.raises(RuntimeError, match="boom"), cpu_thread_limit(1):
+            raise RuntimeError("boom")
+        assert torch.get_num_threads() == before
+
+    def test_the_cap_is_in_effect_inside_the_block(self):
+        from scale_aware_compression.hardware import cpu_thread_limit
+
+        with cpu_thread_limit(1) as effective:
+            assert effective == 1
+
+    def test_a_zero_thread_cap_is_refused(self):
+        from scale_aware_compression.hardware import cpu_thread_limit
+
+        with pytest.raises(ValueError, match="must be >= 1"), cpu_thread_limit(0):
+            pass

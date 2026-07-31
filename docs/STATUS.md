@@ -1,5 +1,6 @@
 # Project status
 
+<<<<<<< HEAD
 > **Current authoritative update — 2026-07-31:** Phase 7 is complete. The corrected Pythia-160M
 > screening grid and Pythia-410M confirmation froze `moderate` at 30% + W8 and `aggressive` at
 > 30% + W4. The historical handoff notes below remain for review context; where they say that
@@ -18,6 +19,13 @@
 **Last updated:** 2026-07-29 · second session on the HP Omen · **Phases 0, 5 and 6 complete**;
 **Phase 7 (budget screening) paused with no valid results** — two rounds of external review
 invalidated every number, the fixes are in, the grid needs re-running from scratch
+=======
+**Last updated:** 2026-07-30 · third session on the HP Omen · **Phases 0, 5 and 6 complete**;
+**Phase 7 has valid results for the first time.** The pipeline now passes three independent
+correctness anchors, the screening grid has been re-run on that anchored code, the frozen budgets
+survived a third time, and the sequential order is frozen at 160M. Governed by
+[Protocol Amendment A1](protocol_amendment_a1.md).
+>>>>>>> origin/main
 
 > Read this first. It is the handoff between sessions and between machines. If it looks stale,
 > check `git log` — the truth is the commit history, this file is a summary of it.
@@ -60,12 +68,12 @@ done. **Every arm runs from a config to a run record on real Pythia-160M.**
 
 | | State |
 | --- | --- |
-| Tests | **804 passing** in ~40 s, offline |
+| Tests | **913 passing** in ~43 s, offline |
 | Lint / format | `ruff check .` and `ruff format --check .` both clean |
 | CI | `.github/workflows/ci.yml` — lint, format, tests on push/PR to `main` |
 | Environment | verified end to end: torch 2.13.0+cu126, CUDA available, sm_89 |
 | Runnable today | **all five arms** plus dense, config to run record, on a real model |
-| Not yet done | budget screening (Phase 7), downstream tasks (A4), prefill/decode split (A5) |
+| Not yet done | 410M/1B order selection, confirmatory test-split runs, downstream tasks (A4), prefill/decode split (A5) |
 
 ### What works
 
@@ -295,15 +303,231 @@ Two smaller things noticed in the same runs:
 
 ---
 
-## 🟡 Phase 7 — paused with NO valid results. Resume here.
+## 🟢 Phase 7 — screening complete on anchored code. Resume at A1 step 7.
 
 ### The state in one line
 
-**Every screening number this project has produced has been retracted.** Two rounds of external review
-found bugs that invalidated them, all the fixes are applied and pushed, and `outputs/metrics/` is
-deliberately empty. Nothing is known about joint gain right now.
+**For the first time this project has screening numbers it has reason to trust.** Three independent
+anchors passed, the grid was re-run on that code, and the headline joint gain is **+1.08 pp at 30% +
+W4** — which then survived being re-measured against the stronger of the two sequential baselines.
+Every earlier screening number remains retracted; these supersede them.
 
-### To resume, one command
+**Still exploratory, deliberately.** Validation split, one calibration draw, no error bar. The
+confirmatory answer comes from A1 steps 9–10 on the **test** split with eight paired replicates.
+
+### 📋 Read [Protocol Amendment A1](protocol_amendment_a1.md) before running anything
+
+Adopted **2026-07-30**, after the five protocol decisions below were put to an external reviewer and
+settled. A1 is now the governing document for how the remaining experiments run, and it changes the
+execution order.
+
+**The one thing to know:** A1 declares **every result this project has produced so far exploratory** —
+all of it is on the validation split, all of it predates the B-22/B-23 corrections, and none of it has
+an uncertainty estimate. The frozen budgets are *not* reopened.
+
+### ✅ Screening re-run complete — the frozen budgets hold for a third time
+
+**[F-23](findings_log.md#f-23).** 13 cells, 2 h 08 m, on code that has passed three independent
+correctness anchors. `outputs/metrics/` holds all 13 records.
+
+| Budget | Seq ret. | **Joint gain** | Verdict |
+| --- | --- | --- | --- |
+| **S1** 30% + W8 | **80.2%** | +0.07 pp | **ELIGIBLE** |
+| **S5** 30% + W4 | **56.7%** | **+1.08 pp** | **ELIGIBLE** |
+| **S6** 40% + W8 | **54.4%** | −0.23 pp | **ELIGIBLE** |
+| S2 / S3 / S4 | 20.8 / 14.5 / 0.7% | — | catastrophic |
+
+Sequential retention across three rewrites of the solver: S1 at 80.4 → 80.3 → **80.2%**, S5 at
+56.0 → 57.1 → **56.7%**. The frozen pair is unchanged.
+
+**S6 answered the mechanism question for free.** S5 and S6 are quality-matched by different recipes —
+56.7% against 54.4% — yet the joint gain is +1.08 pp at W4 and −0.23 pp at W8. Among all three eligible
+budgets, both W8 budgets give gains indistinguishable from zero and only W4 gives a gain. That is the
+discrimination A1 §5.4 commissioned a 12-run control to make, and it **supports a precision-specific
+mechanism rather than a compression-severity effect**.
+
+**The headline: S5 joint gain +1.08 pp**, against the retracted +1.03 pp. The prediction on record was
+that it would come out *lower*, since the B-22 fix removed a joint-flattering bias. It did not move —
+that prediction was wrong. What the stability buys is real though: two very different code versions
+landing on the same figure is evidence the effect is not a bug artefact, which could not be said of
+either retraction.
+
+**Still exploratory.** Barely over the ≥1.0 pp threshold, one calibration draw so no error bar, and the
+validation split is a declared selection surface. The confirmatory answer comes from steps 9–10.
+
+### 🔵 410M complete — and the joint gain SHRINKS with scale
+
+**[F-25](findings_log.md#f-25).** 7 cells, 3 h 18 m. Dense 22.166.
+
+| Scale | Sequential (best-of) | Joint | **Joint gain** | Excess NLL advantage |
+| --- | --- | --- | --- | --- |
+| **160M** | 56.66% | 57.74% | **+1.08 pp** | +0.0189 nats |
+| **410M** | 58.56% | 59.24% | **+0.68 pp** | +0.0116 nats |
+| | | | ratio **0.63** | ratio **0.61** |
+
+**Joint wins at both scales, but by ~40% less at the larger one.** Two metrics of different functional
+form — retention exponential, excess NLL additive — agree on the ratio to within 0.02.
+
+**This runs against the study's motivating hypothesis.** The question was whether joint pays off *more*
+as models grow; on this evidence it pays off **less**. And at 410M it **fails the pre-registered
+≥1.0 pp bar** (§6.3) that 160M clears by 0.08.
+
+**Not a trend.** Two points, one draw each, validation split. The plan already says three points cannot
+fit a scaling law; two cannot support one. This is a *direction*, and Pythia-1B is the point that would
+make it checkable. Not downloaded yet.
+
+**Both frozen budgets confirmed at 410M** — 76.17% and 58.56% retention, inside §5.3's band. The pre-1B
+requirement is satisfied.
+
+**The W8 control gives a clean null at both scales** — +0.07 pp at 160M, **+0.00 pp** at 410M. F-05
+predicted the mechanism is inert at 8 bits, and two scales agree it produces nothing. The same pipeline
+yielding zero when the mechanism is off is what makes the W4 result hard to dismiss as noise.
+
+### 🔴 The W8 order freeze is contested — and it was my error to freeze it
+
+### ✅ Sequential order selected — and it differs by budget
+
+**[F-24](findings_log.md#f-24).** Q→P had never been run end to end in this project, though §3.6 and
+§6.1 always required joint gain to be measured against **best-of {P→Q, Q→P}**.
+
+| Budget | P→Q | Q→P | Joint | **Frozen order** |
+| --- | --- | --- | --- | --- |
+| moderate 30% + W8 | 80.20% | **80.63%** | 80.27% | **Q→P** |
+| aggressive 30% + W4 | **56.66%** | 52.40% | **57.73%** | **P→Q** |
+
+**The moderate budget's joint gain flips sign:** +0.07 pp against P→Q alone becomes **−0.36 pp** against
+best-of, because Q→P beats both P→Q and joint at W8. Not running Q→P had been flattering joint — the
+same direction as every other fault here. It is also *more* consistent with F-05, which says the
+mechanism is inert at W8; an inert mechanism should not show a positive gain.
+
+**The aggressive headline is unchanged at +1.08 pp**, because P→Q was already the stronger order there
+and Q→P trails by 4.26 pp. So the effect has now survived a solver rewrite *and* a stronger baseline.
+
+Both P→Q cells reproduced F-23 to three decimals under different budget labels and a different config
+file — the plumbing verified rather than assumed.
+
+**Correction.** The W8 half of this freeze does not hold. [F-25](findings_log.md#f-25) found the
+direction *reverses* at 410M — P→Q by 0.04 pp, against Q→P by 0.43 pp at 160M — and at 410M all three
+arms sit within 0.017 perplexity. I froze Q→P on a single-draw margin and justified it by asserting the
+margin exceeded plausible noise; that was true of the W4 margin and unverified for W8.
+`order_selection_w8_replicates.yaml` re-checks it across five paired draws, with **P→Q** as the
+pre-declared fallback if the sign varies. Current status in
+[protocol_freeze.md](protocol_freeze.md#the-frozen-sequential-order-a1-step-7).
+
+### ✅ First anchor passed — the mask is confirmed correct
+
+**[F-19](findings_log.md#f-19).** An independent Wanda implementation, sharing no code with ours,
+produces **exactly our mask** — 0 differing positions across **48 modules and 84,934,656 weights**, on
+matched norms. Column norms agree to **6.0e-07** despite ours accumulating the Gram in float32 and the
+reference summing in float64.
+
+Four positions in 85 million flip between float32 and float64 norms. Chased down rather than dismissed:
+both disputed pairs **tie exactly in float64** and sit 2–3 ULPs apart in float32, so the choice is
+arbitrary. Rebuilding our mask from the reference's norms drops the disagreement to zero, which proves
+the selection logic is identical. The original INVESTIGATE verdict was **a bug in the anchor**
+(B-25), not in the pipeline.
+
+**This closes the mask question.**
+
+### ✅ Second anchor passed — and it found something that matters more
+
+**[F-20](findings_log.md#f-20).** The reconstruction sweep was checked against the **provable optimum**
+of its own objective — for a fixed mask, `ŵ_S = (H_SS)⁻¹H_{S,:}w` is the exact minimiser, solved in
+float64 over 96 rows spanning 4 module types and 3 depths. Both hard invariants hold: **0 rows below the
+optimum** (impossible, so it would prove a defect) and **0 rows worse than naive masking** (the
+accept-only-if-better guard works).
+
+This is stronger than porting SparseGPT, because SparseGPT's contribution is *speed*, not a different
+objective — a second approximation would only show two approximations agree.
+
+### ✅ The slack question, measured — the sign is safe
+
+**[F-21](findings_log.md#f-21).** Arm-dependent slack is **real**: solver efficiency is 0.6409 under the
+sequential mask against **0.5631** under the joint mask, a 7.8 pp gap that varies in sign by depth.
+
+But the decisive check came out clean: **across all 96 rows the solver never inverted which mask was
+better.** Whenever the sweep preferred a mask, the exact optimum agreed. So the *direction* of a measured
+joint gain is not a solver artefact — and the gap runs *against* joint, meaning the mechanism would be
+understated rather than flattered. Notable, since every previous fault ran the other way.
+
+**What stays open:** the effect on *magnitude*. It cannot be measured this way, because no exact optimum
+exists for the quantised problem — the closed-form minimiser solves a continuous least-squares problem,
+and a discrete grid makes it an integer program. Recorded as a limitation with wording ready for the
+paper.
+
+### ✅ Third anchor: our absolute numbers are credible
+
+**[F-22](findings_log.md#f-22).** `IST-DASLab/sparsegpt`'s `fasterprune`, **unmodified**, matched on
+model, revision, calibration draw, coverage and evaluation loader:
+
+| Arm | Perplexity | Retention |
+| --- | --- | --- |
+| Dense | 36.9744 | 100% |
+| **Ours**, per-output-row | **45.6644** | **80.97%** |
+| Ours, *tensor-wide* (their group) | 59.9617 | 61.66% |
+| Reference SparseGPT | 66.0355 | 55.99% |
+
+**We came out 25 pp ahead, which was a reason for suspicion rather than celebration** — and the
+prediction on record beforehand was the opposite direction, since [F-20](findings_log.md#f-20) had found
+our sweep only captures 0.64 of the achievable gain.
+
+Reading their source found the cause: `fasterprune` thresholds `tmp.flatten()` over a whole
+`(out_features × 128)` block, i.e. a **tensor-wide comparison group**, where ours is per-output-row —
+the difference [F-07](findings_log.md#f-07) already measured at 6.7× on this model. Running our own
+pipeline with *their* group settles it: **77.3% of the 24.98 pp gap is the comparison group**, leaving a
+5.67 pp residual (−9.20% relative perplexity, inside A1's 10% band).
+
+**So ~81% retention at 30% pruning-only is plausible, not inflated** — which closes the question F-20
+left open. It does *not* establish that our reconstruction specifically is competitive; `fasterprune`
+picks its own mask internally and cannot be handed ours without editing it.
+
+The reference checkout lives at `c:/Users/shehr/sajc_external/` — **outside the repo**, so third-party
+code never enters the git index.
+
+<details>
+<summary>The original framing of this blocker, kept for the record</summary>
+
+**The blocker as first stated:**
+
+The same anchor measured that our sweep captures only **0.6409 of the achievable objective gain**,
+consistently (0.57–0.72 across every module type and depth). So **~36% of the available improvement is
+left unclaimed.**
+
+That is not a defect — it is the documented trade that makes wide layers tractable. But set it against
+a joint-versus-sequential difference of about **1 pp of retention** and the problem is plain:
+
+> **If solver slack differs between the arms, the measured joint gain may be solver slack rather than
+> the mask mechanism.** And it is *expected* to differ — the arms produce different masks, different
+> masks give different `H_SS` conditioning, and conditioning determines how much a one-pass sweep
+> recovers.
+
+Settled by `scripts/run_arm_slack_anchor.py` — see above. Full reasoning and the residual risk in
+[validity_threats.md](validity_threats.md#solver-slack-may-exceed-the-effect-being-measured).
+
+</details>
+
+**Still open regardless:** whether ~57% retention is *competitive*. F-20 shows the solver optimises what
+it claims to; it says nothing about absolute quality against published work (A1 §5.5b2).
+
+### The order to work in (A1 §7)
+
+| | Step | State |
+| --- | --- | --- |
+| 1 | Write and commit Amendment A1 | ✅ done |
+| 2 | Central implementation corrections — the nine fixes | ✅ done |
+| 3a | **Wanda mask-agreement anchor** | ✅ **PASSES** — [F-19](findings_log.md#f-19) |
+| 3b1 | **Exact-optimum reconstruction anchor** | ✅ **PASSES** — [F-20](findings_log.md#f-20) |
+| 3b2 | Arm-dependent solver slack | ✅ **measured** — [F-21](findings_log.md#f-21); sign is safe, magnitude open |
+| 3b3 | External SparseGPT comparison | ✅ **done** — [F-22](findings_log.md#f-22); our numbers are credible |
+| 4 | Calibration replicate axis, **R=8 / 8 / 5** | ✅ **done** — `05008dc`, 37 tests |
+| 5 | Re-run the 160M validation screening | ✅ **done** — [F-23](findings_log.md#f-23) |
+| 6 | Both sequential orders (P→Q, Q→P) on validation | ✅ **done** — [F-24](findings_log.md#f-24) |
+| 7 | Freeze the winning order per (model, budget) | 🟡 **W4 frozen at 160M+410M**; W8 contested, replicate run queued; 1B outstanding |
+| 8 | Run the reduced S6 mechanistic control (12 runs) | ⬜ |
+| 9 | Freeze the entire confirmatory configuration | ⬜ |
+| 10 | Run test evaluation **once**, with no further tuning | ⬜ |
+
+Step 5 is still the command below, and it still writes to the exploratory (validation) configuration:
 
 ```bash
 python scripts/run_scale_sweep.py --config configs/experiments/screening.yaml     # 13 cells, ~2 h
@@ -311,34 +535,40 @@ python scripts/summarise_screening.py --model pythia-160m \
     --budgets s1_30_w8,s2_50_w8,s3_50_w4,s4_70_w4,s5_30_w4,s6_40_w8
 ```
 
-Then the 410M confirmation:
+**Confirmatory cost, now decided.** Replicates are **R=8 at 160M and 410M, R=5 at 1B** — roughly
+**38 hours**, against 31 for flat R=5 and 50 for flat R=8. The reason for the split is that the
+statistical constraint is a cliff, not a slope: at R=5 the *best possible* result (every replicate
+agreeing) is p = 0.0625, so no significance claim exists at any effect size, while R=8 reaches 0.008.
+The extra hours are spent only where they buy that transition, on the two models carrying most of the
+scale-trend evidence. **R must be reported per cell** — A1 §5.1 makes that a hard requirement.
 
-```bash
-python scripts/run_scale_sweep.py --config configs/experiments/screening_410m.yaml
-```
+### The four joint-gain figures, in order
 
-### Why the numbers were retracted, in order
+Kept in full because the pattern is itself a finding, and because a reader who sees only the current
+number has no way to judge how much weight it can carry.
 
-| Figure | Budget | Cause of retraction |
+| Figure | Budget | Status |
 | --- | --- | --- |
-| **−4.55 pp** | 30% + W4 | Joint outer loop had no acceptance test, so it discarded better solutions it had already found |
-| **+1.03 pp** | 30% + W4 | The arms minimised **different objectives** — sequential targeted its own intermediate, joint targeted dense |
-| *unknown* | — | Not yet measured on corrected code |
+| **−4.55 pp** | 30% + W4 | **Retracted.** Joint outer loop had no acceptance test, so it discarded better solutions it had already found |
+| **+1.03 pp** | 30% + W4 | **Retracted.** The arms minimised different objectives — sequential targeted its own intermediate, joint targeted dense |
+| **+1.08 pp** | 30% + W4 | **Current**, [F-23](findings_log.md#f-23). First figure from code that passes three independent anchors |
+| **+1.08 pp** | 30% + W4 | **Unchanged** against best-of-sequential, [F-24](findings_log.md#f-24) — P→Q was already the stronger baseline there |
 
-**Every bug pointed the same way: flattering the joint arm.** That belongs in the paper's limitations
-regardless of where the number lands, and it is a reason to hold the next figure loosely too. Full
-detail in [findings_log.md](findings_log.md) F-16 and F-17.
+**Every fault found so far has flattered the joint arm** — B-14, B-17, B-22, B-23, and now B-30 (running
+only the weaker sequential baseline). Not one ran the other way. That belongs in the paper's limitations
+regardless of where the number lands.
 
-### What the budgets were, before retraction
+**Two things make the current figure different from the two retractions.** It survived a rewrite that
+changed the reconstruction objective, added an acceptance guard, fixed activation grouping and altered
+packing — landing on +1.08 where the buggy code gave +1.03. And it survived being re-measured against
+the stronger of two sequential baselines. Neither could be said of the retracted numbers.
 
-The frozen pair in [protocol_freeze.md](protocol_freeze.md) is **moderate 30% + W8** and
-**aggressive 30% + W4**. Both survived the first re-run, and the *sequential* arm's retention has been
-stable across every version of the code (≈80% and ≈57%), so the budget choice is unlikely to move. It
-is the joint-versus-sequential difference that has been unstable, not the budgets.
+**Two things still keep it exploratory.** It sits barely over the pre-registered ≥1.0 pp threshold, and
+there is no uncertainty estimate. Only steps 9–10 fix that.
 
-### Nine fixes applied since the last valid run
+### The nine fixes that made the re-run possible
 
-All pushed. Suite at **804 passing**, lint and format clean.
+All pushed. Suite now at **913 passing**, lint and format clean.
 
 | Fix | What it was |
 | --- | --- |
@@ -352,34 +582,38 @@ All pushed. Suite at **804 passing**, lint and format clean.
 | Independent reload | Manifest plus `load_packed_model`; the checkpoint could not previously be loaded on its own |
 | `scale_trend` + `METHOD_VERSION` | Analysis entry point was a stub; nothing detected records produced by different code |
 
-### 🟡 Protocol decisions: three confirmed, two remaining
+### ✅ The five protocol decisions — all settled by Amendment A1
 
-The following confirmed decisions apply to the corrected Windows CPU screening re-run:
+Put to an external reviewer and settled on **2026-07-30**. Full reasoning and the exact designs are in
+[protocol_amendment_a1.md](protocol_amendment_a1.md); summarised here.
 
-- **Calibration sampling replicates replace run seeds.** Each replicate uses a different, fixed
-  calibration subset; paired sequential and joint runs share that exact subset.
-- **WikiText-2 split isolation is fixed.** Use validation only for budget screening and reserve the
-  test split strictly for final reported evaluation after budgets are frozen.
-- **External baseline reference.** Run Wanda and SparseGPT at matched settings on Pythia-160M as
-  sanity-reference baselines; they do not replace the primary sequential-versus-joint comparison.
+**Independently corroborated.** A partner working separately reached the *same* conclusions on items 1,
+2 and 5 — calibration replicates in place of run seeds, validation-for-screening with test reserved for
+final reporting, and Wanda/SparseGPT as matched sanity references that do not replace the primary
+comparison. Two reviewers converging on the same three corrections without conferring is a stronger
+signal than either alone, and it is why those three are treated as settled rather than provisional.
 
-Only items 3 and 4 below remain unresolved. Items 1, 2, and 5 are retained as historical context
-for why the decisions were necessary.
+| # | Decision | Settled as | Status |
+| --- | --- | --- | --- |
+| 1 | Run seeds | **Withdrawn.** Paired calibration replicates, **R=8 at 160M/410M, R=5 at 1B** (decided 2026-07-30); §6.3 reworded; R reported per cell | necessary correction |
+| 2 | Evaluation split | **Validation for selection, test for confirmation.** Two configs, everything else held identical | necessary correction |
+| 3 | Sequential ordering | **Both orders run; winner selected on validation**, frozen per cell before test | enforcement, not a change |
+| 4 | S6 (40% + W8) | **Secondary control only.** 2 models × 2 arms × 3 draws = 12 runs; 1B gets diagnostics only | optional addition |
+| 5 | External anchor | **Wanda mask agreement first, then SparseGPT pruning-only.** Alarm thresholds, not acceptance tests | validation, runs first |
 
-1. **Paired calibration replicates** replacing the run-seed axis. Blocking: [F-15](findings_log.md#f-15)
-   proved run seeds are inert, so the three-seed protocol yields three identical numbers and a seed
-   spread of exactly zero — which makes §6.3's "must exceed the seed spread" rule vacuous. **There is
-   currently no route to an error bar at all.**
-2. **Move final evaluation to the WikiText-2 test split.** Budgets were selected after seeing
-   validation results, so reporting the headline on validation is selection bias.
-3. **P→Q versus Q→P baseline policy.** `method_definition.md` promises best-of-two; the sweep runs only
-   P→Q. The documents and the grid must agree.
-4. **S6 (40% + W8) as an auxiliary control.** Its retention nearly matches 30% + W4, so running it
-   across scales would separate "compression severity" from "low-bit quantisation changes the mask".
-5. **An external Wanda / SparseGPT / GPTQ sanity anchor** at matched settings on 160M. The only thing
-   that would settle whether ~57% retention is plausible or indicates a remaining implementation gap.
+Two points from A1 worth carrying in your head:
 
-[review_brief.md](review_brief.md) is written for an outside reader and states these as open questions.
+- **The §6.3 amendment is a *loosening* of a pre-registered rule**, and the paper must say so. The
+  original rule was stricter on its face but unmeasurable in fact, because its binding clause evaluated
+  to zero. Replacing an unmeasurable criterion with a weaker measurable one is a correction *and* a
+  reduction in pre-registered strength.
+- **S6 is the weakest of the five** on the "would this have been justified before seeing results" test —
+  it became interesting because we saw 40% + W8 land near 30% + W4, which is a result. It is defensible
+  because it tests a mechanism rather than a headline, and A1 records its provenance rather than
+  presenting it as pre-planned.
+
+[review_brief.md](review_brief.md) is written for an outside reader and states these as the open
+questions they were before A1.
 
 ---
 
@@ -512,7 +746,10 @@ Full record in [protocol_freeze.md](protocol_freeze.md#environment). Summary:
 - [x] `python scripts/run_dense_baseline.py` — first real record, on a real model
 - [x] **Phase 6 — the five arms through one shared layerwise driver**, verified end to end
 - [x] Two rounds of external code review applied — nine fixes, suite at 804
-- [ ] **Re-run the 160M screening grid on the corrected code** ← **next**, ~2 h, 13 cells
-- [ ] Confirm the two budgets on 410M
-- [ ] Settle the five protocol decisions above — **human calls, not code**
-- [ ] Only then: Pythia-1B
+- [x] Settle the five protocol decisions → **[Amendment A1](protocol_amendment_a1.md)**, adopted
+- [ ] **External anchors: Wanda mask agreement, then SparseGPT pruning-only** ← **next** (A1 §7 step 3)
+- [ ] Five fixed calibration draws, fingerprinted
+- [ ] Re-run the 160M validation screening (~2 h, 13 cells)
+- [ ] Both sequential orders on validation; freeze the winner per cell
+- [ ] Reduced S6 control (12 runs)
+- [ ] Freeze the confirmatory config, then test evaluation **once** — no tuning after that

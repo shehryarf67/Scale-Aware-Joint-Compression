@@ -393,6 +393,12 @@ class TestShippedConfigs:
             "qwen_validation.yaml",
             "screening.yaml",
             "screening_410m.yaml",
+            # A1 step 6: both sequential orderings on validation, so the stronger baseline can be
+            # frozen per (model, budget) before any test evaluation.
+            "order_selection.yaml",
+            # A1 step 7: re-checks the W8 order across paired draws, because it was frozen on a
+            # +0.43 pp single-draw margin and the sign of that budget's joint gain depends on it.
+            "order_selection_w8_replicates.yaml",
         }
         for path in files:
             config = load_config(path)
@@ -486,8 +492,75 @@ class TestShippedConfigs:
         sweep = load_config(configs_dir / "experiments" / "main_scale_sweep.yaml")
         validation = load_config(configs_dir / "experiments" / "qwen_validation.yaml")
         assert sweep.sweep.budget_overrides == validation.sweep.budget_overrides
-        assert sweep.sweep.seeds == validation.sweep.seeds
         assert sweep.sweep.methods == validation.sweep.methods
+        # The replicate count, not the seed list. A1 §5.1 withdrew the seed axis as inert (F-15), so
+        # matching on `seeds` would now pass with both empty while the two configs ran different
+        # numbers of calibration draws -- which is exactly the mismatch this test exists to catch.
+        assert sweep.sweep.replicates == validation.sweep.replicates
+        assert sweep.sweep.seeds == validation.sweep.seeds
+
+    def test_order_selection_uses_the_frozen_budgets(self, configs_dir: Path):
+        """The order chosen on validation must apply to the baseline the confirmatory stage runs.
+
+        A budget that drifted between the two files would freeze a winning sequential order for a
+        budget nothing else uses. This exact failure mode -- a value copied into a second config and
+        then left behind when the first changed -- has already happened twice here: once during the
+        budget freeze and once when the seed axis was withdrawn.
+        """
+        sweep = load_config(configs_dir / "experiments" / "main_scale_sweep.yaml")
+        order = load_config(configs_dir / "experiments" / "order_selection.yaml")
+
+        for label in ("moderate", "aggressive"):
+            expected = sweep.sweep.budget_overrides[label]["compression"]
+            actual = order.sweep.budget_overrides[label]["compression"]
+            assert actual["pruning"]["sparsity"] == expected["pruning"]["sparsity"], (
+                f"{label} sparsity differs between main_scale_sweep and order_selection"
+            )
+            assert actual["quantisation"]["bits"] == expected["quantisation"]["bits"], (
+                f"{label} bit width differs between main_scale_sweep and order_selection"
+            )
+
+    def test_order_selection_runs_both_sequential_orders(self, configs_dir: Path):
+        """§3.6 and §6.1 require best-of {P->Q, Q->P}; running one order cannot select between them."""
+        order = load_config(configs_dir / "experiments" / "order_selection.yaml")
+        assert CompressionMethod.SEQUENTIAL in order.sweep.methods
+        assert CompressionMethod.SEQUENTIAL_QP in order.sweep.methods
+
+    def test_order_selection_stays_on_validation(self, configs_dir: Path):
+        """Selecting on test would spend the confirmatory split on a method choice (A1 §5.3)."""
+        order = load_config(configs_dir / "experiments" / "order_selection.yaml")
+        assert order.data.eval_split == "validation"
+
+    @pytest.mark.parametrize(
+        "name", ["main_scale_sweep.yaml", "extended_scale_sweep.yaml", "qwen_validation.yaml"]
+    )
+    def test_confirmatory_configs_report_on_the_test_split(self, configs_dir: Path, name: str):
+        """A1 §5.2: the headline must not be computed on the split that chose the budgets.
+
+        Validation became a selection surface the moment budgets were picked by looking at it. This
+        was missed when the replicate axis went in -- the confirmatory configs would have run eight
+        paired draws and then reported them on the selection surface. Caught by the partner's
+        phase7-close-phase8-setup branch, and pinned here so it cannot drift back.
+        """
+        assert load_config(configs_dir / "experiments" / name).data.eval_split == "test"
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "screening.yaml",
+            "screening_410m.yaml",
+            "order_selection.yaml",
+            "order_selection_w8_replicates.yaml",
+        ],
+    )
+    def test_exploratory_configs_stay_off_the_test_split(self, configs_dir: Path, name: str):
+        """The other half of the same rule, and the easier one to violate by copy-paste.
+
+        Every selection decision -- budgets, sequential order, mechanistic controls -- happens on
+        validation. A screening config that drifted onto test would burn the confirmatory split on a
+        choice, which is exactly what reserving it was meant to prevent.
+        """
+        assert load_config(configs_dir / "experiments" / name).data.eval_split == "validation"
 
 
 class TestSweepScope:

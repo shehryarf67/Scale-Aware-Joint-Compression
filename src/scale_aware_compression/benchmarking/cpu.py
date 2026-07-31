@@ -148,6 +148,27 @@ class CpuBenchmarkRunner:
             if self.config.fail_on_thread_mismatch:
                 raise BenchmarkError(message)
             LOGGER.warning("%s", message)
+
+        # Inter-op is checked separately because it fails differently: torch permits it to be set
+        # only once per process, so anything that pinned it earlier -- an entry point trying to
+        # avoid an OpenMP deadlock, for instance -- makes the request here unsatisfiable.
+        # `set_cpu_threads` only logs that, so without this check the run would proceed and record a
+        # requested value it never ran under.
+        actual_interop = report.get("torch_num_interop_threads")
+        if (
+            self.config.interop_threads is not None
+            and actual_interop is not None
+            and actual_interop != self.config.interop_threads
+        ):
+            message = (
+                f"Requested {self.config.interop_threads} inter-op threads but torch reports "
+                f"{actual_interop}. Inter-op threads can only be set once per process, so something "
+                "earlier in this process pinned them. The latency would be measured under a thread "
+                "configuration the run record does not describe."
+            )
+            if self.config.fail_on_thread_mismatch:
+                raise BenchmarkError(message)
+            LOGGER.warning("%s", message)
         return report
 
     def warmup(self, function: BenchmarkCallable) -> None:

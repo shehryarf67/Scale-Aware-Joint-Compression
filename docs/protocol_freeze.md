@@ -11,6 +11,12 @@ answer to "why is it set that way" for anything a later session or a reviewer as
 Changing one silently invalidates every run recorded before the change. Nothing here may be
 revised after results have been seen (§6.3).
 
+> 📋 **Amended by [Protocol Amendment A1](protocol_amendment_a1.md), 2026-07-30.** A1 withdraws the
+> §5.5 run-seed axis (the pipeline is deterministic, so it measured nothing), amends §6.3, splits
+> evaluation into validation-for-selection and test-for-confirmation, and enforces the best-of-two
+> sequential ordering §3.6 always required. **It also declares every result this project has produced
+> so far exploratory**, including the 410M table below. The frozen budgets are *not* reopened.
+
 ---
 
 ## The three decisions that were open
@@ -383,7 +389,13 @@ RQ4 under this pair, and it is easy to forget because it is not part of any budg
 Per decision **D1**, the aggressive budget contributes quality and size only and never appears in a
 latency table.
 
-### Confirmed on 410M ✅
+### Confirmed on 410M — ⚠️ exploratory only
+
+> 🔴 **Superseded as confirmatory evidence by [Amendment A1 §4](protocol_amendment_a1.md).** These
+> numbers are on the **validation** split (now a declared selection surface), predate the B-22/B-23
+> corrections that **inflated joint gain**, and carry no uncertainty estimate. The **eligibility**
+> conclusion stands — sequential retention has been stable across every version of the code — but the
+> **joint-versus-sequential columns must not be quoted.**
 
 §5.3's pre-1B requirement is satisfied. Pythia-410M, same 493 × 512 window, dense 22.17, matched solver
 budgets:
@@ -400,12 +412,66 @@ Full detail, including the joint gain changing sign between scales, in
 [findings_log.md F-14](findings_log.md#f-14). **That sign flip is not yet a finding** — see the seed
 problem immediately below.
 
+## The frozen sequential order (A1 step 7)
+
+Plan §3.6 and §6.1 require joint gain to be measured against **best-of {P→Q, Q→P}**, with the winning
+order recorded. Selected on the **validation** split so the choice never touches the confirmatory
+split — validation picks the method, test estimates its performance. Evidence:
+[findings_log.md F-24](findings_log.md#f-24).
+
+| Model | Budget | **Order** | Margin | Status |
+| --- | --- | --- | --- | --- |
+| pythia-160m | aggressive 30% + W4 | **P→Q** | +4.26 pp | ✅ **frozen** |
+| pythia-410m | aggressive 30% + W4 | **P→Q** | +6.82 pp | ✅ **frozen** |
+| pythia-160m | moderate 30% + W8 | Q→P | +0.43 pp | 🔴 **contested** |
+| pythia-410m | moderate 30% + W8 | P→Q | +0.04 pp | 🔴 **contested** |
+| pythia-1b | both | — | — | ⬜ model not downloaded |
+
+### W4 — frozen, decisively, at both scales
+
+**P→Q wins at 4 bits and the margin grows with scale**: +4.26 pp at 160M, +6.82 pp at 410M. On the
+additive scale the Q→P penalty is 0.078 nats at 160M and 0.124 at 410M.
+
+Consistent with the mechanism in [F-24](findings_log.md#f-24): Q→P reuses the dense-fitted scales
+without refitting, which is what keeps it a *sequential* arm rather than a joint one. That is nearly
+free at W8 where quantisation is almost lossless, and punishing at W4 where a coarse grid is badly
+matched to the post-pruning distribution — worse at scale, because a larger model has more channels
+whose distributions shift.
+
+**The aggressive headline is unaffected by best-of**, because P→Q was already the stronger order. Joint
+gain stands at +1.08 pp (160M) and +0.68 pp (410M).
+
+### 🔴 W8 — contested. Do not freeze yet.
+
+**The direction reverses between scales and both margins are noise**: Q→P by 0.43 pp at 160M, P→Q by
+0.04 pp at 410M. At 410M all three arms — P→Q, Q→P and joint — sit within **0.017 perplexity** of one
+another.
+
+This matters because the *sign* of the moderate budget's joint gain depends on the choice: **+0.07 pp
+against P→Q, −0.36 pp against Q→P.**
+
+An earlier revision of this file froze Q→P here on the 160M margin alone, describing one draw as
+sufficient because "both margins exceed what a single draw's noise plausibly explains". That was true of
+the W4 margin and was an **assertion** for W8. [F-25](findings_log.md#f-25) contradicts it.
+
+`configs/experiments/order_selection_w8_replicates.yaml` re-checks W8 across five paired calibration
+draws, and pre-declared the decision rule before any of this was measured:
+
+> Q→P ahead in all five → the freeze stands, and now on evidence. The sign varying → the two orders are
+> indistinguishable at W8. Freeze **P→Q**, the pre-registered primary order (§3.6), and record that the
+> choice is arbitrary. Do **not** pick the winner of a coin toss and report a joint gain against it.
+
+The sign has already varied across **scales**. The replicate run tests whether it also varies across
+draws. **P→Q is the pre-declared fallback.**
+
 ## Still open
 
 | Item | Why it is not frozen yet |
 | --- | --- |
 | Calibration sample indices, token count, sequence length | Frozen by the config once `prepare_data.py` has run for real. The WikiText load path has still never been executed. |
-| **Seed policy (§5.5) and the practical-importance rule (§6.3)** | 🔴 **Newly broken.** The pipeline is deterministic, so three confirmatory seeds give three identical numbers and the seed spread is exactly zero — see [findings_log.md F-15](findings_log.md#f-15). The rule's "exceeds the seed spread" clause is vacuous as written. The variance that exists is in the **calibration draw**. Needs a human decision, and must be justified on the mechanism rather than on wanting error bars. |
+| ~~Seed policy (§5.5) and the practical-importance rule (§6.3)~~ | **AMENDED 2026-07-30** — [Amendment A1 §5.1](protocol_amendment_a1.md). The run-seed axis is withdrawn and replaced by **five paired calibration replicates**; §6.3 is reworded, and the loosening is declared as such. Reported as an effect-size study: five draws cannot clear p < 0.05 even when unanimous (2/2⁵ = 0.0625). Evidence: [F-15](findings_log.md#f-15). |
+| ~~Evaluation split (§4.1)~~ | **AMENDED 2026-07-30** — [Amendment A1 §5.2](protocol_amendment_a1.md). Validation for selection, **test for confirmation**. No leakage existed (calibration is from train); the defect was that budgets were selected on validation. |
+| ~~Sequential ordering (§3.6, §6.1)~~ | **ENFORCED 2026-07-30** — [Amendment A1 §5.3](protocol_amendment_a1.md). Both orders run; the winner is selected on **validation** and frozen per (model, budget) before any test evaluation. Not a change — the documents always required best-of-two; the grid did not implement it. |
 | ~~The two final budgets~~ | **FROZEN 2026-07-29** — see [The frozen compression budgets](#the-frozen-compression-budgets). Confirmation on 410M outstanding before 1B. |
 | 1.4B go/no-go | §5.2 needs measured peak VRAM against 85% of 6.0 GiB — a 5.1 GiB ceiling, which is tight. Decide after Phase 5 profiling. |
 | W4 latency via `torchao` | Deferred to Phase 6. Would lift D1's "no W4 latency row" limitation if a single 4-bit CPU path serves both arms. Needs measuring. |
