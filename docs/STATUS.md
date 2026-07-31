@@ -334,7 +334,40 @@ either retraction.
 **Still exploratory.** Barely over the ≥1.0 pp threshold, one calibration draw so no error bar, and the
 validation split is a declared selection surface. The confirmatory answer comes from steps 9–10.
 
-### 🔵 410M complete — and the joint gain SHRINKS with scale
+### 🔴 The scale claim is retracted — the joint gain changes sign between draws
+
+**[F-26](findings_log.md#f-26).** Three paired calibration draws at 410M aggressive:
+
+| Draw | Sequential | Joint | **Gain** |
+| --- | --- | --- | --- |
+| rep0 | 58.56% | 59.24% | **+0.68 pp** |
+| rep1 | 58.46% | 57.96% | **−0.50 pp** |
+| rep2 | 58.06% | 59.04% | **+0.98 pp** |
+| | | **mean** | **+0.39 pp, sd 0.78** |
+
+**The mean sits 0.50 sd from zero and the sign is not consistent.** F-25's +0.68 pp was *rep0 alone* —
+one draw of a distribution 1.47 pp wide that straddles zero. **The 410M point estimate and the
+"shrinks with scale" conclusion are both withdrawn.** 160M's +1.08 pp is equally suspect for the same
+reason: it is also one draw.
+
+**Pairing did not cancel the noise, contrary to what was assumed.** The paired difference (1.47 pp
+spread) is *noisier* than either arm alone (0.50 and 1.28 pp). A draw changes *which mask each arm
+picks*, and the arms respond differently by construction — the mask is what distinguishes them.
+
+**R=8 is vindicated.** At sd 0.78 pp the standard error is 0.28 pp at R=8 against 0.45 at R=3, so a
+~1 pp effect is detectable at 8 draws and not at 3. Caveat: sd from n=3 is crude, and the confirmatory
+run must be allowed to report a larger spread if it finds one.
+
+**Replicate 0 reproduced F-25 exactly** (37.851, 37.415), so the pipeline is sound and the records are
+trustworthy. The fault was reporting one draw as a point estimate, not the code.
+
+What survives from F-25: the budget confirmation, the W4 order (margins of 4–7 pp), and the W8 null.
+Those rest on gaps far outside this variance.
+
+<details>
+<summary>The original F-25 framing, kept for the record</summary>
+
+### 410M complete — and the joint gain SHRINKS with scale
 
 **[F-25](findings_log.md#f-25).** 7 cells, 3 h 18 m. Dense 22.166.
 
@@ -359,8 +392,9 @@ make it checkable. Not downloaded yet.
 requirement is satisfied.
 
 **The W8 control gives a clean null at both scales** — +0.07 pp at 160M, **+0.00 pp** at 410M. F-05
-predicted the mechanism is inert at 8 bits, and two scales agree it produces nothing. The same pipeline
-yielding zero when the mechanism is off is what makes the W4 result hard to dismiss as noise.
+predicted the mechanism is inert at 8 bits, and two scales agree it produces nothing.
+
+</details>
 
 ### 🔴 The W8 order freeze is contested — and it was my error to freeze it
 

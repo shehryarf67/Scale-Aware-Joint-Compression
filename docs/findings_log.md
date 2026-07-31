@@ -729,7 +729,110 @@ to zero. **The pruning budget must be verified against `mask_sparsity`.**
 
 ---
 
+### F-26 - The 410M joint gain changes SIGN between calibration draws {#f-26}
+
+*2026-07-31 - Pythia-410M `dd47b0e` - 493 x 512 **validation** window, dense **22.166** - three paired
+calibration draws - `METHOD_VERSION = 4` - **3 h 28 m**, 7 cells - **retracts the 410M headline of
+[F-25](#f-25)***
+
+Run to resolve a cross-machine disagreement. It resolved something more important instead.
+
+| Draw | Sequential | Joint | **Joint gain** | Excess NLL advantage |
+| --- | --- | --- | --- | --- |
+| rep0 | 58.56% | 59.24% | **+0.68 pp** | +0.0116 |
+| rep1 | 58.46% | 57.96% | **−0.50 pp** | −0.0085 |
+| rep2 | 58.06% | 59.04% | **+0.98 pp** | +0.0167 |
+| | | **mean** | **+0.39 pp** | +0.0066 |
+| | | **sd (n=3)** | **0.78 pp** | 0.0130 |
+
+**The mean sits 0.50 standard deviations from zero. Two draws of three are positive. The sign is not
+consistent.**
+
+#### What this retracts
+
+[F-25](#f-25) reported **+0.68 pp at 410M** and concluded the joint gain *shrinks with scale*
+(+1.08 pp → +0.68 pp). That +0.68 pp is now visible as **rep0 alone** — one draw of a distribution
+whose spread is 1.47 pp wide and straddles zero.
+
+**The 410M point estimate is withdrawn, and with it the scale claim.** On three draws the honest
+statement is: *at 410M the joint gain is indistinguishable from zero, and no comparison with 160M can
+be made until 160M is replicated too.* F-25's other results stand — the budget confirmation, the W4
+order, the W8 null — because those rest on gaps of 6.82 pp and larger, far outside this variance.
+
+**160M's +1.08 pp is now equally suspect.** It is also a single draw. Nothing yet says its variance is
+smaller.
+
+#### Pairing did not rescue it, and that was the surprise
+
+The paired design exists because a calibration draw that hurts one arm should hurt the other, so the
+*difference* is expected to be far more stable than either arm. That reasoning was stated in this log
+before the measurement and **it is wrong here**:
+
+| Quantity | Spread across the three draws |
+| --- | --- |
+| Sequential retention | 0.50 pp |
+| Joint retention | 1.28 pp |
+| **Paired difference** | **1.47 pp** |
+
+The difference is *noisier than either arm*, not less. At rep1 the arms moved in opposite directions —
+sequential landed mid-range while joint fell to its minimum. So the draw does not apply a common shift
+that cancels; it changes *which mask each arm picks*, and the two arms respond to it differently by
+construction, because the mask is what distinguishes them.
+
+**Pairing still helps** — it removes the dense-baseline and window variance, and it is what §3.11
+requires — but it must not be assumed to cancel calibration noise in the difference. It does not.
+
+#### What it means for the confirmatory design
+
+With sd ≈ 0.78 pp per draw:
+
+| R | Standard error of the mean gain |
+| --- | --- |
+| 3 | 0.45 pp |
+| 5 | 0.35 pp |
+| **8** | **0.28 pp** |
+
+A ~1 pp effect at R=8 sits about 3.6 standard errors from zero, which is detectable. At R=3 it is 2.2,
+and the mean measured here (+0.39 pp) is under one. **So the R=8 decision is vindicated as necessary
+and roughly sufficient** — it was chosen on the arithmetic of sign tests, and it turns out to be about
+right on the empirical variance too, which was not guaranteed.
+
+**A caveat on the caveat:** sd from n=3 is a crude estimate. The real spread could be materially larger,
+in which case R=8 would not be enough. The eight-draw confirmatory run measures its own variance and
+must be allowed to say so.
+
+#### On the cross-machine disagreement
+
+The partner's Colab figure was **+1.96 pp**, against our observed range of −0.50 to +0.98.
+
+Earlier in this session that gap was described as roughly five standard deviations outside our
+measurements, on the strength of two draws that happened to agree to 0.10 pp. **That framing was wrong**
+and is withdrawn: the third draw widened the spread fivefold, and "their number is implausible because
+ours is stable" is not an argument available when ours is not stable.
+
+What survives is narrower and unaffected by any of this:
+
+* their run is **not reproducible** — source recorded as `aec5099-dirty`, uncommitted changes, and the
+  commit absent from the history their audit could see;
+* it was produced on **Colab**, which the machine policy forbids, and numbers from two machines must
+  never share a table.
+
+Their +1.96 pp remains above everything measured here, but it is now one unreproducible draw from a cell
+known to swing by 1.47 pp — not an anomaly demanding explanation. **Both figures are single draws from a
+noisy cell. Neither should be quoted.**
+
+#### The reproduction check passed
+
+Replicate 0 reproduced [F-25](#f-25) **exactly** — sequential 37.851, joint 37.415, to three decimals,
+in a different session. The pipeline is deterministic and our records are trustworthy. The problem was
+never the code; it is that one draw of a 1.47 pp-wide distribution was reported as a point estimate.
+
+---
+
 ### F-25 - 410M: budgets confirmed, W4 order confirmed, and the joint gain SHRINKS with scale {#f-25}
+
+> 🔴 **The §5 scale headline below is RETRACTED by [F-26](#f-26).** The +0.68 pp figure is one draw
+> of a distribution spanning −0.50 to +0.98 pp. Sections 1–4 stand; the scale claim does not.
 
 *2026-07-30 - Pythia-410M `dd47b0e` - 493 x 512 **validation** window, dense **22.166** - 128
 calibration sequences from train, one draw - `METHOD_VERSION = 4` - **3 h 18 m**, 7 cells -
@@ -1504,6 +1607,7 @@ recording.
 | B-28 | Reference SparseGPT driver replayed blocks with `use_cache=True` and a live `Cache` ([F-22](#f-22)) | The cache would accumulate across replays, growing the key/value length and silently changing the activations SparseGPT fits to. Caught before the reference stage ran |
 | B-29 | `blocks[0] = Catcher(...)` mutated a **copy**, because `get_decoder_blocks` returns `list(current)` ([F-22](#f-22)) | The model kept calling the real block, so zero calibration inputs were captured; SparseGPT would have pruned against nothing and still produced a perplexity. Only an empty-capture guard turned it into an error |
 | B-30 | Joint gain was measured against P→Q only, though §3.6 and §6.1 always required best-of {P→Q, Q→P} ([F-24](#f-24)) | Q→P beats P→Q *and* joint at 30% + W8, so the moderate budget's joint gain was reported as +0.07 pp when against the required baseline it is −0.36 pp. Another omission that flattered joint |
+| B-31 | A single-draw joint gain was reported as a point estimate, and a scale trend built on two of them ([F-26](#f-26)) | The 410M cell swings from −0.50 to +0.98 pp across calibration draws, so +0.68 pp was luck. The paired difference is *noisier* than either arm, contradicting the stated expectation that pairing would cancel draw noise |
 | B-13 | Sweep cells inherited the base config's model revision | Every cell pinned to the *first* model's SHA — fails to load, or silently loads the wrong weights if the SHA exists in both repos |
 
 Two of these were **masked by tests that should have caught them**: B-07 (the test disabled
