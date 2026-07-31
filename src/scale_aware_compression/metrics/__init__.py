@@ -40,6 +40,17 @@ from scale_aware_compression.metrics.joint_gain import (
     perplexity_retention,
     relative_joint_gain,
 )
+from scale_aware_compression.metrics.replicates import (
+    MIN_R_FOR_SIGNIFICANCE,
+    BootstrapInterval,
+    ReplicateError,
+    ReplicateSummary,
+    ScaleComparison,
+    compare_scales,
+    paired_block_bootstrap,
+    sign_test_p_value,
+    summarise_replicates,
+)
 
 __all__ = [
     "JointGainSummary",
@@ -53,7 +64,16 @@ __all__ = [
     "effective_compression_ratio",
     "joint_gain",
     "joint_gain_from_quality_loss",
+    "MIN_R_FOR_SIGNIFICANCE",
+    "BootstrapInterval",
+    "ReplicateError",
+    "ReplicateSummary",
+    "ScaleComparison",
+    "compare_scales",
     "joint_gain_summary",
+    "paired_block_bootstrap",
+    "sign_test_p_value",
+    "summarise_replicates",
     "latency_reduction_percentage",
     "measure_sparsity",
     "memory_reduction_percentage",
