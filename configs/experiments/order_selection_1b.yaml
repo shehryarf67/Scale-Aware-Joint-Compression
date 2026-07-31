@@ -34,6 +34,10 @@ data:
   max_eval_samples: 512
   batch_size: 1
 
+evaluation:
+  # Exploratory Task 2 quality evaluation may use GPU; deployment measurements remain CPU-only.
+  device: cuda
+
 compression:
   reconstruction:
     # Required to keep the 1B model within the Omen's 6 GiB GPU during compression.
