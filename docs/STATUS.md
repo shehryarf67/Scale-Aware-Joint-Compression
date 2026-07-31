@@ -762,6 +762,28 @@ against best-of-sequential with the winning order recorded (§6.1).
 
 ## Environment notes
 
+### ⚠️ Model downloads stall silently at 0 bytes — set `HF_HUB_DISABLE_XET=1`
+
+Hit on 2026-07-31 downloading Pythia-1B. The metadata files (`config.json`, tokeniser) arrived
+normally, then the two weight blobs sat at **exactly 0 bytes for twenty minutes** while the process
+stayed alive and the log stayed quiet. Retrying with
+
+```bash
+HF_HUB_DISABLE_XET=1 python scripts/download_models.py --models pythia-1b
+```
+
+after deleting the stale `*.incomplete` blobs downloaded at full speed. HF's newer Xet transfer path
+appears not to work on this machine; the log also warns about unauthenticated rate limits, which may
+contribute.
+
+**Two things worth carrying forward.** A stalled download and a slow download are *indistinguishable
+from the log* — progress has to be checked by watching bytes on disk
+(`du -sb ~/.cache/huggingface/hub/models--*`), the same way a hung compression run has to be checked by
+watching CPU-seconds rather than log lines. And the stale zero-byte `*.incomplete` files must be deleted
+before retrying, or the retry resumes from a corrupt state.
+
+Expect this again for `pythia-1.4b` if the extended sweep is ever run.
+
 Full record in [protocol_freeze.md](protocol_freeze.md#environment). Summary:
 
 - **Omen is the only machine that runs code.** `outputs/`, `results/`, and `data/` are git-ignored
