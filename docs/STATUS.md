@@ -791,6 +791,43 @@ against best-of-sequential with the winning order recorded (§6.1).
 
 ---
 
+## 🔧 In progress: how activations are captured
+
+**Equivalence proven, refactor not yet applied.** Full rationale in
+[capture_refactor_rationale.md](capture_refactor_rationale.md) — written for a reader who was not here.
+
+`_compress_group` captures activations by running the **whole model** forward, once per dependency
+group. That is correct but wasteful, and it is why **Pythia-1B will not run on this hardware**:
+
+| | Current | Block-sequential |
+| --- | --- | --- |
+| Block-forwards per 1B cell | ~512 | **~48** |
+| Model resident on GPU | 3.77 GiB | **~0.2 GiB** |
+| Measured 1B GPU peak | **6.31 GiB on a 6.00 GiB card** — spilled to host, 7× slower | ~3.2 GiB |
+
+`block_size` does **not** help: peak is 6.31/6.37/6.37 GiB at 128/64/32, because the Gram
+factorisation dominates, not the block loop.
+
+**The equivalence is bit-identical**, not approximate —
+`scripts/verify_block_sequential_capture.py` on real 160M:
+
+```
+modules compared            : 48
+worst relative Gram error   : 0.000e+00
+worst relative norm error   : 0.000e+00
+VERDICT: EQUIVALENT
+```
+
+**Gates still to pass before it is trusted:** a full 160M cell reproducing F-23 (65.261 / 64.041), both
+anchors still passing, a 410M cell reproducing F-25 (37.851 / 37.415), and a `METHOD_VERSION` bump if
+anything moves. Verification is on 160M because it is the only scale where the right answer is already
+known; 1B has no baseline and its current path is the broken one.
+
+**Also found:** `sweep_reconstruct`'s docstring claims `block_size` "does not change the result". Three
+block sizes gave three losses differing at ~5e-7 relative — negligible, but the guarantee is overstated.
+
+---
+
 ## Environment notes
 
 ### ⚠️ Model downloads stall silently at 0 bytes — set `HF_HUB_DISABLE_XET=1`
