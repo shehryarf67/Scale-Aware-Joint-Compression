@@ -498,9 +498,9 @@ class ExperimentTracker:
         # would mix devices inside a single comparison. That is the unmatched-condition class of error
         # §3.11 exists to prevent, small enough here to change no conclusion and invisible without
         # this check. Recorded per run in `quality.perplexity.evaluation_device`.
-        recorded_device = (
-            (record.get("quality", {}) or {}).get("perplexity", {}) or {}
-        ).get("evaluation_device")
+        recorded_device = ((record.get("quality", {}) or {}).get("perplexity", {}) or {}).get(
+            "evaluation_device"
+        )
         if recorded_device is not None:
             expected_device = config.evaluation.device.value
             # `cuda` and `cuda:0` name the same device; compare only the backend.

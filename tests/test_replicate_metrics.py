@@ -183,9 +183,13 @@ class TestPairedBlockBootstrap:
 
     def test_it_is_reproducible_for_a_fixed_seed(self):
         s, j, t = self._windows(80, advantage=0.01)
-        kwargs = dict(
-            sequential_window_nll=s, joint_window_nll=j, window_tokens=t, resamples=200, seed=7
-        )
+        kwargs = {
+            "sequential_window_nll": s,
+            "joint_window_nll": j,
+            "window_tokens": t,
+            "resamples": 200,
+            "seed": 7,
+        }
         assert paired_block_bootstrap(**kwargs).lower == paired_block_bootstrap(**kwargs).lower
 
     def test_mismatched_window_counts_are_refused(self):
