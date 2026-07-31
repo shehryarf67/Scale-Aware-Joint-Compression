@@ -1,5 +1,20 @@
 # Project status
 
+> **Current authoritative update — 2026-07-31:** Phase 7 is complete. The corrected Pythia-160M
+> screening grid and Pythia-410M confirmation froze `moderate` at 30% + W8 and `aggressive` at
+> 30% + W4. The historical handoff notes below remain for review context; where they say that
+> screening is paused or empty, this update supersedes them. See
+> [phase7_screening.md](../results/summaries/phase7_screening.md) for the curated audit.
+
+## Current state
+
+| Item | State |
+| --- | --- |
+| Phase 7 | **Complete.** Both selected budgets are eligible at 160M and 410M. |
+| Raw evidence | Retained in `outputs/metrics/`; a curated audit is tracked in `results/summaries/`. |
+| Phase 8 configuration | Three paired calibration-subset replicates; final quality evaluation on WikiText-2 `test`. |
+| Next action | Run the confirmatory 160M → 410M → 1B sweep. |
+
 **Last updated:** 2026-07-29 · second session on the HP Omen · **Phases 0, 5 and 6 complete**;
 **Phase 7 (budget screening) paused with no valid results** — two rounds of external review
 invalidated every number, the fixes are in, the grid needs re-running from scratch

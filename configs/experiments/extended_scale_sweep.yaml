@@ -1,4 +1,6 @@
 # Extended scale sweep: the main sweep plus the OPTIONAL, HARDWARE-DEPENDENT 1.4B point.
+# It inherits the Phase 7 budget freeze, paired calibration-replicate policy, and held-out test
+# evaluation split from main_scale_sweep.yaml.
 #
 # ============================================================================================
 # READ THIS BEFORE RUNNING

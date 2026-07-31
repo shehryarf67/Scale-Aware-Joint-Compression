@@ -392,6 +392,10 @@ def build_cell_config(config: ExperimentConfig, cell: SweepCell) -> ExperimentCo
             "experiment": {"id": cell.experiment_id},
             "model": {"name": cell.model_name, "size_label": cell.size_label},
             "runtime": {"seed": cell.seed},
+            # Phase 8 replicates the calibration draw, not a deterministic algorithmic seed.
+            # Every arm with the same model/budget/replicate cell receives this same draw, while
+            # different entries in ``sweep.seeds`` choose distinct, recorded calibration subsets.
+            "data": {"calibration_seed": cell.seed},
             "compression": {
                 "method": cell.method.value
                 if isinstance(cell.method, CompressionMethod)

@@ -2,7 +2,7 @@
 #
 #   independent variable : model scale (160M -> 410M -> 1B)
 #   dependent variables  : quality retention, checkpoint size, CPU latency, throughput, memory
-#   controlled           : dataset, tokenisation window, calibration set, sparsity target,
+#   controlled           : dataset, tokenisation window, calibration-replicate policy, sparsity target,
 #                          bit width, optimisation budget, benchmark thread count / batch size /
 #                          sequence length, seed set
 #
@@ -10,6 +10,9 @@
 # `sajc sweep --config configs/experiments/main_scale_sweep.yaml --plan-only` to see the exact
 # expansion before committing compute -- the plan is the authority on the run count, not a comment.
 # Prune it while iterating: --override sweep.seeds='[1234]' or --override sweep.budgets='[moderate]'.
+# Each entry in ``sweep.seeds`` is a calibration-replicate identifier: it selects a distinct fixed
+# calibration subset, shared by every arm in that replicate. The compression implementation itself
+# is deterministic, so treating these as ordinary run-seed replicates would create duplicates.
 #
 # Three scale points, deliberately. pythia-1.4b is NOT in the default sweep: joint training at that
 # size may need different batch sizes, gradient accumulation, or reduced precision, and a fourth
@@ -35,8 +38,9 @@ experiment:
   name: Main Pythia scale sweep
   description: >-
     All five compression arms across three Pythia sizes (160M, 410M, 1B) at two compression budgets
-    and three seeds. Joint gain is computed per (model, budget, seed) from the matched sequential and
-    joint runs. The optional 1.4B point lives in extended_scale_sweep.yaml.
+    and three paired calibration replicates. Joint gain is computed per (model, budget, replicate)
+    from the matched sequential and joint runs. The optional 1.4B point lives in
+    extended_scale_sweep.yaml.
   tags:
     - main
     - scale-sweep
@@ -47,6 +51,12 @@ runtime:
   deterministic: true
   output_dir: outputs
   log_level: INFO
+
+# Phase 7 used validation only to choose the budgets. The test split is now isolated for all final
+# Phase 8 quality reporting, so the headline evaluation cannot be selected on the data it reports.
+data:
+  eval_split: test
+  max_eval_samples: 512
 
 sweep:
   # Three scale points spanning roughly one order of magnitude. Enough to establish the direction of
@@ -65,8 +75,9 @@ sweep:
   budgets:
     - moderate
     - aggressive
-  # Three seeds per cell. The spread across them is the error bar, and a joint gain smaller than
-  # that spread is not a finding.
+  # Three paired calibration replicates per cell. build_cell_config maps each value to
+  # data.calibration_seed, so sequential and joint share a draw within a replicate while different
+  # values select distinct subsets. Their spread is the Phase 8 uncertainty estimate.
   seeds:
     - 1234
     - 2345
@@ -74,8 +85,9 @@ sweep:
 
   budget_overrides:
     # =============================================================================================
-    # FROZEN 2026-07-29 from the Phase 7 screening grid. Evidence: findings_log.md F-10 and F-13,
-    # plus outputs/tables/screening_summary.md.
+    # FROZEN 2026-07-31 after the corrected Phase 7 grids completed on Pythia-160M and Pythia-410M.
+    # Evidence: results/summaries/phase7_screening.md and the preserved raw records in
+    # outputs/metrics/. These values are controlled variables for every Phase 8 cell.
     #
     # DO NOT CHANGE. The budget is a controlled variable across scales (§2.5), and §6.3 forbids
     # revisiting the choice once results exist. Superseded pair, for the record: the original
@@ -91,8 +103,9 @@ sweep:
 
     # MODERATE = screening S1. 30% sparsity, 8-bit.
     #
-    # Pythia-160M, 493x512 window, dense 36.97:
-    #     sequential 45.97 (80.4% retention)   joint 45.90 (80.6%)   gain +0.12 pp
+    # Pythia-160M, 493x512 validation screening window, dense 36.97:
+    #     sequential 46.06 (80.28% retention)  joint 46.07 (80.25%)  gain -0.02 pp
+    # Pythia-410M confirmation: sequential/joint 76.15%/76.15% retention.
     #
     # This is the CONTROL budget. F-05 measured the joint mechanism as near-inert at 8 bits -- the
     # arms pick masks differing in only 0.46% of positions -- so a joint gain near zero here is the
@@ -109,15 +122,17 @@ sweep:
     # AGGRESSIVE = screening S5. 30% sparsity, 4-bit.
     #
     # Pythia-160M, matched solver budgets:
-    #     sequential 66.03 (56.0% retention)   joint 71.87 (51.4%)   gain -4.55 pp
+    #     sequential 64.14 (57.65% retention)  joint 62.73 (58.95%)  gain +1.30 pp
+    # Pythia-410M confirmation:
+    #     sequential 38.84 (57.07% retention)  joint 37.55 (59.03%)  gain +1.95 pp
     #
     # Chosen over the 40% + W8 alternative for one reason: 4-bit is the ONLY regime where the joint
     # mechanism is measurably live -- 8.86% mask divergence at W4 against 0.46% at W8 (F-05). Two
     # 8-bit budgets could not detect the effect this study exists to measure, and would produce a
     # confident null that was an artefact of the design rather than a finding about nature.
     #
-    # It is also the only eligible budget where the two arms measurably differ, and joint is the
-    # WORSE one. That is a hypothesis worth testing, not a reason to avoid the budget.
+    # It is the only eligible budget where the joint mechanism is measurably active. The screening
+    # gains are single-replicate selection evidence only; Phase 8 determines whether the sign holds.
     #
     # Per decision D1 this budget contributes quality and size only. It never appears in a latency
     # table, because a packed 4-bit CPU linear would measure the dequantisation kernel.

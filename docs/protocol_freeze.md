@@ -316,6 +316,23 @@ cannot be re-enabled without reinstalling Windows — so it is deliberately not 
 
 ---
 
+## Current Phase 7 freeze — 2026-07-31
+
+This update supersedes the historical preliminary figures in the section below. Corrected
+screening was completed on Pythia-160M and confirmed on Pythia-410M using the 493 × 512 WikiText-2
+validation window. The preserved raw records and curated audit are in
+[`outputs/metrics/`](../outputs/metrics/) and
+[phase7_screening.md](../results/summaries/phase7_screening.md), respectively.
+
+| Budget | Definition | 160M sequential / joint retention | 410M sequential / joint retention |
+| --- | --- | --- | --- |
+| Moderate | 30% sparsity, W8 | 80.28% / 80.25% | 76.15% / 76.15% |
+| Aggressive | 30% sparsity, W4 | 57.65% / 58.95% | 57.07% / 59.03% |
+
+Both cells are eligible at both scales. These values are frozen for Phase 8. The Phase 7 numbers
+are single-replicate selection evidence only; Phase 8 uses distinct paired calibration subsets and
+the held-out WikiText-2 `test` split for confirmatory reporting.
+
 ## The frozen compression budgets
 
 **Frozen 2026-07-29**, from the Phase 7 screening grid on Pythia-160M. Evidence:

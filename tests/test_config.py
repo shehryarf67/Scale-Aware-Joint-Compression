@@ -547,6 +547,29 @@ class TestSweepScope:
         assert extended.benchmark.sequence_length == main.benchmark.sequence_length
 
     @pytest.mark.parametrize("name", ["main_scale_sweep.yaml", "extended_scale_sweep.yaml"])
+    def test_phase_eight_reserves_the_test_split_for_final_evaluation(
+        self, configs_dir: Path, name: str
+    ):
+        config = load_config(configs_dir / "experiments" / name)
+        assert config.data.eval_split == "test"
+
+    def test_sweep_seeds_select_paired_calibration_replicates(self, configs_dir: Path):
+        """A replicate varies calibration data, while paired arms retain the same draw."""
+        from scale_aware_compression.experiments.scale_sweep import (
+            build_cell_config,
+            build_sweep_plan,
+        )
+
+        config = load_config(configs_dir / "experiments" / "main_scale_sweep.yaml")
+        plan = build_sweep_plan(config)
+        calibration_seeds = set()
+        for cell in plan.cells:
+            cell_config = build_cell_config(config, cell)
+            assert cell_config.data.calibration_seed == cell.seed
+            calibration_seeds.add(cell_config.data.calibration_seed)
+        assert calibration_seeds == set(config.sweep.seeds)
+
+    @pytest.mark.parametrize("name", ["main_scale_sweep.yaml", "extended_scale_sweep.yaml"])
     def test_sweep_keeps_all_five_arms(self, configs_dir: Path, name: str):
         assert self._sweep(configs_dir, name).methods == self.ALL_ARMS
 

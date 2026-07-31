@@ -3,7 +3,7 @@
 # Tests whether a joint-gain trend found within Pythia is a property of transformer compression or
 # of Pythia specifically. Not a fifth sweep point.
 #
-# What is held identical to the main sweep: arms, budgets, seeds, evaluation corpus and window,
+# What is held identical to the main sweep: arms, budgets, calibration replicates, evaluation corpus and window,
 # calibration sample count, optimisation budget, and the entire benchmark configuration. If any of
 # those changed, a difference in outcome could not be attributed to the model family.
 #
@@ -21,7 +21,8 @@ experiment:
   id: qwen_validation
   name: Qwen2.5-0.5B external validation
   description: >-
-    The same five arms, budgets, and seeds as the main sweep, applied to a different model family.
+    The same five arms, budgets, and paired calibration replicates as the main sweep, applied to a
+    different model family.
     Compared against the Pythia trend interpolated at 0.5B parameters -- which falls between
     pythia-410m and pythia-1b.
   tags:
@@ -35,6 +36,11 @@ runtime:
   output_dir: outputs
   log_level: INFO
 
+# Keep external validation on the same held-out evaluation split as the main Phase 8 sweep.
+data:
+  eval_split: test
+  max_eval_samples: 512
+
 sweep:
   models:
     - qwen2.5-0.5b
@@ -47,6 +53,7 @@ sweep:
   budgets:
     - moderate
     - aggressive
+  # Calibration-replicate identifiers; see main_scale_sweep.yaml.
   seeds:
     - 1234
     - 2345
@@ -59,8 +66,8 @@ sweep:
   # parameter count, which is meaningless if the two ran at different compression budgets. A test
   # asserts the two configs agree.
   #
-  # Frozen 2026-07-29 from Phase 7 screening. Superseded pair: 50% + W8 and 70% + W4, both measured
-  # catastrophic on Pythia-160M. See findings_log.md F-10 and F-13.
+  # Frozen 2026-07-31 after corrected Phase 7 screening on Pythia-160M and confirmation on
+  # Pythia-410M. See results/summaries/phase7_screening.md.
   budget_overrides:
     moderate:
       compression:
