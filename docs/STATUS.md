@@ -11,6 +11,10 @@ exploratory cell now costs ~1.3 min rather than ~9.3 min ([F-29](findings_log.md
 > Read this first. It is the handoff between sessions and between machines. If it looks stale,
 > check `git log` — the truth is the commit history, this file is a summary of it.
 >
+> **Continuing this work from a cold start?** Read
+> [partner_handoff.md](partner_handoff.md) — it states the research question, every finding that
+> matters with its trust level, and the next five tasks with their exact acceptance criteria.
+>
 > **This file = where we are now.** For the durable roadmap (all ten phases, exit tests, the
 > testing plan) see [implementation_plan.md](implementation_plan.md). For the frozen decisions and
 > the environment record, [protocol_freeze.md](protocol_freeze.md). For **every measurement this
@@ -872,8 +876,10 @@ factorisation dominates, not the block loop.
 device, compress it, move it back. It gets the same verification treatment: a 160M cell must reproduce
 65.261 / 64.041 and a 410M cell 37.851 / 37.415, exactly.
 
-`scripts/run_sparsegpt_external_anchor.py` already contains a working per-block-offload driver for
-GPT-NeoX and is the model to copy.
+**Correction to an earlier note here:** `scripts/run_sparsegpt_external_anchor.py` does *not* contain a
+working per-block-offload driver, as this file previously claimed. It does block-sequential **replay**
+with the whole model resident — the part already adopted. It is still the right file to read for the
+replay pattern and the `_StopForwardError` catcher, but the offload itself has to be written.
 
 ---
 

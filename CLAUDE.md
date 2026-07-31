@@ -4,6 +4,10 @@ Guidance for Claude Code working in this repository. Read
 [docs/STATUS.md](docs/STATUS.md) **first, every session** — it holds the current phase, what is
 in progress, and the decisions that are still open.
 
+Picking the project up cold, or on a machine that has not worked on it before? Read
+[docs/partner_handoff.md](docs/partner_handoff.md) as well — the research question, every finding
+with its trust level, and the next tasks with their exact acceptance criteria.
+
 @docs/STATUS.md
 
 ## What this project is
