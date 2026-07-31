@@ -399,6 +399,9 @@ class TestShippedConfigs:
             # A1 step 7: re-checks the W8 order across paired draws, because it was frozen on a
             # +0.43 pp single-draw margin and the sign of that budget's joint gain depends on it.
             "order_selection_w8_replicates.yaml",
+            # Diagnostic: resolves the cross-machine disagreement on 410M aggressive by measuring
+            # how far the calibration draw moves that cell.
+            "dispute_410m_aggressive.yaml",
         }
         for path in files:
             config = load_config(path)
@@ -551,6 +554,7 @@ class TestShippedConfigs:
             "screening_410m.yaml",
             "order_selection.yaml",
             "order_selection_w8_replicates.yaml",
+            "dispute_410m_aggressive.yaml",
         ],
     )
     def test_exploratory_configs_stay_off_the_test_split(self, configs_dir: Path, name: str):
