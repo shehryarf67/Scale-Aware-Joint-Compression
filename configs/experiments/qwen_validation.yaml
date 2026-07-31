@@ -35,6 +35,22 @@ runtime:
   output_dir: outputs
   log_level: INFO
 
+# CONFIRMATORY EVALUATION USES THE HELD-OUT TEST SPLIT (Amendment A1 §5.2).
+#
+# The budgets were chosen by looking at validation results, which makes validation a SELECTION
+# SURFACE: reporting the headline on it would compute the primary evidence on data already used to
+# make a choice. Screening, order selection and the mechanistic controls stay on validation; only
+# final reporting moves here.
+#
+# There is no leakage either way -- calibration is drawn from `train` and always was. This is about
+# selection bias, not contamination.
+#
+# Credit where due: this was caught by the partner's phase7-close-phase8-setup branch. The replicate
+# axis was implemented here without switching the split, so the confirmatory configs would have run
+# eight paired draws and then reported them on the selection surface.
+data:
+  eval_split: test
+
 sweep:
   models:
     - qwen2.5-0.5b

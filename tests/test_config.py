@@ -531,6 +531,37 @@ class TestShippedConfigs:
         order = load_config(configs_dir / "experiments" / "order_selection.yaml")
         assert order.data.eval_split == "validation"
 
+    @pytest.mark.parametrize(
+        "name", ["main_scale_sweep.yaml", "extended_scale_sweep.yaml", "qwen_validation.yaml"]
+    )
+    def test_confirmatory_configs_report_on_the_test_split(self, configs_dir: Path, name: str):
+        """A1 §5.2: the headline must not be computed on the split that chose the budgets.
+
+        Validation became a selection surface the moment budgets were picked by looking at it. This
+        was missed when the replicate axis went in -- the confirmatory configs would have run eight
+        paired draws and then reported them on the selection surface. Caught by the partner's
+        phase7-close-phase8-setup branch, and pinned here so it cannot drift back.
+        """
+        assert load_config(configs_dir / "experiments" / name).data.eval_split == "test"
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "screening.yaml",
+            "screening_410m.yaml",
+            "order_selection.yaml",
+            "order_selection_w8_replicates.yaml",
+        ],
+    )
+    def test_exploratory_configs_stay_off_the_test_split(self, configs_dir: Path, name: str):
+        """The other half of the same rule, and the easier one to violate by copy-paste.
+
+        Every selection decision -- budgets, sequential order, mechanistic controls -- happens on
+        validation. A screening config that drifted onto test would burn the confirmatory split on a
+        choice, which is exactly what reserving it was meant to prevent.
+        """
+        assert load_config(configs_dir / "experiments" / name).data.eval_split == "validation"
+
 
 class TestSweepScope:
     """The main sweep is three models; 1.4B is confined to the extended sweep."""
