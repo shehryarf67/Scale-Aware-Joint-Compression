@@ -32,6 +32,7 @@ Pythia's parallel residual gives two groups per block, Qwen2's sequential residu
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -932,47 +933,71 @@ def compress_model_layerwise(
     total = len(module_names)
     state = {"completed": 0}
 
-    for block_index, names in enumerate(by_block):
-        if not names:
-            continue
-        remaining = list(names)
-        for group in groups:
-            in_group = [name for name in remaining if name.endswith(tuple(group))]
-            if not in_group:
-                continue
-            _compress_group(
-                model,
-                modules,
-                in_group,
-                batches=batches,
-                plan=plan,
-                arm=arm,
-                report=report,
-                device=device,
-                block_index=block_index,
-                total=total,
-                state=state,
-                progress=progress,
-            )
-            remaining = [name for name in remaining if name not in set(in_group)]
-        if remaining:
-            # A targeted module the adapter's groups do not mention. Compressing it silently against
-            # stale activations is the failure this whole change exists to remove, so refuse instead.
-            raise LayerwiseError(
-                f"block {block_index}: {remaining} are targeted but appear in no dependency group "
-                f"for {type(model).__name__}. Add them to the adapter's dependency_groups, or they "
-                "would be fitted against activations captured before their inputs were compressed."
-            )
+    # A live key/value cache would accumulate across the repeated single-block replays below, changing
+    # the activations each group is fitted against. B-28 is this exact fault in the external SparseGPT
+    # driver, found there first.
+    previous_use_cache = getattr(model.config, "use_cache", None)
+    if previous_use_cache is not None:
+        model.config.use_cache = False
+
+    try:
+        # The embedding and everything before block 0 run exactly once. From here every capture is a
+        # replay of a single block over cached hidden states.
+        cached = _capture_block_inputs(model, blocks[0], batches)
+
+        for block_index, names in enumerate(by_block):
+            block = blocks[block_index]
+            remaining = list(names)
+            for group in groups:
+                in_group = [name for name in remaining if name.endswith(tuple(group))]
+                if not in_group:
+                    continue
+                _compress_group(
+                    block,
+                    modules,
+                    in_group,
+                    cached=cached,
+                    plan=plan,
+                    arm=arm,
+                    report=report,
+                    device=device,
+                    block_index=block_index,
+                    total=total,
+                    state=state,
+                    progress=progress,
+                )
+                remaining = [name for name in remaining if name not in set(in_group)]
+            if remaining:
+                # A targeted module the adapter's groups do not mention. Compressing it silently
+                # against stale activations is the failure this whole change exists to remove, so
+                # refuse instead.
+                raise LayerwiseError(
+                    f"block {block_index}: {remaining} are targeted but appear in no dependency "
+                    f"group for {type(model).__name__}. Add them to the adapter's "
+                    "dependency_groups, or they would be fitted against activations captured "
+                    "before their inputs were compressed."
+                )
+
+            # Advance the cache through this block in its now-compressed state, so the next block sees
+            # the inputs it will really receive. This runs even when the block had NO targeted
+            # modules: skipping it would leave the next block replaying inputs from the wrong depth,
+            # which is a silent correctness failure rather than an error. Skipped after the last
+            # block, whose output nothing reads.
+            if block_index + 1 < len(blocks):
+                cached = _advance_cache(block, cached)
+    finally:
+        if previous_use_cache is not None:
+            model.config.use_cache = previous_use_cache
 
     return report
 
 
 def _compress_group(  # noqa: PLR0913 - one call site; grouping the arguments would hide the flow
-    model: nn.Module,
+    block: nn.Module,
     modules: dict[str, nn.Module],
     names: list[str],
     *,
-    batches: list[torch.Tensor],
+    cached: list[tuple[torch.Tensor, dict[str, Any]]],
     plan: LayerPlan,
     arm: str,
     report: LayerwiseReport,
@@ -990,10 +1015,12 @@ def _compress_group(  # noqa: PLR0913 - one call site; grouping the arguments wo
     blockwise.
 
     Args:
-        model: The model, modified in place.
+        block: The decoder block these modules live in. Only this block is run -- blocks after it
+            cannot influence its inputs, and blocks before it are already folded into ``cached``.
         modules: Resolved modules by name.
         names: The group's module names.
-        batches: Calibration batches, reused verbatim for every group and arm (§3.11).
+        cached: ``(hidden_states, kwargs)`` entering this block, one pair per calibration batch.
+            Byte-identical across groups and arms, which is what §3.11 requires.
         plan: Shared compression settings.
         arm: Which pipeline to run.
         report: Accumulates per-layer results, grids and the step total.
@@ -1020,9 +1047,16 @@ def _compress_group(  # noqa: PLR0913 - one call site; grouping the arguments wo
         modules[name].register_forward_pre_hook(_make_hook(captures[name])) for name in names
     ]
     try:
-        with torch.inference_mode():
-            for batch in batches:
-                model(batch.to(next(model.parameters()).device))
+        # Only this block, replayed over the cached inputs. The previous implementation ran the whole
+        # model here, once per dependency group: blocks after this one had their outputs discarded,
+        # and blocks before it were recomputed from the embedding every time. That is
+        # O(blocks x groups) full-model forwards where O(blocks) single-block forwards suffice, and it
+        # forced the entire model to stay resident on the capture device -- which is what made
+        # Pythia-1B exceed a 6 GiB card. Proven bit-identical by
+        # scripts/verify_block_sequential_capture.py; see docs/capture_refactor_rationale.md.
+        with torch.no_grad():
+            for hidden, forwarded in cached:
+                block(hidden, **forwarded)
     finally:
         for handle in handles:
             handle.remove()
@@ -1061,6 +1095,96 @@ def _compress_group(  # noqa: PLR0913 - one call site; grouping the arguments wo
             name,
             result.mask_sparsity,
         )
+
+
+class _StopForwardError(Exception):
+    """Raised to abort a forward pass once the first block's inputs have been captured."""
+
+
+def _capture_block_inputs(
+    model: nn.Module,
+    first_block: nn.Module,
+    batches: list[torch.Tensor],
+) -> list[tuple[torch.Tensor, dict[str, Any]]]:
+    """Record the hidden states and replay context entering the first decoder block.
+
+    Everything downstream replays from here, so this is the only time the embedding and whatever
+    precedes block 0 are executed.
+
+    The non-hidden keyword arguments -- attention mask, position ids, rotary embeddings -- are kept
+    verbatim and passed back on every replay. A block re-run with a different mask sees different
+    activations, which would silently change what the solver is fitted to.
+
+    Args:
+        model: The model, run once per batch and aborted at block 0.
+        first_block: The block whose inputs are wanted.
+        batches: Calibration token-id tensors.
+
+    Returns:
+        One ``(hidden_states, kwargs)`` pair per batch, in batch order.
+
+    Raises:
+        LayerwiseError: If nothing was captured, which means the block signature or call convention
+            has changed and every downstream solve would be fitted against nothing.
+    """
+    import torch
+
+    captured: list[tuple[torch.Tensor, dict[str, Any]]] = []
+
+    def catcher(_module: nn.Module, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+        hidden = args[0] if args else kwargs.get("hidden_states")
+        if hidden is None:
+            raise _StopForwardError
+        forwarded = {key: value for key, value in kwargs.items() if key != "hidden_states"}
+        captured.append((hidden.detach().clone(), forwarded))
+        raise _StopForwardError
+
+    handle = first_block.register_forward_pre_hook(catcher, with_kwargs=True)
+    device = next(model.parameters()).device
+    try:
+        with torch.no_grad():
+            for batch in batches:
+                with contextlib.suppress(_StopForwardError):
+                    model(batch.to(device))
+    finally:
+        handle.remove()
+
+    if len(captured) != len(batches):
+        raise LayerwiseError(
+            f"captured {len(captured)} block-0 input(s) for {len(batches)} calibration batch(es). "
+            "The decoder block's call convention has changed, and every layer would otherwise be "
+            "fitted against missing activations."
+        )
+    return captured
+
+
+def _advance_cache(
+    block: nn.Module,
+    cached: list[tuple[torch.Tensor, dict[str, Any]]],
+) -> list[tuple[torch.Tensor, dict[str, Any]]]:
+    """Push the cached hidden states through ``block`` in its current (compressed) state.
+
+    Called after every block, including blocks with no targeted modules -- skipping one would leave
+    the next block replaying inputs from the wrong depth, which is a silent correctness failure rather
+    than an error.
+
+    Args:
+        block: The block to run.
+        cached: Current ``(hidden_states, kwargs)`` pairs.
+
+    Returns:
+        The pairs advanced by one block, keeping each batch's replay context unchanged.
+    """
+    import torch
+
+    advanced: list[tuple[torch.Tensor, dict[str, Any]]] = []
+    with torch.no_grad():
+        for hidden, kwargs in cached:
+            output = block(hidden, **kwargs)
+            if isinstance(output, tuple):
+                output = output[0]
+            advanced.append((output.detach(), kwargs))
+    return advanced
 
 
 def _named_blocks(model: nn.Module, blocks: list[nn.Module]) -> list[tuple[str, nn.Module]]:

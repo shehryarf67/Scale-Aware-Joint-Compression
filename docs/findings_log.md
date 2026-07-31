@@ -729,6 +729,151 @@ to zero. **The pruning budget must be verified against `mask_sparsity`.**
 
 ---
 
+### F-29 - Two speedups, both verified numerically neutral: 2.7x on compression, 22.5x on evaluation {#f-29}
+
+*2026-07-31 - Pythia-160M `50f5173d` and Pythia-410M `dd47b0e` - 493 x 512 validation window -
+`METHOD_VERSION = 4`, **not bumped** - full rationale in
+[capture_refactor_rationale.md](capture_refactor_rationale.md)*
+
+Started as an attempt to make Pythia-1B runnable at all. Produced a ~7x speedup on exploratory cells as
+a by-product, and neither change moves a number.
+
+#### Where the time actually went
+
+Decomposed from the stage markers in a real 160M joint cell, rather than guessed:
+
+| Stage | Time | Share |
+| --- | --- | --- |
+| load model | 2 s | — |
+| compress | 62 s | 14% |
+| measure checkpoint | <1 s | — |
+| **evaluate quality (CPU)** | **377 s** | **86%** |
+
+**The compression this project has spent weeks optimising was 14% of a cell.** Perplexity evaluation on
+CPU was the other 86%, and nobody had looked.
+
+#### Speedup 1 — block-sequential activation capture (2.7x on compression)
+
+`_compress_group` captured activations by running the **entire model** forward, once per dependency
+group. Blocks after the current one had their outputs discarded; blocks before it were recomputed from
+the embedding for every group. That is `O(blocks x groups)` full-model forwards where `O(blocks)`
+single-block forwards suffice.
+
+Replaced with the standard approach: capture block 0's inputs once, then replay **one block at a time**
+over cached hidden states, advancing the cache after each block.
+
+| | Before | After |
+| --- | --- | --- |
+| Compression stage, 160M | ~170 s | **62 s** |
+| Block-forwards per 1B cell | ~512 | **~48** |
+| Model resident on the capture device | whole model | **one block** |
+
+**Verified bit-identical before the driver was touched.**
+`scripts/verify_block_sequential_capture.py` compared the Gram both ways on all 48 targeted modules of
+real Pythia-160M: **worst relative error 0.000e+00**, on the Gram and on the column norms. Not close --
+exactly zero. The two strategies compute the same quantity, which is why the extra work bought nothing.
+
+Two correctness details, both of which would have been silent failures:
+
+* **Blocks with no targeted modules still advance the cache.** The old code skipped them, which was
+  harmless when every capture re-ran the whole model. Skipping one now would leave the next block
+  replaying inputs from the wrong depth -- a wrong answer, not an error.
+* **`use_cache` is disabled for the duration**, in a `try/finally`. A live key/value cache accumulates
+  across the repeated single-block replays and would change what the solver is fitted to. This is
+  [B-28](#f-22) exactly, found first in the external SparseGPT driver.
+
+#### Speedup 2 — GPU evaluation for exploratory runs (22.5x on evaluation)
+
+`evaluation.device` has always been a config field, and `check_evaluation_device` **warns rather than
+errors** off CPU: *"Exploratory evaluation on GPU is fine, but any number reported in the write-up must
+be produced on CPU."* Nothing was using it.
+
+| | CPU | GPU |
+| --- | --- | --- |
+| Perplexity, 160M dense | 36.974099 | 36.974405 |
+| Time, 493 x 512 window | **345.6 s** | **15.4 s** |
+| Relative difference | — | **8.3e-06** |
+| Worst per-window difference | — | 2.1e-05 |
+
+**The 8.3e-06 drift is the same magnitude as the CPU thread-configuration sensitivity already recorded
+in [F-23](#f-23)** (36.9741 against 36.9744 on identical data). Floating-point reduction order, three
+orders of magnitude below the ~1e-2 effects this study measures.
+
+#### Combined effect
+
+| | Before | After |
+| --- | --- | --- |
+| Compression | ~170 s | 62 s |
+| Evaluation | ~377 s | 15 s |
+| **Exploratory 160M cell** | **~9.3 min** | **~1.3 min** |
+
+**~7x.** The 13-cell screening grid goes from 2 h 08 m to roughly 20 minutes, which makes
+eight-replicate exploratory work cheap rather than a day's commitment.
+
+**The confirmatory test-split run keeps CPU evaluation and its ~38 hours.** That is the rule and it is
+not being touched.
+
+#### The guard that makes GPU evaluation safe to adopt
+
+`evaluation_device` was already recorded per run, but `exists_valid` did not compare it. So switching to
+GPU evaluation would have let `skip_existing` reuse the ~50 existing CPU records inside a GPU grid,
+**silently mixing devices within a single comparison** -- the unmatched-condition class of error §3.11
+exists to prevent, small enough to change no conclusion and invisible without the check.
+
+`exists_valid` now compares it, so a device change invalidates stale records loudly. `cuda` and
+`cuda:0` are treated as the same backend.
+
+#### The gates, all passed
+
+Gram equivalence is necessary but not sufficient, so the full reproduction gates were run:
+
+| Gate | Requirement | Result |
+| --- | --- | --- |
+| Gram equivalence, 48 modules | bit-identical | ✅ **0.000e+00** |
+| Unit suite | green | ✅ **966 passing** |
+| **160M cell** | reproduce [F-23](#f-23) | ✅ **65.261 / 64.041**, gain **+1.08 pp** |
+| Exact-optimum anchor | reproduce [F-20](#f-20) | ✅ 0.6409, every module identical |
+| **410M cell** | reproduce [F-25](#f-25) | ✅ **37.851 / 37.415** |
+| `METHOD_VERSION` | bump if anything moved | **not needed — nothing moved** |
+
+**No `METHOD_VERSION` bump, so the ~50 existing records stay valid and nothing needs recomputing.** That
+was the main risk of touching `layerwise.py`, and it did not materialise.
+
+Worth being precise about one thing: **the anchors do not exercise the refactored path.** Both anchor
+scripts capture activations with their own hooks and call `sweep_reconstruct` directly, never entering
+`compress_model_layerwise`. Their passing confirms the solver is untouched -- which it is -- and says
+nothing about the capture change. **The 160M and 410M cell reproductions are the meaningful gates.**
+
+#### Other techniques checked and rejected
+
+Measured or reasoned per stage, not guessed:
+
+| Technique | Why not |
+| --- | --- |
+| Checkpoint measurement | <1 s. Nothing to gain. |
+| Agreement + generation diagnostics | ~30 s of the 377 s stage. Marginal. |
+| Larger CPU evaluation batch | Pointless once GPU evaluation makes the stage 15 s |
+| Smaller `max_eval_samples` for screening | Breaks comparability with existing records, for a stage GPU already fixes |
+| `torch.compile` / SDPA attention | Changes numerics, for a stage that is no longer the bottleneck |
+| Smaller `block_size` | Does not even reduce memory: peak 6.31 / 6.37 / 6.37 GiB at 128 / 64 / 32, because the Gram factorisation dominates |
+
+#### A documentation correction found on the way
+
+`sweep_reconstruct`'s docstring claims `block_size` is *"purely a memory/throughput knob; it does not
+change the result."* Three block sizes gave three distinct losses -- 1.983672e+07, 1.983672e+07,
+1.983673e+07 -- differing at ~5e-7 relative. Negligible in effect, smaller than the thread sensitivity
+in F-23, but the guarantee as written is false and should read "does not meaningfully change the
+result."
+
+#### Still outstanding
+
+**Per-block GPU offload**, which is what actually unblocks 1B. The refactor makes it small -- the block
+loop now owns the forward, so moving one block to the device is a contained addition -- but it is a
+separate change and will be verified the same way. Measured 1B peak with the model resident was
+**6.31 GiB on a 6.00 GiB card**, completing only by spilling to host memory at 7x the solve time.
+
+---
+
 ### F-28 - The W8 sequential orders are indistinguishable. P→Q is frozen by the pre-declared rule {#f-28}
 
 *2026-07-31 - Pythia-160M `50f5173d` - 493 x 512 **validation** window, dense **36.9741** - five paired
@@ -1793,6 +1938,7 @@ recording.
 | B-29 | `blocks[0] = Catcher(...)` mutated a **copy**, because `get_decoder_blocks` returns `list(current)` ([F-22](#f-22)) | The model kept calling the real block, so zero calibration inputs were captured; SparseGPT would have pruned against nothing and still produced a perplexity. Only an empty-capture guard turned it into an error |
 | B-30 | Joint gain was measured against P→Q only, though §3.6 and §6.1 always required best-of {P→Q, Q→P} ([F-24](#f-24)) | Q→P beats P→Q *and* joint at 30% + W8, so the moderate budget's joint gain was reported as +0.07 pp when against the required baseline it is −0.36 pp. Another omission that flattered joint |
 | B-31 | A single-draw joint gain was reported as a point estimate, and a scale trend built on two of them ([F-26](#f-26)) | The 410M cell swings from −0.50 to +0.98 pp across calibration draws, so +0.68 pp was luck. The paired difference is *noisier* than either arm, contradicting the stated expectation that pairing would cancel draw noise |
+| B-32 | `exists_valid` did not compare the evaluation device ([F-29](#f-29)) | Switching exploratory runs to GPU evaluation would have let `skip_existing` reuse CPU-evaluated records inside a GPU grid, mixing devices within one comparison at ~1e-5 -- too small to change a conclusion, invisible without the check |
 | B-13 | Sweep cells inherited the base config's model revision | Every cell pinned to the *first* model's SHA — fails to load, or silently loads the wrong weights if the SHA exists in both repos |
 
 Two of these were **masked by tests that should have caught them**: B-07 (the test disabled
