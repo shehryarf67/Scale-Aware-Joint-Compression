@@ -95,6 +95,13 @@ def run_arm(arm_class, config: ExperimentConfig, model):
     return arm, arm.run(model)
 
 
+def test_plan_carries_block_offload_flag(arm_config):
+    """The config switch must reach the shared layerwise plan."""
+    arm_config.compression.reconstruction.offload_blocks = True
+
+    assert plan_from_config(arm_config).offload_blocks is True
+
+
 class TestTheArmsRunThroughTheABC:
     @pytest.mark.parametrize("arm_class", ALL_ARMS)
     def test_each_arm_completes_every_declared_stage(self, arm_class, arm_config, fresh_model):

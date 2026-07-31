@@ -404,6 +404,8 @@ class ReconstructionConfig:
     """Ridge coefficient, relative to the mean Gram diagonal so one value works at every width."""
     block_size: int = 128
     """Column block width for the sweep solver. Throughput knob; does not change the result."""
+    offload_blocks: bool = False
+    """Stage one decoder block at a time on the compression device."""
     activation_order: bool = True
     """Visit high-energy columns first in the sweep. Ignored for per-group quantisation."""
     comparison_group: MaskComparisonGroup = MaskComparisonGroup.OUTPUT

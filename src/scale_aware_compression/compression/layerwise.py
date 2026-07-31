@@ -111,6 +111,12 @@ class LayerPlan:
     damping: float = 1e-2
     block_size: int = 128
     activation_order: bool = True
+    offload_blocks: bool = False
+    """Keep the model on CPU and stage one decoder block on ``device`` at a time.
+
+    This is opt-in because moving modules changes residency, not the reconstruction algorithm. It
+    is intended for models whose full parameter set does not fit on the compression GPU.
+    """
     scale_search: bool = False
     """Fit scales by minimising *pre-reconstruction* error rather than matching ``max|W|``.
 
@@ -940,13 +946,30 @@ def compress_model_layerwise(
     if previous_use_cache is not None:
         model.config.use_cache = False
 
+    execution_device = None
     try:
+        if plan.offload_blocks:
+            import torch
+
+            execution_device = torch.device(device or next(model.parameters()).device)
+            # The offload path deliberately starts from a CPU-resident model. Only the prefix needed
+            # to reach block 0 is staged for the one capture pass below; the complete model must never
+            # be resident on the GPU at once.
+            model.to("cpu")
+            _move_prefix_for_capture(model, blocks[0], execution_device)
+
         # The embedding and everything before block 0 run exactly once. From here every capture is a
         # replay of a single block over cached hidden states.
-        cached = _capture_block_inputs(model, blocks[0], batches)
+        cached = _capture_block_inputs(model, blocks[0], batches, device=execution_device)
+
+        if plan.offload_blocks:
+            model.to("cpu")
+            cached = _move_cached_to_device(cached, execution_device)
 
         for block_index, names in enumerate(by_block):
             block = blocks[block_index]
+            if plan.offload_blocks:
+                block.to(execution_device)
             remaining = list(names)
             for group in groups:
                 in_group = [name for name in remaining if name.endswith(tuple(group))]
@@ -985,7 +1008,11 @@ def compress_model_layerwise(
             # block, whose output nothing reads.
             if block_index + 1 < len(blocks):
                 cached = _advance_cache(block, cached)
+            if plan.offload_blocks:
+                block.to("cpu")
     finally:
+        if plan.offload_blocks:
+            model.to("cpu")
         if previous_use_cache is not None:
             model.config.use_cache = previous_use_cache
 
@@ -1105,6 +1132,8 @@ def _capture_block_inputs(
     model: nn.Module,
     first_block: nn.Module,
     batches: list[torch.Tensor],
+    *,
+    device: torch.device | str | None = None,
 ) -> list[tuple[torch.Tensor, dict[str, Any]]]:
     """Record the hidden states and replay context entering the first decoder block.
 
@@ -1140,12 +1169,12 @@ def _capture_block_inputs(
         raise _StopForwardError
 
     handle = first_block.register_forward_pre_hook(catcher, with_kwargs=True)
-    device = next(model.parameters()).device
+    capture_device = torch.device(device) if device is not None else next(model.parameters()).device
     try:
         with torch.no_grad():
             for batch in batches:
                 with contextlib.suppress(_StopForwardError):
-                    model(batch.to(device))
+                    model(batch.to(capture_device))
     finally:
         handle.remove()
 
@@ -1185,6 +1214,53 @@ def _advance_cache(
                 output = output[0]
             advanced.append((output.detach(), kwargs))
     return advanced
+
+
+def _move_cached_to_device(
+    cached: list[tuple[torch.Tensor, dict[str, Any]]], device: torch.device
+) -> list[tuple[torch.Tensor, dict[str, Any]]]:
+    """Move replay tensors alongside hidden states when blocks are staged on a device."""
+    return [
+        (
+            hidden.to(device),
+            {
+                key: value.to(device) if hasattr(value, "to") else value
+                for key, value in kwargs.items()
+            },
+        )
+        for hidden, kwargs in cached
+    ]
+
+
+def _move_prefix_for_capture(
+    model: nn.Module, first_block: nn.Module, device: torch.device
+) -> None:
+    """Stage only the modules needed to produce inputs for ``first_block``.
+
+    The first-block hook aborts before the block executes, so the block itself and every later
+    block remain on CPU during capture. Moving the siblings of the decoder-block container covers
+    embeddings, dropout and positional modules for the registered decoder-only adapters without
+    pulling the output head or the block stack onto the GPU.
+    """
+    import torch
+
+    parent: nn.Module | None = None
+    container_name = None
+    for candidate in model.modules():
+        for name, child in candidate.named_children():
+            if child is first_block or any(item is first_block for item in child.children()):
+                parent = candidate
+                container_name = name
+                break
+        if parent is not None:
+            break
+    if parent is None or container_name is None:
+        # ``first_block`` is usually inside a ModuleList; identity lookup above avoids relying on
+        # the adapter's dotted path spelling.
+        raise LayerwiseError("could not locate the decoder block container for prefix offload")
+    for name, child in parent.named_children():
+        if name != container_name:
+            child.to(device)
 
 
 def _named_blocks(model: nn.Module, blocks: list[nn.Module]) -> list[tuple[str, nn.Module]]:

@@ -964,7 +964,8 @@ Full record in [protocol_freeze.md](protocol_freeze.md#environment). Summary:
 - [x] Replicate the headline at both scales → [F-27](findings_log.md#f-27)
 - [x] `python scripts/download_models.py --models pythia-1b` — verified at pinned SHA `f73d7dcc`
 - [x] Block-sequential capture applied, all gates passed → [F-29](findings_log.md#f-29)
-- [ ] **Per-block GPU offload** ← **next**; it is what makes 1B runnable
+- [~] **Per-block GPU offload** — opt-in implementation added; Omen reference-value and 1B peak gates
+      remain pending
 - [ ] 1B budget confirmation and order selection
 - [ ] Reduced S6 control (12 runs)
 - [ ] Freeze the confirmatory config, then test evaluation **once** — no tuning after that

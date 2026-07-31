@@ -80,6 +80,7 @@ def plan_from_config(config: ExperimentConfig) -> LayerPlan:
         damping=reconstruction.damping,
         block_size=reconstruction.block_size,
         activation_order=reconstruction.activation_order,
+        offload_blocks=reconstruction.offload_blocks,
         scale_search=reconstruction.scale_search,
         keep_benefit_saliency=reconstruction.keep_benefit_saliency,
     )

@@ -901,6 +901,24 @@ class TestEndToEndOnATinyModel:
         assert report.targeted_parameters > 0
         assert all(layer.name for layer in report.layers)
 
+    def test_per_block_offload_path_compresses_and_returns_model_to_cpu(self, fresh_causal_lm):
+        """The opt-in residency path must preserve the layerwise driver contract."""
+        import torch
+
+        model = fresh_causal_lm
+        plan = moderate_plan(offload_blocks=True)
+        report = compress_model_layerwise(
+            model,
+            calibration_batches(model.config.vocab_size),
+            plan,
+            arm="sequential",
+            device="cpu",
+        )
+
+        assert report.num_layers == 8
+        assert all(parameter.device == torch.device("cpu") for parameter in model.parameters())
+        assert model.config.use_cache is True
+
     def test_the_driver_excludes_embeddings_and_the_head(self, fresh_causal_lm):
         """§2.6: including them would make the effective budget vary with model scale."""
         model = fresh_causal_lm
