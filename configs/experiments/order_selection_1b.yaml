@@ -1,0 +1,77 @@
+# Task 2: Pythia-1B validation budget and sequential-order selection.
+#
+# This is exploratory validation work. The test split remains reserved for the confirmatory sweep.
+# Both sequential orders are measured before the winner is frozen per (model, budget).
+
+include:
+  - ../models/pythia_1b.yaml
+  - ../compression/joint.yaml
+  - ../evaluation/quality.yaml
+  - ../evaluation/cpu_benchmark.yaml
+
+experiment:
+  id: order_selection_1b
+  name: Pythia-1B budget and sequential-order selection
+  description: >-
+    Validation-only selection of the stronger sequential order at each frozen budget, with dense
+    and joint references. The test split is reserved for confirmation.
+  tags:
+    - exploratory
+    - order-selection
+    - pythia-1b
+    - not-a-result
+
+runtime:
+  seed: 1234
+  deterministic: true
+  output_dir: outputs
+  log_level: INFO
+
+data:
+  calibration_samples: 128
+  calibration_split: train
+  sequence_length: 512
+  max_eval_samples: 512
+  batch_size: 1
+
+compression:
+  reconstruction:
+    # Required to keep the 1B model within the Omen's 6 GiB GPU during compression.
+    offload_blocks: true
+    solver: sweep
+    local_steps: 1
+    joint_iterations: 2
+    comparison_group: output
+    scale_search: false
+    keep_benefit_saliency: false
+
+sweep:
+  models:
+    - pythia-1b
+  methods:
+    - dense
+    - sequential
+    - sequential_qp
+    - joint
+  budgets:
+    - moderate
+    - aggressive
+  seeds:
+    - 1234
+  budget_overrides:
+    moderate:
+      compression:
+        budget_label: moderate
+        pruning:
+          sparsity: 0.3
+        quantisation:
+          bits: 8
+    aggressive:
+      compression:
+        budget_label: aggressive
+        pruning:
+          sparsity: 0.3
+        quantisation:
+          bits: 4
+  skip_existing: true
+  continue_on_error: true
