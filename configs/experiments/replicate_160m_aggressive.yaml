@@ -1,0 +1,97 @@
+# Does the 160M joint gain survive replication? (Amendment A1 §5.1, diagnostic)
+#
+# THE PIVOT POINT. [F-26](../docs/findings_log.md#f-26) found the 410M aggressive joint gain swings
+# from -0.50 to +0.98 pp across three calibration draws -- mean +0.39, sd 0.78, sign inconsistent. That
+# retracted F-25's 410M point estimate and the scale conclusion built on it.
+#
+# 160M's +1.08 pp is now equally suspect, for exactly the same reason: it is also a single draw. This
+# config tests it, and 160M is the right place to test because it is where the effect looked STRONGEST
+# and because its cells run in ~9 minutes rather than ~31.
+#
+# WHAT EACH OUTCOME MEANS, written down before the run so neither can be rationalised afterwards:
+#
+#   * gain stable and positive across all three draws
+#       -> there is a real effect at small scale. The confirmatory stage is worth its ~38 hours, and
+#          the scale question becomes answerable once 1B is added.
+#
+#   * gain straddles zero, as at 410M
+#       -> the honest headline is that the difference is smaller than this budget can measure. That is
+#          a legitimate result and a publishable one, but it reframes the paper from "joint helps, and
+#          here is how it scales" to "measured carefully, no reliable difference". Better known now
+#          than after 38 hours.
+#
+#   * gain stable at ~0.4 pp
+#       -> the worst case for the design. Detecting it would need R around 30, roughly four times the
+#          planned compute. §6.3's >= 1.0 pp practical-importance bar would not be met either way, so
+#          the correct report is a bounded null rather than an underpowered positive.
+#
+# P->Q only: F-24 and F-25 both froze it as the W4 order, on margins of 4.26 and 6.82 pp.
+# Validation split: diagnostic, not confirmatory reporting.
+#
+# Three draws, not eight. This is a screening question -- "is there anything here?" -- and three draws
+# answer it well enough to decide whether to spend the confirmatory budget. Replicates 0-2 are the same
+# draws used at 410M in F-26, so the two scales stay directly comparable.
+
+include:
+  - ../models/pythia_160m.yaml
+  - ../compression/sequential.yaml
+  - ../evaluation/quality.yaml
+  - ../evaluation/cpu_benchmark.yaml
+
+experiment:
+  id: replicate_160m_aggressive
+  name: 160M aggressive across three calibration draws
+  description: >-
+    Tests whether the +1.08 pp joint gain at 30% + W4 on Pythia-160M survives replication, after
+    F-26 showed the equivalent 410M cell changes sign between draws.
+  tags:
+    - exploratory
+    - diagnostic
+    - not-a-result
+
+runtime:
+  seed: 1234
+  deterministic: true
+  output_dir: outputs
+  log_level: INFO
+
+data:
+  # Matched to screening.yaml exactly, so replicate 0 reproduces F-23's S5 cell rather than measuring
+  # something adjacent to it.
+  calibration_samples: 128
+  calibration_split: train
+  sequence_length: 512
+  max_eval_samples: 512
+  batch_size: 4
+
+compression:
+  reconstruction:
+    solver: sweep
+    local_steps: 1
+    joint_iterations: 2
+    comparison_group: output
+    scale_search: false
+    keep_benefit_saliency: false
+
+sweep:
+  models:
+    - pythia-160m
+  methods:
+    - dense
+    - sequential
+    - joint
+  budgets:
+    - aggressive
+  replicates: 3
+
+  budget_overrides:
+    aggressive:
+      compression:
+        budget_label: aggressive
+        pruning:
+          sparsity: 0.3
+        quantisation:
+          bits: 4
+
+  skip_existing: true
+  continue_on_error: true

@@ -402,6 +402,9 @@ class TestShippedConfigs:
             # Diagnostic: resolves the cross-machine disagreement on 410M aggressive by measuring
             # how far the calibration draw moves that cell.
             "dispute_410m_aggressive.yaml",
+            # Diagnostic: does the 160M joint gain survive replication, after F-26 showed the 410M
+            # equivalent changes sign between draws?
+            "replicate_160m_aggressive.yaml",
         }
         for path in files:
             config = load_config(path)
@@ -555,6 +558,7 @@ class TestShippedConfigs:
             "order_selection.yaml",
             "order_selection_w8_replicates.yaml",
             "dispute_410m_aggressive.yaml",
+            "replicate_160m_aggressive.yaml",
         ],
     )
     def test_exploratory_configs_stay_off_the_test_split(self, configs_dir: Path, name: str):
