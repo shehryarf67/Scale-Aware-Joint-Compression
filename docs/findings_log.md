@@ -729,7 +729,107 @@ to zero. **The pruning budget must be verified against `mask_sparsity`.**
 
 ---
 
+### F-27 - 160M replicates cleanly. The effect is real there, and it does shrink with scale {#f-27}
+
+*2026-07-31 - Pythia-160M `50f5173d` and Pythia-410M `dd47b0e` - 493 x 512 **validation** window -
+three paired calibration draws at each scale, the **same** draws (replicates 0-2) -
+`METHOD_VERSION = 4` - 160M leg 1 h 01 m, 7 cells - **restores the qualitative conclusion of
+[F-25](#f-25) that [F-26](#f-26) had put in doubt***
+
+[F-26](#f-26) retracted the 410M point estimate and the scale claim built on it. This replicates the
+**160M** cell on the same three draws, which is what the claim needed to stand on.
+
+| Draw | 160M gain | 410M gain |
+| --- | --- | --- |
+| rep0 | **+1.08 pp** | +0.68 pp |
+| rep1 | **+1.65 pp** | −0.50 pp |
+| rep2 | **+2.34 pp** | +0.98 pp |
+| **mean** | **+1.69 pp** | **+0.39 pp** |
+| sd | 0.63 | 0.78 |
+| positive draws | **3 / 3** | 2 / 3 |
+| mean / sd | **2.68** | 0.50 |
+
+#### The 160M effect is robust, and the original figure understated it
+
+**All three draws are positive and all three exceed the pre-registered ≥ 1.0 pp bar.** The mean is
+**+1.69 pp** at 2.68 standard deviations from zero.
+
+**[F-23](#f-23)'s +1.08 pp turns out to have been the *lowest* of the three draws.** The single-draw
+figure that looked "uncomfortably close to the threshold" was in fact the pessimistic end of the
+distribution, not a lucky high reading. That is the opposite of the direction every prior fault in this
+project ran, and it was not the outcome expected when this run was queued.
+
+#### The scale conclusion survives, on better evidence than it had
+
+| | 160M | 410M |
+| --- | --- | --- |
+| mean gain | +1.69 pp | +0.39 pp |
+| **difference** | **+1.30 pp** | |
+
+And it holds **draw by draw**, which matters more than the difference of means because the same
+calibration draws were used at both scales:
+
+| Draw | 160M − 410M |
+| --- | --- |
+| rep0 | +0.40 pp |
+| rep1 | +2.15 pp |
+| rep2 | +1.36 pp |
+| **mean** | **+1.30 pp**, sd 0.88, **3 / 3 positive** |
+
+So [F-25](#f-25)'s *conclusion* — the joint gain shrinks with scale — is supported. Its *numbers* were
+wrong in both directions: 160M understated (+1.08 against +1.69) and 410M overstated (+0.68 against
++0.39). **The retraction of the point estimates stands; the direction they pointed does not need
+retracting.**
+
+#### What may and may not be claimed
+
+**May:** at 30% + W4 on Pythia-160M the joint arm beats best-of-sequential by roughly 1.7 pp of
+retention, consistently in sign across three calibration draws and above the pre-registered threshold in
+every one. At Pythia-410M the same comparison is indistinguishable from zero. The gain is smaller at the
+larger scale, consistently across the three paired draws.
+
+**May not:** any significance claim. Three draws cannot support one — a sign test on three unanimous
+observations reaches only p = 0.25. This is a **consistent-in-sign effect-size result**, exactly as
+[A1 §5.1](protocol_amendment_a1.md) says the study must report, and it is on the **validation** split,
+which A1 §4 declares a selection surface. It is not confirmatory.
+
+**Also may not:** a scaling law. Two scale points. The third (1B) is not downloaded.
+
+#### The confirmatory stage is now worth running
+
+The decision rule was written into the config before the run. This is the first outcome:
+
+| Predicted outcome | Consequence |
+| --- | --- |
+| **stable and positive** ✅ | a real effect at small scale — the ~38 h confirmatory stage is worth spending |
+| straddles zero | reframe as a bounded null |
+| stable at ~0.4 pp | R ≈ 30 needed; report a bounded null |
+
+At 160M's sd of 0.63 pp, R=8 gives a standard error of **0.22 pp**, so a +1.69 pp effect sits ~7.6
+standard errors from zero — comfortably detectable. At 410M's sd of 0.78 the standard error is 0.28 pp
+and a +0.39 pp effect sits at 1.4, which is *not* detectable. **That asymmetry is itself informative:**
+R=8 is sufficient to confirm the 160M effect and sufficient to establish that the 410M effect is small,
+which together is exactly what the scale question needs.
+
+#### Two methodological lessons worth keeping
+
+**Two draws systematically understate the spread.** It happened three times in this session. At 410M
+reps 0-1 sat 0.10 pp apart before rep2 landed 0.40 pp away; on 160M's sequential arm reps 0-1 sat
+0.23 pp apart before rep2 landed 1.17 pp away; and an intermediate claim in F-26 that a competing figure
+was "five standard deviations out" was built on the first of those and had to be withdrawn. **No spread
+estimate should be quoted from two observations.**
+
+**Reproduction held throughout.** Replicate 0 reproduced [F-23](#f-23) exactly at 160M — sequential
+65.261, joint 64.041 — and [F-25](#f-25) exactly at 410M. Every retraction in this session was about
+*inference from too few draws*, never about the pipeline.
+
+---
+
 ### F-26 - The 410M joint gain changes SIGN between calibration draws {#f-26}
+
+> 📌 **Partly superseded by [F-27](#f-27).** The 410M measurement below stands. Its implication that
+> the scale conclusion was unsupportable does **not**: replicating 160M on the same three draws
+> gives +1.69 pp there against +0.39 pp here, with 160M ahead in all three paired draws.
 
 *2026-07-31 - Pythia-410M `dd47b0e` - 493 x 512 **validation** window, dense **22.166** - three paired
 calibration draws - `METHOD_VERSION = 4` - **3 h 28 m**, 7 cells - **retracts the 410M headline of

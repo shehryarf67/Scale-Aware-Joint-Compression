@@ -334,7 +334,42 @@ either retraction.
 **Still exploratory.** Barely over the ≥1.0 pp threshold, one calibration draw so no error bar, and the
 validation split is a declared selection surface. The confirmatory answer comes from steps 9–10.
 
-### 🔴 The scale claim is retracted — the joint gain changes sign between draws
+### 🟢 Replicated at both scales: the effect is real at 160M and shrinks with scale
+
+**[F-27](findings_log.md#f-27).** Three paired calibration draws, the *same* draws at both scales.
+
+| Draw | 160M gain | 410M gain |
+| --- | --- | --- |
+| rep0 | **+1.08 pp** | +0.68 pp |
+| rep1 | **+1.65 pp** | −0.50 pp |
+| rep2 | **+2.34 pp** | +0.98 pp |
+| **mean** | **+1.69 pp** | **+0.39 pp** |
+| sd | 0.63 | 0.78 |
+| positive | **3/3** | 2/3 |
+
+**At 160M the effect is robust:** all three draws positive, all three above the pre-registered ≥1.0 pp
+bar, mean 2.68 sd from zero. **F-23's +1.08 pp was the *lowest* of the three** — the single-draw figure
+that looked uncomfortably close to the threshold was the pessimistic end, not a lucky reading. First
+time in this project a fault ran *against* the flattering direction.
+
+**At 410M it is indistinguishable from zero** (mean 0.50 sd from zero, sign inconsistent).
+
+**The scale conclusion holds, draw by draw:** 160M − 410M is +0.40, +2.15, +1.36 pp — mean +1.30,
+**3/3 positive**. So F-25's *direction* survives even though both its point estimates were wrong (160M
+understated, 410M overstated). The retraction of the numbers stands; the conclusion they pointed to
+does not need retracting.
+
+**Decision: the confirmatory stage is worth running.** At 160M's sd 0.63 the standard error at R=8 is
+0.22 pp, putting +1.69 pp about 7.6 SE from zero. At 410M's sd 0.78 the SE is 0.28 and +0.39 pp sits at
+1.4 — not detectable, which is itself the right answer for that scale.
+
+**No significance claim.** Three unanimous draws reach only p = 0.25 on a sign test. This is a
+consistent-in-sign effect-size result on the validation split, exactly what A1 §5.1 prescribes.
+
+<details>
+<summary>F-26, the intermediate result that put the scale claim in doubt</summary>
+
+### The 410M joint gain changes sign between draws
 
 **[F-26](findings_log.md#f-26).** Three paired calibration draws at 410M aggressive:
 
@@ -363,6 +398,8 @@ trustworthy. The fault was reporting one draw as a point estimate, not the code.
 
 What survives from F-25: the budget confirmation, the W4 order (margins of 4–7 pp), and the W8 null.
 Those rest on gaps far outside this variance.
+
+</details>
 
 <details>
 <summary>The original F-25 framing, kept for the record</summary>
