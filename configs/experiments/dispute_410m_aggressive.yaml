@@ -1,0 +1,104 @@
+# Resolve the 410M aggressive disagreement, and measure calibration variance while doing it.
+#
+# THE DISAGREEMENT. Two independent runs of nominally the same cell disagree, and in a way that
+# reverses the study's answer:
+#
+#                       160M gain     410M gain
+#   ours   (F-25, Omen)   +1.08 pp      +0.68 pp   -> shrinks with scale
+#   theirs (Colab)        +1.30 pp      +1.96 pp   -> grows with scale
+#
+# The shape of the disagreement is the clue. Their JOINT perplexity (~37.55 implied) is close to ours
+# (37.415); it is their SEQUENTIAL that is worse (~38.84 against our 37.851). Something made the
+# sequential arm worse for them while leaving joint roughly alone.
+#
+# WHY RE-RUNNING ALONE WOULD SETTLE NOTHING. The pipeline is deterministic (F-15), so re-running the
+# identical config on the Omen reproduces our own number by construction. That confirms our
+# reproducibility and diagnoses nothing about theirs.
+#
+# WHAT THIS RUNS INSTEAD. The 410M aggressive pair across THREE paired calibration draws. Replicate 0
+# is the draw F-25 used, so it doubles as the reproduction check; replicates 1 and 2 are new. Two
+# questions get answered at once:
+#
+#   1. Does our F-25 number reproduce?  (replicate 0 against the existing record)
+#   2. How much does the calibration draw move these numbers?
+#
+# Question 2 is the important one and it cuts both ways:
+#
+#   * If sequential retention swings ~1.5 pp across draws, their 57.07% is an ordinary draw and the
+#     disagreement is calibration variance, not a defect in either run. That would ALSO mean a
+#     +0.68 pp joint gain measured on ONE draw sits inside the noise -- which would undercut F-25's
+#     scale claim as much as it explains theirs.
+#   * If the three draws cluster tightly, calibration variance cannot explain a 1.5 pp gap, and their
+#     number came from something about their environment or their uncommitted changes. Our figure
+#     stands and theirs stays unusable.
+#
+# Either outcome is worth the compute. The second question is one the study needs answered regardless,
+# because it is the first direct measurement of how much a single-draw joint gain can be trusted.
+#
+# Validation split: this is diagnostic and selection-adjacent, not confirmatory reporting.
+
+include:
+  - ../models/pythia_410m.yaml
+  - ../compression/sequential.yaml
+  - ../evaluation/quality.yaml
+  - ../evaluation/cpu_benchmark.yaml
+
+experiment:
+  id: dispute_410m_aggressive
+  name: 410M aggressive across three calibration draws
+  description: >-
+    Reproduces the F-25 410M aggressive cell and measures how far the calibration draw moves it, to
+    resolve a cross-machine disagreement that reverses the direction of the scale result.
+  tags:
+    - exploratory
+    - diagnostic
+    - not-a-result
+
+runtime:
+  seed: 1234
+  deterministic: true
+  output_dir: outputs
+  log_level: INFO
+
+data:
+  # Matched to screening_410m.yaml exactly so replicate 0 reproduces F-25 rather than measuring
+  # something adjacent to it. batch_size 2 included: 410M evaluation is CPU-bound on 13.7 GiB.
+  calibration_samples: 128
+  calibration_split: train
+  sequence_length: 512
+  max_eval_samples: 512
+  batch_size: 2
+
+compression:
+  reconstruction:
+    solver: sweep
+    local_steps: 1
+    joint_iterations: 2
+    comparison_group: output
+    scale_search: false
+    keep_benefit_saliency: false
+
+sweep:
+  models:
+    - pythia-410m
+  # P->Q only. F-25 froze it as the W4 order at both scales on a +6.82 pp margin, so it is the
+  # best-of-sequential baseline here and Q->P would not change which arm the gain is measured against.
+  methods:
+    - dense
+    - sequential
+    - joint
+  budgets:
+    - aggressive
+  replicates: 3
+
+  budget_overrides:
+    aggressive:
+      compression:
+        budget_label: aggressive
+        pruning:
+          sparsity: 0.3
+        quantisation:
+          bits: 4
+
+  skip_existing: true
+  continue_on_error: true

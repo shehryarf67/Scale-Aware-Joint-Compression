@@ -729,7 +729,438 @@ to zero. **The pruning budget must be verified against `mask_sparsity`.**
 
 ---
 
+### F-29 - Two speedups, both verified numerically neutral: 2.7x on compression, 22.5x on evaluation {#f-29}
+
+*2026-07-31 - Pythia-160M `50f5173d` and Pythia-410M `dd47b0e` - 493 x 512 validation window -
+`METHOD_VERSION = 4`, **not bumped** - full rationale in
+[capture_refactor_rationale.md](capture_refactor_rationale.md)*
+
+Started as an attempt to make Pythia-1B runnable at all. Produced a ~7x speedup on exploratory cells as
+a by-product, and neither change moves a number.
+
+#### Where the time actually went
+
+Decomposed from the stage markers in a real 160M joint cell, rather than guessed:
+
+| Stage | Time | Share |
+| --- | --- | --- |
+| load model | 2 s | — |
+| compress | 62 s | 14% |
+| measure checkpoint | <1 s | — |
+| **evaluate quality (CPU)** | **377 s** | **86%** |
+
+**The compression this project has spent weeks optimising was 14% of a cell.** Perplexity evaluation on
+CPU was the other 86%, and nobody had looked.
+
+#### Speedup 1 — block-sequential activation capture (2.7x on compression)
+
+`_compress_group` captured activations by running the **entire model** forward, once per dependency
+group. Blocks after the current one had their outputs discarded; blocks before it were recomputed from
+the embedding for every group. That is `O(blocks x groups)` full-model forwards where `O(blocks)`
+single-block forwards suffice.
+
+Replaced with the standard approach: capture block 0's inputs once, then replay **one block at a time**
+over cached hidden states, advancing the cache after each block.
+
+| | Before | After |
+| --- | --- | --- |
+| Compression stage, 160M | ~170 s | **62 s** |
+| Block-forwards per 1B cell | ~512 | **~48** |
+| Model resident on the capture device | whole model | **one block** |
+
+**Verified bit-identical before the driver was touched.**
+`scripts/verify_block_sequential_capture.py` compared the Gram both ways on all 48 targeted modules of
+real Pythia-160M: **worst relative error 0.000e+00**, on the Gram and on the column norms. Not close --
+exactly zero. The two strategies compute the same quantity, which is why the extra work bought nothing.
+
+Two correctness details, both of which would have been silent failures:
+
+* **Blocks with no targeted modules still advance the cache.** The old code skipped them, which was
+  harmless when every capture re-ran the whole model. Skipping one now would leave the next block
+  replaying inputs from the wrong depth -- a wrong answer, not an error.
+* **`use_cache` is disabled for the duration**, in a `try/finally`. A live key/value cache accumulates
+  across the repeated single-block replays and would change what the solver is fitted to. This is
+  [B-28](#f-22) exactly, found first in the external SparseGPT driver.
+
+#### Speedup 2 — GPU evaluation for exploratory runs (22.5x on evaluation)
+
+`evaluation.device` has always been a config field, and `check_evaluation_device` **warns rather than
+errors** off CPU: *"Exploratory evaluation on GPU is fine, but any number reported in the write-up must
+be produced on CPU."* Nothing was using it.
+
+| | CPU | GPU |
+| --- | --- | --- |
+| Perplexity, 160M dense | 36.974099 | 36.974405 |
+| Time, 493 x 512 window | **345.6 s** | **15.4 s** |
+| Relative difference | — | **8.3e-06** |
+| Worst per-window difference | — | 2.1e-05 |
+
+**The 8.3e-06 drift is the same magnitude as the CPU thread-configuration sensitivity already recorded
+in [F-23](#f-23)** (36.9741 against 36.9744 on identical data). Floating-point reduction order, three
+orders of magnitude below the ~1e-2 effects this study measures.
+
+#### Combined effect
+
+| | Before | After |
+| --- | --- | --- |
+| Compression | ~170 s | 62 s |
+| Evaluation | ~377 s | 15 s |
+| **Exploratory 160M cell** | **~9.3 min** | **~1.3 min** |
+
+**~7x.** The 13-cell screening grid goes from 2 h 08 m to roughly 20 minutes, which makes
+eight-replicate exploratory work cheap rather than a day's commitment.
+
+**The confirmatory test-split run keeps CPU evaluation and its ~38 hours.** That is the rule and it is
+not being touched.
+
+#### The guard that makes GPU evaluation safe to adopt
+
+`evaluation_device` was already recorded per run, but `exists_valid` did not compare it. So switching to
+GPU evaluation would have let `skip_existing` reuse the ~50 existing CPU records inside a GPU grid,
+**silently mixing devices within a single comparison** -- the unmatched-condition class of error §3.11
+exists to prevent, small enough to change no conclusion and invisible without the check.
+
+`exists_valid` now compares it, so a device change invalidates stale records loudly. `cuda` and
+`cuda:0` are treated as the same backend.
+
+#### The gates, all passed
+
+Gram equivalence is necessary but not sufficient, so the full reproduction gates were run:
+
+| Gate | Requirement | Result |
+| --- | --- | --- |
+| Gram equivalence, 48 modules | bit-identical | ✅ **0.000e+00** |
+| Unit suite | green | ✅ **966 passing** |
+| **160M cell** | reproduce [F-23](#f-23) | ✅ **65.261 / 64.041**, gain **+1.08 pp** |
+| Exact-optimum anchor | reproduce [F-20](#f-20) | ✅ 0.6409, every module identical |
+| **410M cell** | reproduce [F-25](#f-25) | ✅ **37.851 / 37.415** |
+| `METHOD_VERSION` | bump if anything moved | **not needed — nothing moved** |
+
+**No `METHOD_VERSION` bump, so the ~50 existing records stay valid and nothing needs recomputing.** That
+was the main risk of touching `layerwise.py`, and it did not materialise.
+
+Worth being precise about one thing: **the anchors do not exercise the refactored path.** Both anchor
+scripts capture activations with their own hooks and call `sweep_reconstruct` directly, never entering
+`compress_model_layerwise`. Their passing confirms the solver is untouched -- which it is -- and says
+nothing about the capture change. **The 160M and 410M cell reproductions are the meaningful gates.**
+
+#### Other techniques checked and rejected
+
+Measured or reasoned per stage, not guessed:
+
+| Technique | Why not |
+| --- | --- |
+| Checkpoint measurement | <1 s. Nothing to gain. |
+| Agreement + generation diagnostics | ~30 s of the 377 s stage. Marginal. |
+| Larger CPU evaluation batch | Pointless once GPU evaluation makes the stage 15 s |
+| Smaller `max_eval_samples` for screening | Breaks comparability with existing records, for a stage GPU already fixes |
+| `torch.compile` / SDPA attention | Changes numerics, for a stage that is no longer the bottleneck |
+| Smaller `block_size` | Does not even reduce memory: peak 6.31 / 6.37 / 6.37 GiB at 128 / 64 / 32, because the Gram factorisation dominates |
+
+#### A documentation correction found on the way
+
+`sweep_reconstruct`'s docstring claims `block_size` is *"purely a memory/throughput knob; it does not
+change the result."* Three block sizes gave three distinct losses -- 1.983672e+07, 1.983672e+07,
+1.983673e+07 -- differing at ~5e-7 relative. Negligible in effect, smaller than the thread sensitivity
+in F-23, but the guarantee as written is false and should read "does not meaningfully change the
+result."
+
+#### Still outstanding
+
+**Per-block GPU offload**, which is what actually unblocks 1B. The refactor makes it small -- the block
+loop now owns the forward, so moving one block to the device is a contained addition -- but it is a
+separate change and will be verified the same way. Measured 1B peak with the model resident was
+**6.31 GiB on a 6.00 GiB card**, completing only by spilling to host memory at 7x the solve time.
+
+---
+
+### F-28 - The W8 sequential orders are indistinguishable. P→Q is frozen by the pre-declared rule {#f-28}
+
+*2026-07-31 - Pythia-160M `50f5173d` - 493 x 512 **validation** window, dense **36.9741** - five paired
+calibration draws - `METHOD_VERSION = 4` - **1 h 42 m**, 11 cells - **resolves the contested W8 freeze
+in [F-24](#f-24) / [F-25](#f-25)***
+
+[F-24](#f-24) froze **Q→P** as the moderate-budget order on a **+0.43 pp margin from one draw**.
+[F-25](#f-25) then found the direction *reversed* at 410M. This settles it across draws.
+
+| Draw | P→Q | Q→P | Margin (Q→P − P→Q) |
+| --- | --- | --- | --- |
+| rep0 | 80.20% | 80.63% | **+0.43 pp** |
+| rep1 | 80.44% | 80.35% | **−0.09 pp** |
+| rep2 | 80.10% | 80.31% | +0.21 pp |
+| rep3 | 80.33% | 80.55% | +0.22 pp |
+| rep4 | 80.20% | 80.34% | +0.14 pp |
+| | | **mean** | **+0.18 pp**, sd 0.19, SE 0.08 |
+
+**Q→P ahead in 4 of 5 draws. Sign not consistent. Sign-test p = 0.375. Mean / sd = 0.97.**
+
+#### The pre-declared rule applies, and its second branch fires
+
+`order_selection_w8_replicates.yaml` fixed the decision *before* any of this was measured:
+
+> Q→P ahead in all five → the freeze stands, and now on evidence. **The sign varying → the two orders
+> are indistinguishable at W8. Freeze P→Q, the pre-registered primary order (§3.6), and record that the
+> choice is arbitrary. Do not pick the winner of a coin toss and report a joint gain against it.**
+
+The sign varies. **W8 is therefore frozen at P→Q**, and the choice is recorded as arbitrary rather than
+as a measured preference.
+
+Note what this is *not*: it is not "P→Q is better." It is "the two are not distinguishable, so the
+pre-registered primary order is used." Q→P is ahead on the mean. Choosing it anyway would mean picking a
++0.18 pp winner out of noise and then reporting a joint gain against it — and that choice would flip the
+sign of the moderate budget's headline, which is precisely why the rule existed.
+
+#### The consequence for the moderate budget's joint gain
+
+| Baseline | Moderate joint gain |
+| --- | --- |
+| P→Q — **now frozen** | **+0.07 pp** |
+| Q→P — F-24's contested choice | −0.36 pp |
+
+So the moderate budget's gain is **+0.07 pp**: a clean null, which is what [F-05](#f-05) predicts for a
+mechanism that is inert at 8 bits. The −0.36 pp figure F-24 derived is withdrawn along with the Q→P
+freeze it rested on.
+
+#### An expectation of mine that was wrong twice, in both directions
+
+Worth recording because it shows how easily a plausible variance argument misleads.
+
+**First I expected the orders to be indistinguishable**, reasoning from the aggressive budget where
+draws move retention by 0.63–0.78 pp — far more than 0.43 pp.
+
+**Then, seeing P→Q's five draws span only 0.34 pp with sd 0.13, I reversed** and said the 0.43 pp margin
+was "over three standard deviations, which could be a genuine difference."
+
+**Both were wrong, for the same reason.** The relevant spread is not each arm's, it is the **paired
+margin's** — sd 0.19 pp, from which the mean of +0.18 pp sits 0.97 sd away. Each arm is tight *and* the
+margin is still noise, because the arms do not move together: a draw changes which mask each order
+picks, and they respond differently by construction. [F-26](#f-26) found the same thing at W4, where the
+paired difference was noisier than either arm.
+
+**The rule was fixed in advance, so being wrong twice changed nothing.** That is the entire argument for
+pre-declaring decision rules.
+
+#### Why W8 noise is small and the margin still is not resolvable
+
+W8 quantisation is near-lossless ([F-07](#f-07): 99.8% retention W8-only), so there is little damage for
+a calibration draw to modulate — hence each arm's sd of 0.13 pp against 0.63+ at W4. But the *difference*
+between two orderings at W8 is also tiny, because with an almost-lossless quantiser it barely matters
+which operation runs first. **Small signal and small noise, in roughly equal measure.** No affordable
+replicate count fixes that: at sd 0.19 pp, resolving a +0.18 pp margin at p < 0.05 would need R ≈ 12,
+spent on the *control* budget to settle a question that does not affect the headline.
+
+#### What is unaffected
+
+The **aggressive** budget, which carries the study. P→Q wins there by **+4.26 pp at 160M and +6.82 pp at
+410M** — margins twenty to thirty times this one, in the same direction at both scales. That freeze
+stands on evidence, and the [F-27](#f-27) headline is measured against it.
+
+---
+
+### F-27 - 160M replicates cleanly. The effect is real there, and it does shrink with scale {#f-27}
+
+*2026-07-31 - Pythia-160M `50f5173d` and Pythia-410M `dd47b0e` - 493 x 512 **validation** window -
+three paired calibration draws at each scale, the **same** draws (replicates 0-2) -
+`METHOD_VERSION = 4` - 160M leg 1 h 01 m, 7 cells - **restores the qualitative conclusion of
+[F-25](#f-25) that [F-26](#f-26) had put in doubt***
+
+[F-26](#f-26) retracted the 410M point estimate and the scale claim built on it. This replicates the
+**160M** cell on the same three draws, which is what the claim needed to stand on.
+
+| Draw | 160M gain | 410M gain |
+| --- | --- | --- |
+| rep0 | **+1.08 pp** | +0.68 pp |
+| rep1 | **+1.65 pp** | −0.50 pp |
+| rep2 | **+2.34 pp** | +0.98 pp |
+| **mean** | **+1.69 pp** | **+0.39 pp** |
+| sd | 0.63 | 0.78 |
+| positive draws | **3 / 3** | 2 / 3 |
+| mean / sd | **2.68** | 0.50 |
+
+#### The 160M effect is robust, and the original figure understated it
+
+**All three draws are positive and all three exceed the pre-registered ≥ 1.0 pp bar.** The mean is
+**+1.69 pp** at 2.68 standard deviations from zero.
+
+**[F-23](#f-23)'s +1.08 pp turns out to have been the *lowest* of the three draws.** The single-draw
+figure that looked "uncomfortably close to the threshold" was in fact the pessimistic end of the
+distribution, not a lucky high reading. That is the opposite of the direction every prior fault in this
+project ran, and it was not the outcome expected when this run was queued.
+
+#### The scale conclusion survives, on better evidence than it had
+
+| | 160M | 410M |
+| --- | --- | --- |
+| mean gain | +1.69 pp | +0.39 pp |
+| **difference** | **+1.30 pp** | |
+
+And it holds **draw by draw**, which matters more than the difference of means because the same
+calibration draws were used at both scales:
+
+| Draw | 160M − 410M |
+| --- | --- |
+| rep0 | +0.40 pp |
+| rep1 | +2.15 pp |
+| rep2 | +1.36 pp |
+| **mean** | **+1.30 pp**, sd 0.88, **3 / 3 positive** |
+
+So [F-25](#f-25)'s *conclusion* — the joint gain shrinks with scale — is supported. Its *numbers* were
+wrong in both directions: 160M understated (+1.08 against +1.69) and 410M overstated (+0.68 against
++0.39). **The retraction of the point estimates stands; the direction they pointed does not need
+retracting.**
+
+#### What may and may not be claimed
+
+**May:** at 30% + W4 on Pythia-160M the joint arm beats best-of-sequential by roughly 1.7 pp of
+retention, consistently in sign across three calibration draws and above the pre-registered threshold in
+every one. At Pythia-410M the same comparison is indistinguishable from zero. The gain is smaller at the
+larger scale, consistently across the three paired draws.
+
+**May not:** any significance claim. Three draws cannot support one — a sign test on three unanimous
+observations reaches only p = 0.25. This is a **consistent-in-sign effect-size result**, exactly as
+[A1 §5.1](protocol_amendment_a1.md) says the study must report, and it is on the **validation** split,
+which A1 §4 declares a selection surface. It is not confirmatory.
+
+**Also may not:** a scaling law. Two scale points. The third (1B) is not downloaded.
+
+#### The confirmatory stage is now worth running
+
+The decision rule was written into the config before the run. This is the first outcome:
+
+| Predicted outcome | Consequence |
+| --- | --- |
+| **stable and positive** ✅ | a real effect at small scale — the ~38 h confirmatory stage is worth spending |
+| straddles zero | reframe as a bounded null |
+| stable at ~0.4 pp | R ≈ 30 needed; report a bounded null |
+
+At 160M's sd of 0.63 pp, R=8 gives a standard error of **0.22 pp**, so a +1.69 pp effect sits ~7.6
+standard errors from zero — comfortably detectable. At 410M's sd of 0.78 the standard error is 0.28 pp
+and a +0.39 pp effect sits at 1.4, which is *not* detectable. **That asymmetry is itself informative:**
+R=8 is sufficient to confirm the 160M effect and sufficient to establish that the 410M effect is small,
+which together is exactly what the scale question needs.
+
+#### Two methodological lessons worth keeping
+
+**Two draws systematically understate the spread.** It happened three times in this session. At 410M
+reps 0-1 sat 0.10 pp apart before rep2 landed 0.40 pp away; on 160M's sequential arm reps 0-1 sat
+0.23 pp apart before rep2 landed 1.17 pp away; and an intermediate claim in F-26 that a competing figure
+was "five standard deviations out" was built on the first of those and had to be withdrawn. **No spread
+estimate should be quoted from two observations.**
+
+**Reproduction held throughout.** Replicate 0 reproduced [F-23](#f-23) exactly at 160M — sequential
+65.261, joint 64.041 — and [F-25](#f-25) exactly at 410M. Every retraction in this session was about
+*inference from too few draws*, never about the pipeline.
+
+---
+
+### F-26 - The 410M joint gain changes SIGN between calibration draws {#f-26}
+
+> 📌 **Partly superseded by [F-27](#f-27).** The 410M measurement below stands. Its implication that
+> the scale conclusion was unsupportable does **not**: replicating 160M on the same three draws
+> gives +1.69 pp there against +0.39 pp here, with 160M ahead in all three paired draws.
+
+*2026-07-31 - Pythia-410M `dd47b0e` - 493 x 512 **validation** window, dense **22.166** - three paired
+calibration draws - `METHOD_VERSION = 4` - **3 h 28 m**, 7 cells - **retracts the 410M headline of
+[F-25](#f-25)***
+
+Run to resolve a cross-machine disagreement. It resolved something more important instead.
+
+| Draw | Sequential | Joint | **Joint gain** | Excess NLL advantage |
+| --- | --- | --- | --- | --- |
+| rep0 | 58.56% | 59.24% | **+0.68 pp** | +0.0116 |
+| rep1 | 58.46% | 57.96% | **−0.50 pp** | −0.0085 |
+| rep2 | 58.06% | 59.04% | **+0.98 pp** | +0.0167 |
+| | | **mean** | **+0.39 pp** | +0.0066 |
+| | | **sd (n=3)** | **0.78 pp** | 0.0130 |
+
+**The mean sits 0.50 standard deviations from zero. Two draws of three are positive. The sign is not
+consistent.**
+
+#### What this retracts
+
+[F-25](#f-25) reported **+0.68 pp at 410M** and concluded the joint gain *shrinks with scale*
+(+1.08 pp → +0.68 pp). That +0.68 pp is now visible as **rep0 alone** — one draw of a distribution
+whose spread is 1.47 pp wide and straddles zero.
+
+**The 410M point estimate is withdrawn, and with it the scale claim.** On three draws the honest
+statement is: *at 410M the joint gain is indistinguishable from zero, and no comparison with 160M can
+be made until 160M is replicated too.* F-25's other results stand — the budget confirmation, the W4
+order, the W8 null — because those rest on gaps of 6.82 pp and larger, far outside this variance.
+
+**160M's +1.08 pp is now equally suspect.** It is also a single draw. Nothing yet says its variance is
+smaller.
+
+#### Pairing did not rescue it, and that was the surprise
+
+The paired design exists because a calibration draw that hurts one arm should hurt the other, so the
+*difference* is expected to be far more stable than either arm. That reasoning was stated in this log
+before the measurement and **it is wrong here**:
+
+| Quantity | Spread across the three draws |
+| --- | --- |
+| Sequential retention | 0.50 pp |
+| Joint retention | 1.28 pp |
+| **Paired difference** | **1.47 pp** |
+
+The difference is *noisier than either arm*, not less. At rep1 the arms moved in opposite directions —
+sequential landed mid-range while joint fell to its minimum. So the draw does not apply a common shift
+that cancels; it changes *which mask each arm picks*, and the two arms respond to it differently by
+construction, because the mask is what distinguishes them.
+
+**Pairing still helps** — it removes the dense-baseline and window variance, and it is what §3.11
+requires — but it must not be assumed to cancel calibration noise in the difference. It does not.
+
+#### What it means for the confirmatory design
+
+With sd ≈ 0.78 pp per draw:
+
+| R | Standard error of the mean gain |
+| --- | --- |
+| 3 | 0.45 pp |
+| 5 | 0.35 pp |
+| **8** | **0.28 pp** |
+
+A ~1 pp effect at R=8 sits about 3.6 standard errors from zero, which is detectable. At R=3 it is 2.2,
+and the mean measured here (+0.39 pp) is under one. **So the R=8 decision is vindicated as necessary
+and roughly sufficient** — it was chosen on the arithmetic of sign tests, and it turns out to be about
+right on the empirical variance too, which was not guaranteed.
+
+**A caveat on the caveat:** sd from n=3 is a crude estimate. The real spread could be materially larger,
+in which case R=8 would not be enough. The eight-draw confirmatory run measures its own variance and
+must be allowed to say so.
+
+#### On the cross-machine disagreement
+
+The partner's Colab figure was **+1.96 pp**, against our observed range of −0.50 to +0.98.
+
+Earlier in this session that gap was described as roughly five standard deviations outside our
+measurements, on the strength of two draws that happened to agree to 0.10 pp. **That framing was wrong**
+and is withdrawn: the third draw widened the spread fivefold, and "their number is implausible because
+ours is stable" is not an argument available when ours is not stable.
+
+What survives is narrower and unaffected by any of this:
+
+* their run is **not reproducible** — source recorded as `aec5099-dirty`, uncommitted changes, and the
+  commit absent from the history their audit could see;
+* it was produced on **Colab**, which the machine policy forbids, and numbers from two machines must
+  never share a table.
+
+Their +1.96 pp remains above everything measured here, but it is now one unreproducible draw from a cell
+known to swing by 1.47 pp — not an anomaly demanding explanation. **Both figures are single draws from a
+noisy cell. Neither should be quoted.**
+
+#### The reproduction check passed
+
+Replicate 0 reproduced [F-25](#f-25) **exactly** — sequential 37.851, joint 37.415, to three decimals,
+in a different session. The pipeline is deterministic and our records are trustworthy. The problem was
+never the code; it is that one draw of a 1.47 pp-wide distribution was reported as a point estimate.
+
+---
+
 ### F-25 - 410M: budgets confirmed, W4 order confirmed, and the joint gain SHRINKS with scale {#f-25}
+
+> 🔴 **The §5 scale headline below is RETRACTED by [F-26](#f-26).** The +0.68 pp figure is one draw
+> of a distribution spanning −0.50 to +0.98 pp. Sections 1–4 stand; the scale claim does not.
 
 *2026-07-30 - Pythia-410M `dd47b0e` - 493 x 512 **validation** window, dense **22.166** - 128
 calibration sequences from train, one draw - `METHOD_VERSION = 4` - **3 h 18 m**, 7 cells -
@@ -849,8 +1280,10 @@ it.
 
 ### F-24 - The winning sequential order differs by budget, and the headline survives best-of {#f-24}
 
-> 🔴 **The W8 freeze below is CONTESTED by [F-25](#f-25)**, which found the direction reverses at
-> 410M on a 0.04 pp margin. The W4 freeze is confirmed and strengthened. See F-25 §3.
+> 🔴 **The W8 freeze below is WITHDRAWN — resolved by [F-28](#f-28).** Across five paired draws the
+> orders are indistinguishable (mean +0.18 pp, sd 0.19, 4/5, p = 0.375), so the pre-declared
+> fallback applies and W8 is frozen at **P→Q**. The moderate joint gain is therefore **+0.07 pp**,
+> not the −0.36 pp derived here. The W4 freeze is confirmed and strengthened.
 
 *2026-07-30 - Pythia-160M `50f5173d` - 493 x 512 **validation** window, dense **36.9741** - 128
 calibration sequences from train, one draw - `METHOD_VERSION = 4` - **42 min**, 5 cells -
@@ -1504,6 +1937,8 @@ recording.
 | B-28 | Reference SparseGPT driver replayed blocks with `use_cache=True` and a live `Cache` ([F-22](#f-22)) | The cache would accumulate across replays, growing the key/value length and silently changing the activations SparseGPT fits to. Caught before the reference stage ran |
 | B-29 | `blocks[0] = Catcher(...)` mutated a **copy**, because `get_decoder_blocks` returns `list(current)` ([F-22](#f-22)) | The model kept calling the real block, so zero calibration inputs were captured; SparseGPT would have pruned against nothing and still produced a perplexity. Only an empty-capture guard turned it into an error |
 | B-30 | Joint gain was measured against P→Q only, though §3.6 and §6.1 always required best-of {P→Q, Q→P} ([F-24](#f-24)) | Q→P beats P→Q *and* joint at 30% + W8, so the moderate budget's joint gain was reported as +0.07 pp when against the required baseline it is −0.36 pp. Another omission that flattered joint |
+| B-31 | A single-draw joint gain was reported as a point estimate, and a scale trend built on two of them ([F-26](#f-26)) | The 410M cell swings from −0.50 to +0.98 pp across calibration draws, so +0.68 pp was luck. The paired difference is *noisier* than either arm, contradicting the stated expectation that pairing would cancel draw noise |
+| B-32 | `exists_valid` did not compare the evaluation device ([F-29](#f-29)) | Switching exploratory runs to GPU evaluation would have let `skip_existing` reuse CPU-evaluated records inside a GPU grid, mixing devices within one comparison at ~1e-5 -- too small to change a conclusion, invisible without the check |
 | B-13 | Sweep cells inherited the base config's model revision | Every cell pinned to the *first* model's SHA — fails to load, or silently loads the wrong weights if the SHA exists in both repos |
 
 Two of these were **masked by tests that should have caught them**: B-07 (the test disabled

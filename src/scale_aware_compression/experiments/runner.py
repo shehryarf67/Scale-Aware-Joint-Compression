@@ -491,6 +491,25 @@ class ExperimentTracker:
             if recorded_data.get(key) != expected:
                 reasons.append(f"data.{key} {recorded_data.get(key)} is not {expected}")
 
+        # The DEVICE the quality number was produced on. GPU evaluation is ~22x faster and legitimate
+        # for exploratory work -- `check_evaluation_device` warns rather than errors, because only
+        # reported numbers must come from CPU. But CPU and GPU differ at ~1e-5 relative from
+        # floating-point reduction order, so a grid that reused CPU records while writing GPU ones
+        # would mix devices inside a single comparison. That is the unmatched-condition class of error
+        # §3.11 exists to prevent, small enough here to change no conclusion and invisible without
+        # this check. Recorded per run in `quality.perplexity.evaluation_device`.
+        recorded_device = ((record.get("quality", {}) or {}).get("perplexity", {}) or {}).get(
+            "evaluation_device"
+        )
+        if recorded_device is not None:
+            expected_device = config.evaluation.device.value
+            # `cuda` and `cuda:0` name the same device; compare only the backend.
+            if str(recorded_device).split(":")[0] != str(expected_device).split(":")[0]:
+                reasons.append(
+                    f"quality was evaluated on {recorded_device!r} but this run evaluates on "
+                    f"{expected_device!r}"
+                )
+
         recorded_reconstruction = (record.get("config", {}).get("compression", {}) or {}).get(
             "reconstruction", {}
         ) or {}

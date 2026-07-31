@@ -419,13 +419,13 @@ order recorded. Selected on the **validation** split so the choice never touches
 split — validation picks the method, test estimates its performance. Evidence:
 [findings_log.md F-24](findings_log.md#f-24).
 
-| Model | Budget | **Order** | Margin | Status |
+| Model | Budget | **Frozen order** | Evidence | Status |
 | --- | --- | --- | --- | --- |
-| pythia-160m | aggressive 30% + W4 | **P→Q** | +4.26 pp | ✅ **frozen** |
-| pythia-410m | aggressive 30% + W4 | **P→Q** | +6.82 pp | ✅ **frozen** |
-| pythia-160m | moderate 30% + W8 | Q→P | +0.43 pp | 🔴 **contested** |
-| pythia-410m | moderate 30% + W8 | P→Q | +0.04 pp | 🔴 **contested** |
-| pythia-1b | both | — | — | ⬜ model not downloaded |
+| pythia-160m | aggressive 30% + W4 | **P→Q** | +4.26 pp, one draw | ✅ **frozen on evidence** |
+| pythia-410m | aggressive 30% + W4 | **P→Q** | +6.82 pp, one draw | ✅ **frozen on evidence** |
+| pythia-160m | moderate 30% + W8 | **P→Q** | indistinguishable over 5 draws | ✅ **frozen by pre-declared fallback** |
+| pythia-410m | moderate 30% + W8 | **P→Q** | +0.04 pp, i.e. indistinguishable | ✅ **frozen by the same fallback** |
+| pythia-1b | both | — | — | ⬜ not yet selected (model now downloaded) |
 
 ### W4 — frozen, decisively, at both scales
 
@@ -441,28 +441,38 @@ whose distributions shift.
 **The aggressive headline is unaffected by best-of**, because P→Q was already the stronger order. Joint
 gain stands at +1.08 pp (160M) and +0.68 pp (410M).
 
-### 🔴 W8 — contested. Do not freeze yet.
+### ✅ W8 — resolved. Frozen at P→Q by the pre-declared fallback.
 
-**The direction reverses between scales and both margins are noise**: Q→P by 0.43 pp at 160M, P→Q by
-0.04 pp at 410M. At 410M all three arms — P→Q, Q→P and joint — sit within **0.017 perplexity** of one
-another.
+**The two orders are indistinguishable at 8 bits.** Measured across five paired calibration draws
+([findings_log.md F-28](findings_log.md#f-28)):
 
-This matters because the *sign* of the moderate budget's joint gain depends on the choice: **+0.07 pp
-against P→Q, −0.36 pp against Q→P.**
+| | Margin, Q→P − P→Q |
+| --- | --- |
+| rep0 … rep4 | +0.43, **−0.09**, +0.21, +0.22, +0.14 pp |
+| mean | **+0.18 pp**, sd 0.19, SE 0.08 |
+| Q→P ahead in | 4 / 5 draws — **sign not consistent**, p = 0.375 |
 
-An earlier revision of this file froze Q→P here on the 160M margin alone, describing one draw as
-sufficient because "both margins exceed what a single draw's noise plausibly explains". That was true of
-the W4 margin and was an **assertion** for W8. [F-25](findings_log.md#f-25) contradicts it.
+The rule was fixed in `order_selection_w8_replicates.yaml` *before* the measurement, and its second
+branch fires: the sign varies, so **W8 is frozen at P→Q — the §3.6 pre-registered primary order — and
+the choice is recorded as arbitrary rather than as a measured preference.**
 
-`configs/experiments/order_selection_w8_replicates.yaml` re-checks W8 across five paired calibration
-draws, and pre-declared the decision rule before any of this was measured:
+**This is not a finding that P→Q is better.** Q→P is ahead on the mean. Adopting it would mean selecting
+a +0.18 pp winner out of noise and then reporting a joint gain against it — which would flip the sign of
+the moderate budget's headline. That is exactly the outcome the rule existed to prevent.
 
-> Q→P ahead in all five → the freeze stands, and now on evidence. The sign varying → the two orders are
-> indistinguishable at W8. Freeze **P→Q**, the pre-registered primary order (§3.6), and record that the
-> choice is arbitrary. Do **not** pick the winner of a coin toss and report a joint gain against it.
+**Consequence:** the moderate budget's joint gain is **+0.07 pp** (against P→Q), a clean null and what
+**F-05** predicts for a mechanism inert at 8 bits. The −0.36 pp figure derived in F-24 is withdrawn with
+the Q→P freeze it rested on.
 
-The sign has already varied across **scales**. The replicate run tests whether it also varies across
-draws. **P→Q is the pre-declared fallback.**
+**An earlier revision of this file froze Q→P** on the 160M margin alone, calling one draw sufficient
+because "both margins exceed what a single draw's noise plausibly explains". That was true of the W4
+margin and an **assertion** for W8.
+
+**Why more draws will not help.** W8 quantisation is near-lossless (F-07: 99.8% retention W8-only), so
+there is little damage for a draw to modulate — each arm's sd is only 0.13 pp. But the difference between
+two orderings is also tiny, because with an almost-lossless quantiser it barely matters which runs first.
+Small signal, small noise. Resolving a +0.18 pp margin at sd 0.19 would need R ≈ 12, spent on the
+*control* budget to settle a question that does not affect the headline.
 
 ## Still open
 
