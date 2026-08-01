@@ -195,6 +195,80 @@ class TestCpuOnlyPolicy:
             BenchmarkConfig(device=Device.CUDA)
 
 
+class TestOneMachinePerResultsTable:
+    """The machine is host-bound for deployment numbers and portable for everything else.
+
+    The policy allows any CUDA machine to run compression and quality, because those differ across
+    hosts only by floating-point reduction order. Latency, throughput and peak memory do not:
+    they are properties of the machine. These pin the line between the two.
+    """
+
+    OMEN = {
+        "system": "Windows",
+        "cpu_model": "Intel64 Family 6 Model 183",
+        "cpu_count_logical": 16,
+        "cuda_device_names": ["NVIDIA GeForce RTX 4050 Laptop GPU"],
+    }
+    COLAB = {
+        "system": "Linux",
+        "cpu_model": "x86_64",
+        "cpu_count_logical": 8,
+        "cuda_device_names": ["Tesla T4"],
+    }
+
+    def test_two_machines_get_different_keys(self):
+        from scale_aware_compression.hardware import host_key
+
+        assert host_key(self.OMEN) != host_key(self.COLAB)
+
+    def test_the_key_is_stable_across_calls_on_one_machine(self):
+        """Anything that moves between runs -- free memory, load -- must stay out of the key."""
+        from scale_aware_compression.hardware import host_key
+
+        assert host_key(self.OMEN) == host_key(dict(self.OMEN))
+
+    def test_an_empty_mapping_is_unknown_rather_than_a_new_machine(self):
+        """Otherwise every record predating the field would look like a foreign host."""
+        from scale_aware_compression.hardware import host_key
+
+        assert host_key({}) == "unknown"
+
+    def test_compression_only_records_from_two_hosts_are_not_flagged(self):
+        """The benign case. A warning that fires when nothing is wrong stops being read."""
+        summarise_records = self._load_summariser()
+        summary = summarise_records(
+            [
+                {"model_name": "pythia-160m", "hardware": self.OMEN, "deployment": {}},
+                {"model_name": "pythia-160m", "hardware": self.COLAB, "deployment": {}},
+            ]
+        )
+        assert len(summary["distinct_hosts"]) == 2
+        assert summary["distinct_deployment_hosts"] == []
+
+    def test_deployment_records_from_two_hosts_are_flagged(self):
+        """The case that makes a results table wrong rather than imprecise."""
+        summarise_records = self._load_summariser()
+        summary = summarise_records(
+            [
+                {"hardware": self.OMEN, "deployment": {"num_threads": 4, "latency_ms": 10.0}},
+                {"hardware": self.COLAB, "deployment": {"num_threads": 4, "latency_ms": 22.0}},
+            ]
+        )
+        assert len(summary["distinct_deployment_hosts"]) == 2
+
+    def _load_summariser(self):
+        """Import `summarise_records` from the script directory, which is not a package."""
+        import importlib.util
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[1] / "scripts" / "generate_plots.py"
+        spec = importlib.util.spec_from_file_location("_generate_plots", path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.summarise_records
+
+
 class TestThreadPinIsHonoured:
     """A latency measured under an unrequested thread count is not comparable to any other.
 

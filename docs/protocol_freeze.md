@@ -231,7 +231,17 @@ otherwise read as an excellent result.
 
 ## Environment
 
-Recorded per §10.2. **The HP Omen is the only machine that produces numbers.**
+Recorded per §10.2. **The HP Omen is the designated benchmark host: every *deployment* number —
+latency, throughput, peak memory, checkpoint size — comes from this machine, and one results table
+never spans two.**
+
+**Amended 2026-08-01.** This previously read "the only machine that produces numbers", which was
+stricter than §4.7 and than `benchmarking_protocol.md`'s *one machine per results table*.
+Compression, activation capture and quality evaluation may run on **any CUDA machine**: they differ
+across hosts only by floating-point reduction order, ~1e-5 relative, against ~1e-2 effects. A
+*comparison* still may not span machines, and that is enforced in code rather than by convention —
+`ExperimentTracker.exists_valid` re-runs a record produced on another host instead of reusing it
+(B-33). The freeze on this table itself is unchanged; it describes the benchmark host.
 
 | | |
 | --- | --- |

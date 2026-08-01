@@ -114,23 +114,56 @@ If code and docs disagree, that is a bug in one of them. **Say so rather than pi
   `.gitkeep`; contents are not.
 * **Report measured against target**, always — measured sparsity beside target sparsity,
   `is_converted` on quantised artefacts, `storage_efficiency` on checkpoints.
-* **The HP Omen is the only machine that runs code.** See below; this one has already cost us.
+* **Deployment measurements come from one designated benchmark host.** Everything else can run on
+  any CUDA machine. See below — this is the rule that changed on 2026-08-01.
 
-### The machine rule, and why it is not negotiable
+### The machine rule — what it is now, and what it used to say
 
-`outputs/`, `results/` and `data/` are git-ignored, so they exist **only on the Omen**. Every
-benchmark number in the paper comes from that machine, and every record carries
-`hardware.cpu_model` so a mixed table is detectable after the fact.
+**You can run this on Colab, or any other CUDA box.** An earlier version of this document said "the
+HP Omen is the only machine that runs code". That was operational shorthand from when one person had
+one GPU, and it was **stricter than the protocol requires**: `benchmarking_protocol.md` and
+`methodology.md` both say *one machine per results table*, not one machine per project. It has been
+corrected.
 
-**This already went wrong once.** A previous Phase 7 attempt was run on Colab from a working tree
-22 commits behind `main`, at a commit recorded as `aec5099-dirty`. Those numbers could not be used —
-not because they looked wrong, but because *nothing about them was reproducible*: unknown code,
-unknown hardware, uncommitted changes. The work was not wasted (its test-split fix was genuinely
-right and is now in `main`), but the measurements were unusable.
+| Tier | Work | Where you may run it |
+| --- | --- | --- |
+| 1 | Tests, lint, config validation, docs, analysis of existing records | **anywhere**, no GPU needed |
+| 2 | Compression, activation capture, quality evaluation | **any CUDA machine** — Colab included |
+| 3 | Deployment: latency, throughput, peak memory, checkpoint size | **the designated benchmark host** (currently the Omen) |
 
-**So:** if you cannot run on the Omen, your contribution is code, docs and analysis — and the code
-gets verified on the Omen before any number derived from it is recorded. That is not a comment on
-anyone's work. It is the only way two people can produce one table.
+**Why tier 2 is portable and tier 3 is not.** Compression and perplexity depend on the weights and
+the data; across machines they move only by floating-point reduction order, about **1e-5 relative**
+— the same magnitude as the CPU/GPU drift measured in [F-29](findings_log.md#f-29) and the CPU
+thread-configuration sensitivity in [F-23](findings_log.md#f-23), and three orders of magnitude
+below the ~1e-2 effects this study measures. A **latency** is not like that. It is a property of the
+machine, and no correction makes two hosts comparable.
+
+**Two invariants that hold wherever you run:**
+
+1. **A comparison never spans machines.** Both arms of a cell, at the same replicate, on one host.
+   The machine is one of §3.11's matched conditions. This is enforced in code —
+   `ExperimentTracker.exists_valid` re-runs a record produced on a different host rather than
+   reusing it (**B-33**), so `skip_existing` cannot quietly pull your Colab record into a grid
+   running on the Omen.
+2. **Never mix machines in one results table.** `scripts/generate_plots.py` **refuses to plot**
+   when deployment-bearing records span hosts. It no longer warns when only compression records do,
+   because that case is benign and a warning that fires when nothing is wrong stops being read.
+
+**What this means in practice for you:** do tasks 1–3 on whatever GPU you have. Copy the resulting
+records over if useful, but expect them to re-run on the other machine — that is the guard working,
+not a bug. **Task 4's A5 benchmarks and task 5's confirmatory run must happen on the benchmark
+host.**
+
+### Reproducibility is a separate rule, and it did not loosen
+
+A previous Phase 7 attempt ran on Colab from a working tree **22 commits behind `main`**, at a
+commit recorded as `aec5099-dirty`. Those numbers could not be used — not because of the hardware,
+but because *nothing about them was reproducible*: unknown code, uncommitted changes. The work was
+not wasted (its test-split fix was genuinely right and is in `main` now), but the measurements were
+unusable.
+
+**So: clean tree, committed SHA, `git pull` first, every time.** The record stores the commit and
+appends `-dirty` if the tree is not clean. A `-dirty` record is not a result.
 
 ---
 
@@ -249,9 +282,10 @@ by protocol.
 
 ```bash
 git checkout main && git pull            # do NOT work from an old branch
-uv venv --python 3.11 && .venv\Scripts\activate
+uv venv --python 3.11
+.venv\Scripts\activate                   # Windows;  source .venv/bin/activate  elsewhere
 uv pip install -e . -r requirements-dev.txt
-pytest                                   # expect 966 passing, ~45 s, offline
+pytest                                   # expect 974 passing, ~45 s, offline
 ruff check . && ruff format --check .     # both must pass
 sajc info                                # registry + hardware, no downloads
 ```
@@ -261,6 +295,23 @@ failure to your own edit otherwise.
 
 Use `--dry-run` on any script that takes a config, first, every time. It validates the config and
 prints the plan without loading a model.
+
+**On Colab or another Linux GPU box**, four things differ and all of them are survivable:
+
+* **Do not `pip install torch`** — the CUDA build is already there. Installing over it can pull a
+  CPU wheel and silently drop you to no GPU. `uv pip install -e . -r requirements-dev.txt` is fine;
+  check `sajc info` afterwards and confirm CUDA is still available.
+* **The torch version will not be 2.13.0+cu126.** §2.7 pins the environment *for the confirmatory
+  run*, not for development. Exploratory work on a different torch is fine; it goes in the record,
+  which is the point of recording it. **Do not upgrade the benchmark host's torch to match yours.**
+* **`torch.backends.quantized.supported_engines` differs by platform.** On the pinned Windows build
+  it is `['onednn']` only; Linux usually offers `fbgemm` and `x86` too. A `requires_torch` test
+  asserts the shipped config's backend exists in *your* torch, so it will tell you rather than
+  failing at conversion after the compute is spent.
+* **Runs must survive a disconnect.** `skip_existing: true` makes a sweep resumable — an interrupted
+  grid re-runs only cells with no record — but Colab wipes local disk on disconnect, so point
+  `runtime.output_dir` at mounted Drive or copy `outputs/metrics/` out as you go. A lost record is a
+  re-run, not a corruption.
 
 ---
 
@@ -304,14 +355,34 @@ not — it does block-sequential **replay** with the whole model resident, which
 already adopted. It is still the right file to read for the replay pattern and the `_StopForwardError`
 catcher, but **the offload itself has to be written.**
 
-**Gates. All four must pass before this is trusted:**
+**Gates — and read this before comparing against any number in this repo.**
 
-| Gate | Command | Required result |
+The values below (65.261 / 64.041 at 160M, 37.851 / 37.415 at 410M) were produced **on the Omen**.
+They are *not* portable targets. A different GPU runs different cuBLAS kernels, so the Gram differs
+in its last bits, and a near-tie in the saliency ranking can flip — [F-19](findings_log.md#f-19)
+found 4 positions in 85 million flipping between float32 and float64 norms alone. **Expect small
+differences on another host, and do not read them as a broken refactor.**
+
+So use a **host-local baseline** instead. It is portable, and for isolating a refactor it is
+*stronger* than an absolute target, because it holds the machine constant:
+
+```bash
+git stash                 # or check out the pre-change commit
+# run one 160M aggressive cell, sequential + joint -> record the two perplexities
+git stash pop
+# run the same cell again on the same machine
+```
+
+| Gate | How | Required result |
 | --- | --- | --- |
-| 1 | `pytest` | 966+ passing, `ruff` clean |
-| 2 | one 160M aggressive cell, sequential + joint | **65.261 / 64.041** — exactly |
-| 3 | `python scripts/run_reconstruction_anchor.py --config configs/experiments/screening.yaml` | efficiency **0.6409**, 0 rows below optimum |
-| 4 | one 410M aggressive cell | **37.851 / 37.415** — exactly |
+| 1 | `pytest` and `ruff check . && ruff format --check .` | 974+ passing, both clean |
+| 2 | 160M aggressive cell, before vs after **on your machine** | **bit-identical** |
+| 3 | `python scripts/run_reconstruction_anchor.py --config configs/experiments/screening.yaml` | 0 rows below the optimum, 0 worse than naive. Efficiency near **0.6409** — this one *is* fairly portable, but compare the invariants, not the fourth decimal |
+| 4 | 410M aggressive cell, before vs after **on your machine** | **bit-identical** |
+| 5 | Omen re-check, before the change is relied on | reproduces **65.261 / 64.041** and **37.851 / 37.415** exactly |
+
+Gate 5 is the one that needs the benchmark host, and it is cheap — two cells, a few minutes each at
+the post-[F-29](findings_log.md#f-29) cost. Everything before it you can do alone.
 
 If gate 2 or 4 moves *at all*, the change altered the numbers. Then you must either find out why or
 **bump `METHOD_VERSION`** in [constants.py](../src/scale_aware_compression/constants.py), which
@@ -377,8 +448,10 @@ establish that a compressed model is still useful, and a reviewer will ask.
 
 **A5 — prefill vs decode timed separately (§4.7).** At prompt lengths **128 and 512**, reporting
 **IQR**, with **model-order rotation** so thermal drift does not load onto one arm.
-**CPU-only, 4 threads, as pinned** — this is a deployment measurement, so the CPU rule is absolute.
-Read [benchmarking_protocol.md](benchmarking_protocol.md) before writing a line of it.
+**CPU-only, 4 threads, as pinned, on the designated benchmark host** — this is a tier-3 deployment
+measurement, so both the CPU rule and the one-machine rule are absolute. You can *write* it
+anywhere and test it against `tiny_causal_lm`; only the measured numbers are host-bound. Read
+[benchmarking_protocol.md](benchmarking_protocol.md) before writing a line of it.
 
 Note the standing limitation from **D1**: the sole latency backend is PyTorch native CPU **INT8**,
 engine **`onednn`** (not `x86` — on the pinned torch, `supported_engines` is `['onednn']` only). W4
@@ -402,7 +475,8 @@ is frozen.
    possible* outcome (every replicate agreeing) is p = 0.0625, so **no significance claim exists at
    any effect size**, while R=8 reaches 0.008. The extra hours buy that transition, spent only on the
    two models carrying most of the scale-trend evidence.
-4. **CPU evaluation. No GPU shortcut here.** That is what the ~38 hours are.
+4. **CPU evaluation, on the benchmark host, no GPU shortcut.** That is what the ~38 hours are, and
+   the whole table has to come from one machine.
 5. **R must be reported per cell** — A1 §5.1 makes it a hard requirement.
 6. **No tuning after this point.** Not a threshold, not a window, not a coverage list. If something
    is wrong, it gets reported as a limitation, or the whole confirmatory stage is re-declared and
@@ -494,9 +568,9 @@ caller.
 * **Do not report a single draw as a point estimate.** That is what forced the F-25 → F-26
   retraction.
 * **Do not run a confirmatory number on GPU**, and do not run any latency, throughput, memory or
-  checkpoint-size measurement anywhere but CPU on the Omen.
-* **Do not mix machines in one table.** Every record carries `hardware.cpu_model` precisely so this
-  is checkable.
+  checkpoint-size measurement anywhere but CPU on the designated benchmark host.
+* **Do not mix machines inside one comparison or one table.** Running compression on your own GPU
+  is fine and expected; splitting a cell's two arms across two machines is not.
 * **Do not claim a scaling law.** Three points cannot fit one, and the plan says so. We report a
   *direction*.
 * **Do not tune anything after the confirmatory freeze.**

@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from scale_aware_compression.hardware import host_key
 from scale_aware_compression.logging_utils import configure_logging, get_logger, log_key_values
 
 LOGGER = get_logger(__name__)
@@ -85,12 +86,14 @@ def summarise_records(records: list[dict[str, object]]) -> dict[str, object]:
         records: Loaded run records.
 
     Returns:
-        Counts by model and by method, plus the distinct hardware and thread counts. More than one
-        of either means the records are not comparable and must not share a figure.
+        Counts by model and by method, the distinct hosts overall, and -- separately -- the
+        distinct hosts among records that actually carry a deployment measurement. Only the
+        latter set breaks comparability, which is why the two are counted apart.
     """
     models: dict[str, int] = {}
     methods: dict[str, int] = {}
-    hardware: set[str] = set()
+    hosts: set[str] = set()
+    deployment_hosts: set[str] = set()
     threads: set[int] = set()
 
     for record in records:
@@ -100,17 +103,28 @@ def summarise_records(records: list[dict[str, object]]) -> dict[str, object]:
         methods[method] = methods.get(method, 0) + 1
 
         machine = record.get("hardware")
-        if isinstance(machine, dict) and machine.get("cpu_model"):
-            hardware.add(str(machine["cpu_model"]))
+        host = host_key(machine) if isinstance(machine, dict) else "unknown"
+        if host != "unknown":
+            hosts.add(host)
+
+        # A deployment measurement is a property of the machine as much as of the model. A
+        # compression-only record is not: it carries perplexity and sizes, which differ across
+        # hosts by floating-point reduction order alone. Counting the two together made this
+        # warning fire on the benign case as soon as a second machine ran any compression, and a
+        # warning that fires when nothing is wrong stops being read when something is.
         deployment = record.get("deployment")
-        if isinstance(deployment, dict) and deployment.get("num_threads") is not None:
-            threads.add(int(deployment["num_threads"]))
+        if isinstance(deployment, dict) and deployment:
+            if host != "unknown":
+                deployment_hosts.add(host)
+            if deployment.get("num_threads") is not None:
+                threads.add(int(deployment["num_threads"]))
 
     return {
         "num_records": len(records),
         "by_model": models,
         "by_method": methods,
-        "distinct_cpu_models": sorted(hardware),
+        "distinct_hosts": sorted(hosts),
+        "distinct_deployment_hosts": sorted(deployment_hosts),
         "distinct_thread_counts": sorted(threads),
     }
 
@@ -142,11 +156,27 @@ def main(argv: list[str] | None = None) -> int:
     summary = summarise_records(records)
     log_key_values(LOGGER, f"Loaded {len(records)} record(s) from {results_dir}", summary)
 
-    if len(summary["distinct_cpu_models"]) > 1:  # type: ignore[arg-type]
-        LOGGER.warning(
-            "Records span %d different CPUs. Latencies from different machines are not comparable "
-            "and must not appear in the same figure.",
-            len(summary["distinct_cpu_models"]),  # type: ignore[arg-type]
+    deployment_hosts: list[str] = summary["distinct_deployment_hosts"]  # type: ignore[assignment]
+    if len(deployment_hosts) > 1:
+        # Not a warning. Latency, throughput and peak memory from two machines cannot be averaged
+        # or plotted together under any correction, so a figure built from this record set would
+        # be wrong rather than imprecise. benchmarking_protocol.md: one machine per results table.
+        LOGGER.error(
+            "Deployment measurements span %d machines: %s. CPU latencies from different hosts "
+            "are not comparable and must never share a table. Re-run the deployment benchmarks on "
+            "one machine, or filter the record set before plotting.",
+            len(deployment_hosts),
+            deployment_hosts,
+        )
+        return 1
+    if len(summary["distinct_hosts"]) > 1:  # type: ignore[arg-type]
+        # Benign and expected once two people share the compression work. Quality and size are
+        # portable; only the comparison must not span hosts, and that is checked per record by
+        # `ExperimentTracker.exists_valid` rather than here.
+        LOGGER.info(
+            "Records come from %d machines. That is fine for compression and quality; only "
+            "deployment measurements are host-bound, and none of those are mixed.",
+            len(summary["distinct_hosts"]),  # type: ignore[arg-type]
         )
     if len(summary["distinct_thread_counts"]) > 1:  # type: ignore[arg-type]
         LOGGER.warning(

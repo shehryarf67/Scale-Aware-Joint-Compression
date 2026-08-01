@@ -26,9 +26,14 @@ reconstructed from memory or re-derived under different conditions.
 Every number below comes from this machine unless stated otherwise. §4.7 forbids mixing machines in
 one table, and §2.7 requires the runtime frozen for the study's duration.
 
+**Machine policy amended 2026-08-01.** Compression, activation capture and quality evaluation may
+run on any CUDA machine; only **deployment measurements** are bound to this host. Any finding below
+produced elsewhere states its machine explicitly — that is the whole point of this section. A
+comparison still may not span machines, enforced by `exists_valid` (B-33).
+
 | | |
 | --- | --- |
-| Machine | HP Omen — **the only machine that runs code** |
+| Machine | HP Omen — **the designated benchmark host** |
 | CPU | 13th Gen Intel Core i7-13620H · 6 P-cores + 4 E-cores · 10 physical / 16 logical |
 | RAM | 13.7 GiB |
 | GPU | NVIDIA GeForce RTX 4050 Laptop · **6.0 GiB** (6141 MiB) · sm_89 (Ada) |
@@ -729,6 +734,82 @@ to zero. **The pruning budget must be verified against `mask_sparsity`.**
 
 ---
 
+### F-30 - The machine policy was stricter than the protocol, and nothing in the code enforced it {#f-30}
+
+*2026-08-01 - no measurement; an audit and a policy amendment - suite 974 passing*
+
+The second author could not run anything: every entry document said **"the HP Omen is the only
+machine that runs code"**. Audited what that rule was actually protecting.
+
+#### Finding 1 — no code binds to this machine
+
+Searched the whole tree for host-specific gates. There are **none**. What exists is:
+
+| Enforcement | Where | Correct? |
+| --- | --- | --- |
+| `benchmark.device` must be CPU | `config.py`, `benchmarking/cpu.py` | **yes** — keep |
+| `check_evaluation_device` warns off CPU | `evaluation/common.py` | **yes** — a warning is right, only *reported* numbers must be CPU |
+| Backend asserted against the installed torch | `test_repository.py` | **yes**, and it is platform-adaptive already |
+| Mixed-CPU warning at plot time | `generate_plots.py` | **too loose where it matters, too noisy where it does not** — see below |
+
+`resolve_device`, `get_hardware_info` and the loaders are all portable. **The blocker was entirely
+documentation.**
+
+#### Finding 2 — the protocol never asked for one machine per *project*
+
+`benchmarking_protocol.md` ("One machine per results table") and `methodology.md` ("one machine per
+results table") both state the weaker, correct rule. CLAUDE.md, STATUS.md, `protocol_freeze.md` and
+the partner handoff had hardened it into one machine per project. That was operational shorthand
+from when one person had one GPU box, and it cost a collaborator all of their throughput for no
+scientific gain.
+
+**Amended to three tiers:** anywhere (tests, lint, docs, analysis) · any CUDA machine (compression,
+capture, quality) · the designated benchmark host (latency, throughput, peak memory, checkpoint
+size).
+
+**Why tier 2 is portable.** Compression and perplexity are determined by the weights and the data;
+across hosts they move only by floating-point reduction order. That is the ~1e-5 already measured
+twice here — CPU against GPU at 8.3e-06 ([F-29](#f-29)) and CPU thread configuration at ~1e-5
+([F-23](#f-23)) — against the ~1e-2 effects this study measures. A latency has no such property: it
+*is* a property of the machine, and no correction makes two hosts comparable.
+
+#### Finding 3 — relaxing the policy exposed a real bug (B-33)
+
+`exists_valid` compared the evaluation device (B-32) but **not the machine**. Harmless while one
+host existed; the moment two hosts can write into one `outputs/metrics/`, `skip_existing` would
+reuse the other machine's record and put two hosts inside a single comparison — the same
+unmatched-condition class as B-32, and equally invisible.
+
+Fixed with `hardware.host_key`, built **only from fields every record already carried**
+(`system`, `cpu_model`, `cpu_count_logical`, `cuda_device_names`), so the guard computes
+retroactively and **invalidated no existing record**. A record predating those fields reports
+`"unknown"` and is not invalidated — fail-open on absence, fail-safe on mismatch. Three tests pin
+all three cases.
+
+#### Finding 4 — the plot-time guard was backwards
+
+It warned whenever *any* record set spanned two CPUs, including compression-only records where the
+machine does not affect the number. Once two people share the work that fires constantly, and a
+warning that fires when nothing is wrong stops being read. Meanwhile the case that genuinely makes a
+table wrong — deployment measurements from two hosts — was only a warning.
+
+Now: deployment-bearing records spanning hosts is an **error and a non-zero exit**; compression-only
+records spanning hosts is an `INFO` line saying so.
+
+#### One consequence for anyone verifying a refactor elsewhere
+
+**The exact reproduction gates in this log are host-specific.** 65.261 / 64.041 at 160M and
+37.851 / 37.415 at 410M came from the Omen; a different GPU runs different cuBLAS kernels, the Gram
+differs in its last bits, and a near-tie in the saliency ranking can flip —
+[F-19](#f-19) found 4 positions in 85 million flipping between float32 and float64 norms alone.
+
+The portable substitute is a **host-local before/after baseline**: run the cell on your machine
+before the change and after it, and require bit-identical. For isolating a refactor that is
+*stronger* than an absolute target, because it holds the machine constant. The absolute gates stay,
+as a final check on the benchmark host.
+
+---
+
 ### F-29 - Two speedups, both verified numerically neutral: 2.7x on compression, 22.5x on evaluation {#f-29}
 
 *2026-07-31 - Pythia-160M `50f5173d` and Pythia-410M `dd47b0e` - 493 x 512 validation window -
@@ -1142,8 +1223,14 @@ What survives is narrower and unaffected by any of this:
 
 * their run is **not reproducible** — source recorded as `aec5099-dirty`, uncommitted changes, and the
   commit absent from the history their audit could see;
-* it was produced on **Colab**, which the machine policy forbids, and numbers from two machines must
-  never share a table.
+* it was produced on **Colab**, and at the time the machine policy forbade that outright.
+
+> **Amended 2026-08-01.** The second bullet no longer holds as stated: the policy now permits
+> compression and quality evaluation on any CUDA machine, and only deployment measurements are
+> host-bound. **The first bullet is the one that mattered all along** and is untouched — a
+> `-dirty` tree 22 commits behind `main` is unusable wherever it runs. Recording the amendment
+> rather than deleting the bullet, because "we rejected it partly on a rule we later relaxed" is
+> exactly the kind of thing a reader is entitled to check.
 
 Their +1.96 pp remains above everything measured here, but it is now one unreproducible draw from a cell
 known to swing by 1.47 pp — not an anomaly demanding explanation. **Both figures are single draws from a
@@ -1939,6 +2026,7 @@ recording.
 | B-30 | Joint gain was measured against P→Q only, though §3.6 and §6.1 always required best-of {P→Q, Q→P} ([F-24](#f-24)) | Q→P beats P→Q *and* joint at 30% + W8, so the moderate budget's joint gain was reported as +0.07 pp when against the required baseline it is −0.36 pp. Another omission that flattered joint |
 | B-31 | A single-draw joint gain was reported as a point estimate, and a scale trend built on two of them ([F-26](#f-26)) | The 410M cell swings from −0.50 to +0.98 pp across calibration draws, so +0.68 pp was luck. The paired difference is *noisier* than either arm, contradicting the stated expectation that pairing would cancel draw noise |
 | B-32 | `exists_valid` did not compare the evaluation device ([F-29](#f-29)) | Switching exploratory runs to GPU evaluation would have let `skip_existing` reuse CPU-evaluated records inside a GPU grid, mixing devices within one comparison at ~1e-5 -- too small to change a conclusion, invisible without the check |
+| B-33 | `exists_valid` did not compare the **machine** ([F-30](#f-30)) | Same class as B-32, and it went live the moment the machine policy allowed a second host to run compression: two hosts writing into one `outputs/metrics/` would have let `skip_existing` pull the other machine's record into a comparison. `host_key` is built from fields every record already carried, so the guard added no recompute |
 | B-13 | Sweep cells inherited the base config's model revision | Every cell pinned to the *first* model's SHA — fails to load, or silently loads the wrong weights if the SHA exists in both repos |
 
 Two of these were **masked by tests that should have caught them**: B-07 (the test disabled

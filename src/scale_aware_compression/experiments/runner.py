@@ -39,7 +39,7 @@ from scale_aware_compression.constants import (
     RESULT_SCHEMA_VERSION,
     CompressionMethod,
 )
-from scale_aware_compression.hardware import get_hardware_info, get_software_versions
+from scale_aware_compression.hardware import get_hardware_info, get_software_versions, host_key
 from scale_aware_compression.logging_utils import get_logger, log_stage
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -508,6 +508,21 @@ class ExperimentTracker:
                 reasons.append(
                     f"quality was evaluated on {recorded_device!r} but this run evaluates on "
                     f"{expected_device!r}"
+                )
+
+        # The MACHINE the record was produced on. Once more than one host can run compression --
+        # which the machine policy now permits, because compression and quality are portable in a
+        # way CPU latency is not -- records from two hosts can land in the same directory. Without
+        # this check `skip_existing` would reuse a record from the other machine, silently putting
+        # two hosts inside one comparison. Same class as the evaluation-device gap above (B-32).
+        # `host_key` is built from fields every record already carries, so existing records stay
+        # valid; a record predating those fields reports "unknown" and is not invalidated.
+        recorded_host = host_key(record.get("hardware") or {})
+        if recorded_host != "unknown":
+            current_host = host_key()
+            if recorded_host != current_host:
+                reasons.append(
+                    f"record was produced on {recorded_host!r}, this machine is {current_host!r}"
                 )
 
         recorded_reconstruction = (record.get("config", {}).get("compression", {}) or {}).get(

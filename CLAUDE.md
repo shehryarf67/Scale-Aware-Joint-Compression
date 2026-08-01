@@ -38,22 +38,44 @@ config still carry the older fine-tuning vocabulary; see the reconciliation tabl
 
 ## Machine policy
 
-**The HP Omen is the only machine that runs code.** It has the NVIDIA GPU and it is the machine
-every benchmark number must come from. The other laptop is for reading and writing only.
+Superseded 2026-08-01. The old rule was "the HP Omen is the only machine that runs code". That was
+operational shorthand from when one person had one GPU box, and it is **stricter than the protocol
+requires** — `benchmarking_protocol.md` and `methodology.md` both say *one machine per results
+table*, not one machine per project. Three tiers, by what is actually host-bound:
 
-Consequences:
+| Tier | Work | Where |
+| --- | --- | --- |
+| 1 | Tests, lint, config validation, docs, analysis of existing records | **anywhere** |
+| 2 | Compression, activation capture, quality evaluation | **any CUDA machine** |
+| 3 | Deployment measurements — latency, throughput, peak memory, checkpoint size | **the designated benchmark host, currently the Omen** |
 
-- `outputs/` and `results/` are git-ignored, so they exist **only on the Omen**. Never assume a
-  run record is present just because the repo is checked out.
-- Never mix benchmark numbers from two machines in one table. The protocol forbids it and every
-  record carries `hardware.cpu_model` so it is checkable.
+Tier 2 is portable because compression and perplexity differ across machines only by
+floating-point reduction order (~1e-5 relative, against the ~1e-2 effects being measured). Tier 3
+is not portable under any correction: a latency is a property of the machine.
+
+Two invariants hold regardless of tier:
+
+- **A comparison never spans machines.** Both arms of a cell, at the same replicate, run on one
+  host. The machine is one of §3.11's matched conditions. `ExperimentTracker.exists_valid`
+  enforces this — a record from another host is re-run rather than reused (B-33).
+- **Never mix machines in one results table.** `scripts/generate_plots.py` refuses to plot when
+  *deployment-bearing* records span hosts, and every record carries `hardware` so it is checkable
+  after the fact.
+
+`outputs/`, `results/` and `data/` are git-ignored, so they exist only on machines that have run
+something. Never assume a run record is present just because the repo is checked out.
+
+**Reproducibility is a separate rule and it did not loosen.** Run from a clean tree at a committed
+SHA. The one unusable set of numbers this project has produced came from a working tree 22 commits
+behind `main` recorded as `aec5099-dirty` — the fault was the dirty tree, not the hardware.
 
 ## Commands
 
 ```bash
-# environment (Windows; `python` on PATH may be a Microsoft Store stub -- check first)
-uv venv --python 3.11 && .venv\Scripts\activate
-# CUDA build on the Omen; see pytorch.org for the current index-url
+# environment (`python` on PATH may be a Microsoft Store stub on Windows -- check first)
+uv venv --python 3.11
+.venv\Scripts\activate          # Windows;  source .venv/bin/activate  on Linux/macOS
+# CUDA build; see pytorch.org for the current index-url
 uv pip install -e . -r requirements-dev.txt
 
 pytest                                  # full suite, offline, seconds
@@ -70,9 +92,10 @@ python scripts/run_dense_baseline.py --config configs/experiments/pilot.yaml --d
 
 These are not style preferences. Each one, if broken, silently invalidates results.
 
-- **Deployment measurements are CPU-only.** Latency, throughput, peak memory, checkpoint size.
-  GPU is allowed for compression and activation capture, never for measurement. The config
-  loader rejects a non-CPU benchmark device; do not work around it.
+- **Deployment measurements are CPU-only, on the designated benchmark host.** Latency,
+  throughput, peak memory, checkpoint size. GPU is allowed for compression and activation
+  capture, never for measurement. The config loader rejects a non-CPU benchmark device; do not
+  work around it.
 - **Sequential and joint arms must match** on target sparsity, bit width, calibration data,
   module coverage, optimisation budget, artefact format, and backend. Tests assert this over
   the shipped configs — if a change breaks one of those tests, the change is wrong.

@@ -582,12 +582,48 @@ class TestResumabilityAndRecordHygiene:
 
             assert len(list(csv.DictReader(handle))) == 2
 
+    def test_a_record_from_another_machine_is_re_run(self, tmp_path, config):
+        """B-33. Two hosts may now run compression, so two hosts may write into one directory.
+
+        Reusing the other machine's record would put two hosts inside a single comparison, which
+        is the unmatched-condition error §3.11 exists to prevent -- and invisible, because the
+        difference is floating-point reduction order rather than anything a reader would notice.
+        """
+        tracker = self._tracker(tmp_path)
+        record = self._record(config)
+        record.hardware = {
+            "system": "Linux",
+            "cpu_model": "x86_64",
+            "cpu_count_logical": 8,
+            "cuda_device_names": ["Tesla T4"],
+        }
+        tracker.save(record)
+        assert tracker.exists_valid(record.experiment_id, config) is False
+
+    def test_a_record_from_this_machine_is_still_skippable(self, tmp_path, config):
+        """The host guard must not invalidate the ~50 records already on the benchmark host."""
+        from scale_aware_compression.hardware import get_hardware_info
+
+        tracker = self._tracker(tmp_path)
+        record = self._record(config)
+        record.hardware = get_hardware_info()
+        tracker.save(record)
+        assert tracker.exists_valid(record.experiment_id, config) is True
+
+    def test_a_record_with_no_hardware_recorded_is_not_invalidated(self, tmp_path, config):
+        """Records predating the field report "unknown"; a new guard must not force a recompute."""
+        tracker = self._tracker(tmp_path)
+        record = self._record(config)
+        record.hardware = {}
+        tracker.save(record)
+        assert tracker.exists_valid(record.experiment_id, config) is True
+
 
 class TestNoRunArtefactsCommitted:
     """Git tracks nothing but `.gitkeep` under `outputs/` and `results/`.
 
-    Checked against the index rather than the working tree. On the Omen -- the only machine that
-    runs code -- these directories are *supposed* to be full of run artefacts, so asserting the
+    Checked against the index rather than the working tree. On a machine that actually runs the
+    experiments these directories are *supposed* to be full of run artefacts, so asserting the
     directory is empty would fail for exactly the machine the rule exists to protect. The invariant
     is that nothing gets committed, not that nothing exists.
     """
