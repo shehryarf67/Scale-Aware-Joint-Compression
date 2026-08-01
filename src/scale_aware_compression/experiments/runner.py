@@ -751,9 +751,21 @@ class ExperimentRunner:
             with log_stage(LOGGER, "measure checkpoint"):
                 self._measure_artefact(record, compressor, model, loaded)
 
-            # 6. Quality, on CPU.
-            with log_stage(LOGGER, "evaluate quality (CPU)"):
-                model.to("cpu")
+            # 6. Quality, on `evaluation.device`.
+            #
+            # CPU is the default and is what every reported number must come from -- but this stage
+            # is 86% of an exploratory cell and GPU runs it 22.5x faster for a relative difference of
+            # 8.3e-06, the same magnitude as CPU thread-configuration sensitivity (F-29). The field
+            # has always existed and `check_evaluation_device` warns rather than errors, precisely so
+            # exploratory work can use it; nothing was reading it.
+            #
+            # Safe because `exists_valid` compares the recorded evaluation device (B-32), so a grid
+            # cannot silently reuse CPU records while writing GPU ones. Retention and joint gain stay
+            # internally consistent either way: both arms of a cell, and its dense reference, are
+            # evaluated the same way.
+            evaluation_device = config.evaluation.device.value
+            with log_stage(LOGGER, f"evaluate quality ({evaluation_device})"):
+                model.to(evaluation_device)
                 report = evaluate_model(
                     model,
                     loaded.tokenizer,
@@ -762,7 +774,8 @@ class ExperimentRunner:
                 )
                 record.add_quality(report)
 
-            # 7. Deployment measurements, on CPU.
+            # 7. Deployment measurements, on CPU -- always, whatever the evaluation device was.
+            model.to("cpu")
             runtime = self._runtime_representation()
             record.runtime_representation = runtime
             if self._latency_is_meaningful(runtime):

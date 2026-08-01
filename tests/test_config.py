@@ -411,6 +411,9 @@ class TestShippedConfigs:
             # Verification: the peak-memory measurement offload exists for. Compression only, so it
             # produces a GiB figure rather than a perplexity.
             "verify_offload_1b.yaml",
+            # A1 step 7 at the third scale: both budgets and both sequential orders on Pythia-1B,
+            # runnable only because of per-block offload (F-31).
+            "screening_1b.yaml",
         }
         for path in files:
             config = load_config(path)

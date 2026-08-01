@@ -1,0 +1,150 @@
+# Pythia-1B: budget confirmation and sequential order selection (A1 §7 step 7, exploratory)
+#
+# The third scale point. 160M and 410M are done; this is what makes the scale question answerable
+# rather than a two-point direction, and §5.3 requires both budgets confirmed before the
+# confirmatory stage runs anywhere.
+#
+# RUNNABLE ONLY BECAUSE OF PER-BLOCK OFFLOAD ([F-31](../docs/findings_log.md#f-31)). With the model
+# resident, 1B peaked at 6.31 GiB on a 6.00 GiB card and completed only by spilling to host memory
+# at 7x the solve time. With `offload_blocks` it reserves 4.29 GiB and takes 4 m 34 s. Both settings
+# below are load-bearing:
+#
+#     model.device: cpu                          -- everything but the resident block stays here
+#     compression.reconstruction.offload_blocks  -- one block on the card at a time
+#
+# WHAT THIS RUN DECIDES
+#
+#   1. Do both frozen budgets land inside §5.3's "measurably but non-catastrophically degraded"
+#      band at 1B, as they did at 160M (F-23) and 410M (F-25)? The budgets are NOT reopened -- §6.3
+#      forbids that once results exist. This confirms they remain usable at the new scale, and a
+#      catastrophic result here is itself scale-relevant rather than a reason to change them.
+#
+#   2. Which sequential order is stronger at 1B, per budget? §3.6 and §6.1 require joint gain to be
+#      measured against best-of {P->Q, Q->P}, so both must run before any gain is quoted.
+#
+# THE ORDER DECISION RULE, FIXED HERE BEFORE THE RUN
+#
+# This is the rule that made F-28 cost nothing when my expectation turned out to be wrong twice in
+# opposite directions. It is written down first, on purpose:
+#
+#   * If one order wins at every replicate -- consistent in sign -- freeze that order for this
+#     (model, budget) and record the margin.
+#   * If the sign VARIES across replicates, the orders are indistinguishable at this budget.
+#     Freeze P->Q, the §3.6 pre-registered primary, and record the choice as ARBITRARY rather than
+#     measured. Do not run more replicates to break the tie: F-28 established that at W8 both the
+#     signal and the noise are small, so R would have to be ~12 for a question that does not touch
+#     the headline.
+#
+# Judge the margin against the spread of the PAIRED MARGIN, never against each arm's own spread.
+# F-26 and F-28 both found the paired difference is noisier than either arm alone, because a draw
+# changes which mask each order picks and the orders respond differently by construction.
+#
+# EXPECTATIONS ON RECORD, so neither outcome can be rationalised afterwards:
+#   * P->Q should win at W4 -- it did by 4.26 pp at 160M and 6.82 pp at 410M.
+#   * The W8 orders should be indistinguishable -- F-28 measured a mean margin of 0.18 pp, sd 0.19.
+#   * The joint gain should be SMALLER than 410M's if the scale trend in F-27 is real. 160M gave
+#     +1.69 pp and 410M +0.39 pp; a 1B gain at or above 410M's would put that trend in doubt and
+#     must be reported as such.
+#
+# THREE REPLICATES, NOT FIVE. This is a screening question -- "do the budgets hold, and which order
+# is stronger" -- and A1's R=5 governs the CONFIRMATORY stage. Draws 0-2 are the same ones used at
+# 160M and 410M in F-27, so the three scales stay directly comparable.
+#
+# GPU EVALUATION, DELIBERATELY. Exploratory only. `check_evaluation_device` warns rather than errors
+# for exactly this case, the difference against CPU is 8.3e-06 relative (F-29), and both arms of a
+# cell plus its dense reference are evaluated identically so retention and joint gain stay
+# internally consistent. THE CONFIRMATORY RUN STAYS ON CPU -- that is the rule and this does not
+# touch it. `exists_valid` compares the recorded evaluation device (B-32), so these records cannot
+# be silently mixed with the CPU-evaluated ones from earlier scales.
+#
+# Validation split: selection, not reporting.
+
+include:
+  - ../models/pythia_1b.yaml
+  - ../compression/sequential.yaml
+  - ../evaluation/quality.yaml
+  - ../evaluation/cpu_benchmark.yaml
+
+experiment:
+  id: screening_1b
+  name: Pythia-1B budget confirmation and order selection
+  description: >-
+    Both frozen budgets and both sequential orders on Pythia-1B, three paired calibration draws,
+    validation split. Confirms §5.3 budget eligibility at the third scale and freezes the sequential
+    order per (model, budget) before any confirmatory run.
+  tags:
+    - exploratory
+    - screening
+    - not-a-result
+
+runtime:
+  seed: 1234
+  deterministic: true
+  output_dir: outputs
+  log_level: INFO
+
+model:
+  # Load on the host. Offload moves one block at a time to the card; a model loaded onto the card
+  # first has already paid the 3.77 GiB transient this exists to avoid.
+  device: cpu
+
+data:
+  # Matched to screening.yaml and screening_410m.yaml exactly, so the three scales differ in the
+  # model and nothing else.
+  calibration_samples: 128
+  calibration_split: train
+  sequence_length: 512
+  max_eval_samples: 512
+  batch_size: 4
+
+evaluation:
+  device: cuda
+
+compression:
+  reconstruction:
+    solver: sweep
+    local_steps: 1
+    joint_iterations: 2
+    comparison_group: output
+    scale_search: false
+    keep_benefit_saliency: false
+    offload_blocks: true
+
+sweep:
+  models:
+    - pythia-1b
+  # Dense first: every other arm needs that model's dense perplexity as its retention reference.
+  # Both sequential orders, because §6.1 measures joint gain against best-of and neither order can
+  # be assumed at a scale that has never been run.
+  methods:
+    - dense
+    - sequential
+    - sequential_qp
+    - joint
+  budgets:
+    - moderate
+    - aggressive
+  replicates: 3
+
+  budget_overrides:
+    # FROZEN 2026-07-29. Not reopened here -- this run confirms they remain usable at 1B.
+    moderate:
+      compression:
+        budget_label: moderate
+        pruning:
+          sparsity: 0.3
+        quantisation:
+          bits: 8
+    aggressive:
+      compression:
+        budget_label: aggressive
+        pruning:
+          sparsity: 0.3
+        quantisation:
+          bits: 4
+
+  skip_existing: true
+  # A 1B grid is hours. A single failed cell should not discard the ones already paid for -- but
+  # check find_comparison_pairs() afterwards, because a failed joint run silently removes a whole
+  # comparison rather than leaving a visible hole.
+  continue_on_error: true

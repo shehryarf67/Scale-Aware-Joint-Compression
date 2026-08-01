@@ -362,10 +362,43 @@ class TestCpuOnlyPolicyAcrossConfigs:
             config = ExperimentConfig.from_mapping(load_document(path))
             assert config.benchmark.device is Device.CPU, f"{path.name} benchmarks off CPU"
 
-    def test_every_experiment_config_evaluates_on_cpu(self, configs_dir: Path):
+    def test_every_confirmatory_config_evaluates_on_cpu(self, configs_dir: Path):
+        """The rule that matters: a REPORTED number comes from CPU.
+
+        This used to assert CPU for every experiment config, which is stricter than the design.
+        ``check_evaluation_device`` warns rather than errors precisely because exploratory
+        evaluation on GPU is legitimate -- and it is 22.5x faster for a relative difference of
+        8.3e-06, the same magnitude as CPU thread-configuration sensitivity (F-29).
+
+        The blanket version also protected nothing the tighter version does not: what must never
+        happen is a *confirmatory* config drifting off CPU, and confirmatory is exactly the
+        configs that evaluate on the held-out test split (Amendment A1 §5.2).
+        """
         for path in sorted((configs_dir / "experiments").glob("*.yaml")):
             config = ExperimentConfig.from_mapping(load_document(path))
-            assert config.evaluation.device is Device.CPU, f"{path.name} evaluates off CPU"
+            if config.data.eval_split != "test":
+                continue
+            assert config.evaluation.device is Device.CPU, (
+                f"{path.name} evaluates the test split off CPU; confirmatory numbers are CPU-only"
+            )
+
+    def test_gpu_evaluation_is_confined_to_declared_exploratory_configs(self, configs_dir: Path):
+        """A GPU-evaluated config must say so in its tags, so a record's provenance is greppable.
+
+        The pairing is the point: GPU evaluation is allowed *because* the run is exploratory, so a
+        config that takes the speedup without declaring the status has taken the licence without
+        the constraint that justifies it.
+        """
+        for path in sorted((configs_dir / "experiments").glob("*.yaml")):
+            config = ExperimentConfig.from_mapping(load_document(path))
+            if config.evaluation.device is Device.CPU:
+                continue
+            tags = set(config.experiment.tags)
+            assert "exploratory" in tags, (
+                f"{path.name} evaluates on {config.evaluation.device.value} without an "
+                "'exploratory' tag"
+            )
+            assert config.data.eval_split != "test", f"{path.name} is confirmatory but not on CPU"
 
     def test_benchmark_config_pins_a_thread_count(self, configs_dir: Path):
         for path in sorted(configs_dir.rglob("*.yaml")):
