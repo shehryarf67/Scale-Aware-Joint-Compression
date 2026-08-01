@@ -54,6 +54,26 @@ class ExperimentError(RuntimeError):
     """Raised when an experiment cannot be run or recorded."""
 
 
+def _release_device_cache(device: str) -> None:
+    """Return the caching allocator's free blocks to the driver.
+
+    A no-op away from CUDA, and cheap on it. Called at the boundaries between the compression and
+    evaluation stages, which are the two large consumers: without it the allocator holds one
+    stage's peak while the next stage asks for its own, and on Windows the driver satisfies the
+    shortfall from shared system memory instead of raising -- so the symptom is a run that is
+    several times slower with nothing in the log, not an error.
+
+    Args:
+        device: The device the next stage will use.
+    """
+    if not str(device).startswith("cuda"):
+        return
+    import torch
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 def utc_timestamp() -> str:
     """Current UTC time as an ISO-8601 string with second precision."""
     return datetime.now(UTC).replace(microsecond=0).isoformat()
@@ -765,6 +785,12 @@ class ExperimentRunner:
             # evaluated the same way.
             evaluation_device = config.evaluation.device.value
             with log_stage(LOGGER, f"evaluate quality ({evaluation_device})"):
+                # Release the compression stage's cached blocks first. The caching allocator holds
+                # freed memory, so at 1B the Gram temporaries stay reserved while the model is moved
+                # on for evaluation -- and on Windows the driver answers the shortfall by falling
+                # back to shared system memory rather than raising, which is the silent 7x
+                # slowdown F-29 first measured. Costs a few milliseconds and a re-warm.
+                _release_device_cache(evaluation_device)
                 model.to(evaluation_device)
                 report = evaluate_model(
                     model,
@@ -776,6 +802,9 @@ class ExperimentRunner:
 
             # 7. Deployment measurements, on CPU -- always, whatever the evaluation device was.
             model.to("cpu")
+            # Same reasoning in the other direction: the next cell's compression starts with the
+            # card still holding this cell's evaluation, and it is the compression that then spills.
+            _release_device_cache(evaluation_device)
             runtime = self._runtime_representation()
             record.runtime_representation = runtime
             if self._latency_is_meaningful(runtime):

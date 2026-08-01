@@ -734,6 +734,107 @@ to zero. **The pruning budget must be verified against `mask_sparsity`.**
 
 ---
 
+### F-32 - Pythia-1B: both budgets hold, the orders split, and the joint gain keeps shrinking {#f-32}
+
+*2026-08-01 - Pythia-1B `f73d7dcc` - 493 x 512 **validation** window - **GPU evaluation** (`cuda:0`) -
+`METHOD_VERSION = 4` - `offload_blocks: true` - 3 paired calibration draws (replicates 0-2, the same
+draws used at 160M and 410M in [F-27](#f-27)) - 19 cells, **2.9 h** - `configs/experiments/screening_1b.yaml`*
+
+The third scale point, and the first that could be run at all -- see [F-31](#f-31). Dense perplexity
+**17.9432**.
+
+#### Budget confirmation (§5.3): both hold
+
+| Budget | Retention, best-of sequential | Verdict |
+| --- | --- | --- |
+| moderate 30% + W8 | **96.34%** | eligible, but *barely* degraded |
+| aggressive 30% + W4 | **89.46%** | **eligible** -- measurably, non-catastrophically |
+
+**This satisfies §5.3 at all three scales**, which was the pre-1B requirement. Across the sweep the
+aggressive budget retains 56.66% / 58.56% / **89.46%** at 160M / 410M / 1B: larger models tolerate the
+same recipe far better, and the third point is a long way above the other two.
+
+**The moderate budget is now nearly inert at 1B.** 96.3% retention leaves almost no headroom for any
+arm to differ in. That is acceptable *because it is the control* -- F-05 predicts the joint mechanism
+is inert at 8 bits and a null is the expected reading -- but a reader should not mistake the tiny W8
+numbers below for a measurement of anything other than "nothing happens here".
+
+#### Sequential order selection, and the orders split by budget
+
+| Budget | rep0 | rep1 | rep2 | mean margin | Frozen |
+| --- | --- | --- | --- | --- | --- |
+| moderate, Q->P − P->Q | +0.12 | +0.05 | +0.13 | **+0.10 pp**, 3/3 | **Q->P** |
+| aggressive, Q->P − P->Q | −2.32 | −2.24 | −1.88 | **−2.15 pp**, 3/3 | **P->Q** |
+
+**W4 goes to P->Q, consistent in sign, as predicted before the run** -- it won by 4.26 pp at 160M and
+6.82 pp at 410M. The margin narrows with scale (6.82 -> 2.15 at 410M -> 1B) but the direction is
+stable across three scales and nine draws.
+
+**W8 goes to Q->P, and this differs from the smaller scales.** At 160M and 410M the sign varied and
+[F-28](#f-28) froze P->Q as the *pre-declared arbitrary fallback*. Here the sign is consistent, so the
+rule fixed in the config before the run -- consistent sign, freeze that order -- selects **Q->P**. A1
+§3 freezes the order per (model, budget), so a different order at a different scale is the design
+working rather than a contradiction.
+
+**Two caveats on the W8 freeze, both material:** the margin is **0.10 pp**, and three unanimous draws
+reach only p = 0.25 on an exact sign test. This is consistent-in-sign, not significant, and it is on
+the control budget where nothing is expected to happen anyway.
+
+#### The joint gain, against best-of sequential (§6.1)
+
+| Budget | rep0 | rep1 | rep2 | mean | sd | positive |
+| --- | --- | --- | --- | --- | --- | --- |
+| moderate 30% + W8 | −0.11 | −0.06 | −0.16 | **−0.11 pp** | 0.05 | **0/3** |
+| aggressive 30% + W4 | +0.00 | +0.15 | +0.45 | **+0.20 pp** | 0.23 | 3/3 |
+
+**The W8 control is cleanly negative at every draw**, which is the *correct* sign for an inert
+mechanism measured against best-of: Q->P beats joint, so joint loses. Three scales now agree that
+8 bits produces nothing.
+
+**The W4 gain is +0.20 pp -- far below the pre-registered ≥1.0 pp practical-importance bar** (§6.3),
+and one of the three draws is +0.00 to two decimals.
+
+#### The scale trend, now on three points
+
+| Scale | Joint gain, 30% + W4 | Draws |
+| --- | --- | --- |
+| **160M** | **+1.69 pp** | 3/3 above the ≥1.0 pp bar |
+| **410M** | +0.39 pp | 2/3 positive, sign inconsistent |
+| **1B** | **+0.20 pp** | 3/3 positive, all below the bar |
+
+**Monotone decline across all three scale points.** [F-27](#f-27) drew that conclusion from two points;
+the third agrees, and it was predicted in `screening_1b.yaml` **before the run** that a 1B gain at or
+above 410M's would put the trend in doubt. It came in below.
+
+**This runs against the study's motivating hypothesis.** The question was whether joint pays off *more*
+as models grow. On three scale points it pays off **less**, and by 1B it is not practically important
+at any draw.
+
+#### A mechanism observation worth carrying
+
+At the aggressive budget the two arms are *converging* as scale grows. At rep0 the joint and P->Q
+perplexities are **20.0301 and 20.0311** -- a difference of 0.001, which is why that draw's gain reads
++0.00. The joint arm is also markedly more stable across draws (20.0301 / 20.0304 / 19.9807) than the
+sequential arm (20.0311 / 20.0640 / 20.0802).
+
+That is consistent with F-05's account: the joint mechanism acts through *mask divergence under
+quantisation*, and a larger model with more redundancy has fewer weights whose keep/prune decision the
+quantisation grid can flip. Speculative, and stated as such -- it would need the mask-divergence
+measurement of F-05 repeated at 1B to be more than a story.
+
+#### What this is not
+
+* **Not confirmatory.** Validation split, which A1 §5.2 declares a selection surface, and this run
+  *is* the selection.
+* **Not significant.** Three draws reach p = 0.25 at best.
+* **GPU-evaluated**, unlike the CPU-evaluated 160M and 410M records. Within a cell every arm and the
+  dense reference share a device, so retention and joint gain are internally consistent; the drift is
+  8.3e-06 relative ([F-29](#f-29)) against margins of 0.1-2 pp. **But the cross-scale table above does
+  mix devices**, and that is declared here rather than left to be discovered. A1 steps 9-10 put all
+  three scales back on CPU.
+
+---
+
 ### F-31 - Per-block GPU offload, and the mask flip that made the first attempt wrong {#f-31}
 
 *2026-08-01 - Pythia-160M `50f5173d` - 493 x 512 validation window - `METHOD_VERSION = 4`, **not
@@ -2162,6 +2263,7 @@ recording.
 | B-34 | Block-offload captured block-0 inputs on the **host** ([F-31](#f-31)) | GPT-NeoX computes the rotary `cos`/`sin` in that forward and passes them into every block; CPU and CUDA trigonometry disagree in the last bits, which flipped a near-tie in the saliency ranking. One mask position in block 0 moved `attention.dense` by **2.25 absolute** and cascaded through every later block, for a **1.6% perplexity change that more than doubled the joint gain** (+2.35 pp against +1.08). Caught by the F-23 reproduction gate; would have been invisible to any tolerance-based check |
 | B-34b | The first fix moved the **whole model** to the device for the capture ([F-31](#f-31)) | Numerically correct, and it fitted at 160M and 410M. It then hit `CUDA error: out of memory` at 1B -- the one model offload exists for. Reasoning that no Gram factorisation is live during capture accounted for what was absent and not for what was present: 3.77 GiB of weights, ~0.5 GiB of cached hidden states, and the forward's own activations |
 | B-35 | Recorded quantisation grids did not follow their block back to the host ([F-31](#f-31)) | `grids_by_module` is captured while a block is resident, so under offload it held CUDA codes describing host weights. `convert` then died with a device mismatch **after the whole compression was spent** -- an artefact-stage failure caused by a compression-stage bug |
+| B-36 | The allocator's cache was not released between the compression and evaluation stages ([F-32](#f-32)) | Introduced by wiring GPU evaluation. PyTorch's caching allocator holds freed memory, so one stage's peak stayed reserved while the next asked for its own -- and **on Windows the driver satisfies the shortfall from shared system memory instead of raising**. No error, no warning, a plausible perplexity, and a 1B cell at **32 min instead of 8m46s**: compression 21 min against a 4m34s standalone measurement, evaluation 11 min. This is the same silent-spill mechanism [F-29](#f-29) measured at 7x on the widest layer, and it is the clearest argument on record for why deployment measurements are CPU-only -- a latency taken under these conditions would have looked entirely normal |
 | B-13 | Sweep cells inherited the base config's model revision | Every cell pinned to the *first* model's SHA — fails to load, or silently loads the wrong weights if the SHA exists in both repos |
 
 Two of these were **masked by tests that should have caught them**: B-07 (the test disabled

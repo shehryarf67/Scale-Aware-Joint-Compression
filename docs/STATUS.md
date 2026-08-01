@@ -342,6 +342,39 @@ either retraction.
 **Still exploratory.** Barely over the ≥1.0 pp threshold, one calibration draw so no error bar, and the
 validation split is a declared selection surface. The confirmatory answer comes from steps 9–10.
 
+### 🟢 Three scale points: the joint gain declines monotonically, and 1B is not practically important
+
+**[F-32](findings_log.md#f-32).** The third scale point, runnable only because of per-block offload
+([F-31](findings_log.md#f-31)). 19 cells, 2.9 h, three paired draws — the same draws as 160M and 410M.
+Dense 17.9432.
+
+| Scale | Joint gain, 30% + W4 | Draws |
+| --- | --- | --- |
+| **160M** | **+1.69 pp** | 3/3 above the ≥1.0 pp bar |
+| **410M** | +0.39 pp | 2/3 positive, sign inconsistent |
+| **1B** | **+0.20 pp** | 3/3 positive, **all below the bar** |
+
+**Monotone across all three points, and predicted before the run.** `screening_1b.yaml` recorded that a
+1B gain at or above 410M's would put F-27's trend in doubt. It came in below. **The study's motivating
+hypothesis was that joint pays off *more* at scale; on three points it pays off less.**
+
+**Both budgets confirmed at 1B** — 96.34% (moderate) and 89.46% (aggressive) retention, so §5.3 now
+holds at all three scales. Note the aggressive budget retains 56.66 / 58.56 / **89.46%** across the
+sweep: bigger models tolerate the same recipe far better.
+
+**The W8 control is cleanly negative** — −0.11 pp, 0/3 — which is the *correct* sign for an inert
+mechanism measured against best-of. Three scales now agree 8 bits produces nothing.
+
+**The 1B sequential orders split by budget:** P→Q at W4 (+2.15 pp, 3/3, as predicted) and **Q→P at W8**
+(+0.10 pp, 3/3). The W8 choice differs from 160M/410M because A1 §3 freezes per cell and 1B is the only
+scale where the sign was consistent — the same rule meeting different evidence, not a different rule.
+All six cells are now frozen; see [protocol_freeze.md](protocol_freeze.md#the-frozen-sequential-order-a1-step-7).
+
+**Still exploratory, and now with one extra caveat:** validation split, three draws (p = 0.25 at best),
+and the 1B cells are **GPU-evaluated** while 160M and 410M are CPU-evaluated. Within a cell every arm
+shares a device so retention and gain are internally consistent, but the cross-scale table mixes them.
+A1 steps 9–10 put all three scales back on CPU.
+
 ### 🟢 Replicated at both scales: the effect is real at 160M and shrinks with scale
 
 **[F-27](findings_log.md#f-27).** Three paired calibration draws, the *same* draws at both scales.
@@ -657,10 +690,11 @@ it claims to; it says nothing about absolute quality against published work (A1 
 | 4 | Calibration replicate axis, **R=8 / 8 / 5** | ✅ **done** — `05008dc`, 37 tests |
 | 5 | Re-run the 160M validation screening | ✅ **done** — [F-23](findings_log.md#f-23) |
 | 6 | Both sequential orders (P→Q, Q→P) on validation | ✅ **done** — [F-24](findings_log.md#f-24) |
-| 7 | Freeze the winning order per (model, budget) | ✅ **W4 and W8 both frozen at 160M+410M** — [F-28](findings_log.md#f-28); 1B outstanding |
+| 7 | Freeze the winning order per (model, budget) | ✅ **all six cells frozen** — [F-28](findings_log.md#f-28), [F-32](findings_log.md#f-32) |
 | — | Replicate the headline at both scales | ✅ **done** — [F-27](findings_log.md#f-27) |
 | — | Per-block GPU offload, so 1B runs at all | ✅ **done** — [F-31](findings_log.md#f-31) |
-| 8 | Run the reduced S6 mechanistic control (12 runs) | ⬜ |
+| — | 1B budgets confirmed, orders frozen, gain measured | ✅ **done** — [F-32](findings_log.md#f-32) |
+| 8 | Run the reduced S6 mechanistic control (12 runs) | ⬜ ← **next** |
 | 9 | Freeze the entire confirmatory configuration | ⬜ |
 | 10 | Run test evaluation **once**, with no further tuning | ⬜ |
 
@@ -691,7 +725,8 @@ number has no way to judge how much weight it can carry.
 | **+1.03 pp** | 30% + W4 | **Retracted.** The arms minimised different objectives — sequential targeted its own intermediate, joint targeted dense |
 | **+1.08 pp** | 30% + W4 | Single draw, [F-23](findings_log.md#f-23). First figure from code that passes three independent anchors |
 | **+1.08 pp** | 30% + W4 | **Unchanged** against best-of-sequential, [F-24](findings_log.md#f-24) — P→Q was already the stronger baseline there |
-| **+1.69 pp** | 30% + W4 | **Current**, [F-27](findings_log.md#f-27). Mean of three paired draws, 3/3 positive, all above the ≥1.0 pp bar. +1.08 was the *lowest* of the three |
+| **+1.69 pp** | 30% + W4 | **Current at 160M**, [F-27](findings_log.md#f-27). Mean of three paired draws, 3/3 positive, all above the ≥1.0 pp bar. +1.08 was the *lowest* of the three |
+| **+0.20 pp** | 30% + W4, **1B** | [F-32](findings_log.md#f-32). Three draws, 3/3 positive, **all below the bar**. Completes a monotone decline 1.69 → 0.39 → 0.20 |
 
 **Every fault found so far has flattered the joint arm** — B-14, B-17, B-22, B-23, and now B-30 (running
 only the weaker sequential baseline). Not one ran the other way. That belongs in the paper's limitations
@@ -980,6 +1015,7 @@ Full record in [protocol_freeze.md](protocol_freeze.md#environment). Summary:
 - [x] Block-sequential capture applied, all gates passed → [F-29](findings_log.md#f-29)
 - [x] **Per-block GPU offload** — bit-identical at 160M, 1B reserves 4.29 GiB without spilling
       → [F-31](findings_log.md#f-31)
-- [ ] **1B budget confirmation and order selection** ← **next**
-- [ ] Reduced S6 control (12 runs)
+- [x] **1B budget confirmation and order selection** → [F-32](findings_log.md#f-32)
+- [ ] **Reduced S6 control (12 runs)** ← **next**
+- [ ] **A4 downstream tasks** and **A5 prefill/decode** — both §-required, neither started
 - [ ] Freeze the confirmatory config, then test evaluation **once** — no tuning after that

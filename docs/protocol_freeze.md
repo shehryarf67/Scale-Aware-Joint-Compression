@@ -418,7 +418,23 @@ split — validation picks the method, test estimates its performance. Evidence:
 | pythia-410m | aggressive 30% + W4 | **P→Q** | +6.82 pp, one draw | ✅ **frozen on evidence** |
 | pythia-160m | moderate 30% + W8 | **P→Q** | indistinguishable over 5 draws | ✅ **frozen by pre-declared fallback** |
 | pythia-410m | moderate 30% + W8 | **P→Q** | +0.04 pp, i.e. indistinguishable | ✅ **frozen by the same fallback** |
-| pythia-1b | both | — | — | ⬜ not yet selected (model now downloaded) |
+| **pythia-1b** | **aggressive 30% + W4** | **P→Q** | **+2.15 pp, 3/3 draws** | ✅ **frozen on evidence** |
+| **pythia-1b** | **moderate 30% + W8** | **Q→P** | **+0.10 pp, 3/3 draws** | ✅ **frozen on evidence** |
+
+**All six cells are now frozen.** Evidence for the 1B pair: [findings_log.md F-32](findings_log.md#f-32).
+
+### ⚠️ The W8 order is not the same at every scale, and that is by design
+
+1B freezes **Q→P** at the moderate budget while 160M and 410M freeze **P→Q**. A1 §3 freezes the order
+**per (model, budget)** precisely so this is permitted: the two smaller scales had an inconsistent sign
+and took the pre-declared *fallback*, whereas 1B had a consistent sign across three draws and so took
+the *measured* branch of the same rule. Nothing was decided differently; the same rule met different
+evidence.
+
+Read the 1B W8 freeze with its two caveats attached. The margin is **0.10 pp**, and three unanimous
+draws reach only p = 0.25 on an exact sign test — consistent in sign, not significant. It is also on
+the **control** budget, where 96.3% retention leaves almost no headroom and F-05 predicts the mechanism
+is inert. Nothing in the headline depends on it.
 
 ### W4 — frozen, decisively, at both scales
 
