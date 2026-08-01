@@ -1,0 +1,119 @@
+# S6 — the quality-matched mechanistic control (Amendment A1 §5.4, step 8)
+#
+# THE ONLY QUESTION IT ANSWERS: is the joint effect caused by low-bit QUANTISATION, or merely by
+# severe quality degradation?
+#
+#     aggressive primary   30% sparsity + W4   ~57% retention at 160M
+#     S6 control           40% sparsity + W8   ~54% retention at 160M
+#
+# Two different recipes at nearly the same quality. If joint helps at 30% + W4 but not at 40% + W8
+# despite comparable degradation, the mechanism is PRECISION-SPECIFIC -- which is what
+# [F-05](../docs/findings_log.md#f-05) predicts, since the joint arm's mask diverges 8.86% at W4
+# against 0.46% at W8. If joint helps at both, the cause is compression severity, which is a
+# substantially weaker claim.
+#
+# LABEL, TO BE USED VERBATIM IN THE WRITE-UP:
+#     "secondary, validation-selected, quality-matched mechanistic control"
+# Never confirmatory. It must not be used to modify the primary budgets after test results exist.
+#
+# AND ITS PROVENANCE, STATED RATHER THAN HIDDEN. A1 records S6 as the weakest of its five decisions on
+# the "would this have been justified before seeing results" test: it became interesting BECAUSE we
+# observed 40% + W8 landing near 30% + W4, and that is a result. What makes it defensible is that it
+# tests a mechanism rather than improving a headline. The paper says so.
+#
+# THE REDUCED DESIGN, exactly as A1 §5.4 specifies -- 12 compressed runs:
+#
+#     models      pythia-160m, pythia-410m
+#     budget      40% + W8
+#     methods     the selected sequential order, and joint
+#     replicates  3 paired calibration draws
+#
+# Deliberately omitted: dense (already measured -- the runner reuses the existing records), pruning
+# only, quantisation only, CPU latency, downstream tasks, checkpoint-size analysis. Pythia-1B gets
+# only the cheap layer-level diagnostics, and the full 1B S6 comparison runs ONLY if this control
+# produces a genuinely useful distinction.
+#
+# WHY ONLY P->Q, AND WHY THAT IS SAFE HERE. §6.1 normally requires joint gain against best-of
+# {P->Q, Q->P}, and running one order is the fault [B-30](../docs/findings_log.md) records. It is
+# acceptable in this one place because of the direction of the bias: at W8 the two orders are
+# indistinguishable and Q->P is very slightly ahead on the mean ([F-28](../docs/findings_log.md#f-28)),
+# so omitting Q->P makes the baseline WEAKER and therefore FLATTERS joint. We expect no gain here. A
+# null measured against a flattering baseline is a strong null. If this control were instead to show a
+# positive gain, Q->P must be run before that is believed -- write that down now, because it is
+# exactly the moment when it would be tempting not to.
+#
+# P->Q is also the §3.6 pre-registered primary and the frozen W8 order at both scales in this control.
+#
+# CPU EVALUATION, DELIBERATELY, even though GPU is 22.5x faster and permitted for exploratory work.
+# Two reasons. The dense records this control normalises against were produced on CPU, and retention is
+# a RATIO -- both halves must come from one device (the runner now refuses a cross-device dense
+# reference). And the whole value of a control is that it compares cleanly against the S5 numbers in
+# F-23 and F-27, which are CPU-evaluated. ~2 h against ~40 min is worth not having to caveat it.
+#
+# Validation split: selection and mechanism, never reporting.
+
+include:
+  - ../models/pythia_160m.yaml
+  - ../compression/sequential.yaml
+  - ../evaluation/quality.yaml
+  - ../evaluation/cpu_benchmark.yaml
+
+experiment:
+  id: s6_control
+  name: S6 quality-matched mechanistic control
+  description: >-
+    40% sparsity + W8 on Pythia-160M and 410M, sequential P->Q against joint, three paired
+    calibration draws. Distinguishes a precision-specific joint mechanism from a
+    compression-severity effect. Secondary and non-confirmatory.
+  tags:
+    - exploratory
+    - control
+    - mechanism
+    - not-a-result
+
+runtime:
+  seed: 1234
+  deterministic: true
+  output_dir: outputs
+  log_level: INFO
+
+data:
+  # Matched to screening.yaml exactly, so S6's retention is directly comparable with S5's rather than
+  # measuring something adjacent to it. That comparability IS the control.
+  calibration_samples: 128
+  calibration_split: train
+  sequence_length: 512
+  max_eval_samples: 512
+  batch_size: 4
+
+compression:
+  reconstruction:
+    solver: sweep
+    local_steps: 1
+    joint_iterations: 2
+    comparison_group: output
+    scale_search: false
+    keep_benefit_saliency: false
+
+sweep:
+  models:
+    - pythia-160m
+    - pythia-410m
+  methods:
+    - sequential
+    - joint
+  budgets:
+    - s6_40_w8
+  replicates: 3
+
+  budget_overrides:
+    s6_40_w8:
+      compression:
+        budget_label: s6_40_w8
+        pruning:
+          sparsity: 0.4
+        quantisation:
+          bits: 8
+
+  skip_existing: true
+  continue_on_error: false

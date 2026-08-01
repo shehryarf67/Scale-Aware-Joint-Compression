@@ -1043,6 +1043,16 @@ class ExperimentRunner:
             and int(actual_count) > int(expected_count)
         ):
             return f"num_sequences {actual_count} exceeds the cap {expected_count}"
+
+        # The DEVICE, because retention is a ratio and both halves of a ratio must come from the
+        # same one. This became live the moment GPU evaluation was wired in: a GPU-evaluated
+        # compressed run normalised against a CPU-evaluated dense record would put the ~1e-5
+        # device drift *inside* the retention figure rather than across tables, where it is at
+        # least declarable. Cheaper to re-run the dense cell on the new device than to explain it.
+        expected_device = str(self.config.evaluation.device.value).split(":")[0]
+        actual_device = payload.get("evaluation_device")
+        if actual_device is not None and str(actual_device).split(":")[0] != expected_device:
+            return f"evaluated on {actual_device} but this run evaluates on {expected_device}"
         return None
 
     def _load_dense_reference(self) -> Any:

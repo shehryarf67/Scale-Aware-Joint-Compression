@@ -734,6 +734,86 @@ to zero. **The pruning budget must be verified against `mask_sparsity`.**
 
 ---
 
+### F-33 - The S6 control: the mechanism is precision-specific where there is a mechanism at all {#f-33}
+
+*2026-08-01 - Pythia-160M `50f5173d` and Pythia-410M `dd47b0e` - 493 x 512 **validation** window -
+**CPU evaluation** - `METHOD_VERSION = 4` - 3 paired calibration draws (replicates 0-2, the same draws
+as [F-27](#f-27)) - 12 cells, ~2 h - `configs/experiments/s6_control.yaml`*
+
+**Label, to be used verbatim in the write-up:** *secondary, validation-selected, quality-matched
+mechanistic control.* Never confirmatory (Amendment A1 §5.4).
+
+#### The question
+
+Is the joint effect caused by low-bit **quantisation**, or merely by severe **quality degradation**?
+Two recipes at nearly the same quality answer it:
+
+| | Sparsity | Precision | 160M retention | 410M retention |
+| --- | --- | --- | --- | --- |
+| **S5** aggressive primary | 30% | **W4** | 56.7% | 58.6% |
+| **S6** control | 40% | **W8** | 54.2% | 56.8% |
+
+#### The S6 gain is nothing, at both scales
+
+| Model | rep0 | rep1 | rep2 | mean | sd | positive |
+| --- | --- | --- | --- | --- | --- | --- |
+| 160M | −0.23 | +0.05 | −0.08 | **−0.09 pp** | 0.14 | 1/3 |
+| 410M | +0.03 | +0.26 | −0.04 | **+0.09 pp** | 0.16 | 2/3 |
+
+#### The comparison the control exists to make, draw by draw
+
+Because the draws are paired, S5 and S6 can be differenced *within* a draw rather than compared as
+two means:
+
+| Model | rep0 | rep1 | rep2 | mean difference | positive |
+| --- | --- | --- | --- | --- | --- |
+| **160M** | +1.31 | +1.60 | +2.42 | **+1.78 pp** | **3/3** |
+| 410M | +0.65 | −0.76 | +1.01 | +0.30 pp | 2/3 |
+
+**At 160M the discrimination is clean and unanimous.** Matched quality, two recipes, and the W4 one
+shows a joint gain of +1.69 pp while the W8 one shows −0.09 pp. Every draw agrees. That is what A1
+§5.4 commissioned this control for, and it **supports a precision-specific mechanism over a
+compression-severity effect** — exactly what [F-05](#f-05) predicts from 8.86% mask divergence at W4
+against 0.46% at W8.
+
+**At 410M the control is uninformative, and that is not a failure of the control.** The primary itself
+shows no reliable effect at 410M (+0.39 pp, 2/3, sign inconsistent — [F-27](#f-27)), so there is
+nothing there to attribute to a cause. A control can only discriminate where an effect exists. Read the
+410M row as "no effect to explain", not as "the explanation failed".
+
+**So the honest statement is narrower than "the mechanism is precision-specific":** it is
+*precision-specific at the one scale where the mechanism is measurable at all.*
+
+#### The baseline here flatters joint, which makes the null stronger
+
+§6.1 requires joint gain against best-of {P→Q, Q→P}, and this control ran **P→Q only**, as A1 §5.4
+specifies. That is the [B-30](#f-24) fault by construction — but the direction is what matters: at W8
+the orders are indistinguishable and Q→P is slightly *ahead* on the mean ([F-28](#f-28)), so omitting
+it makes the sequential competitor **weaker** and flatters joint.
+
+The result is a null measured against a flattering baseline, which is a stronger null than the
+arithmetic alone. The pre-committed clause in the config — *if this control shows a positive gain, run
+Q→P before believing it* — does not fire.
+
+#### A cross-check that came free
+
+The first analysis pass accidentally included F-23's original S6 cells, which use the superseded
+`_seed1234` naming. Their retention is **54.43 / 54.20%**, identical to this run's replicate 0 to two
+decimals. Replicate 0 uses `DEFAULT_SEED`, so that cell *should* reproduce — and it does, across the
+seed→replicate rename, the solver rewrite, the capture refactor and the offload work.
+
+#### Limits
+
+* Three draws reach p = 0.25 at best on an exact sign test. **No significance claim.**
+* Validation split, and secondary by label. This may never be used to modify the primary budgets.
+* CPU evaluation throughout, deliberately: the dense records it normalises against are CPU-evaluated,
+  and retention is a ratio whose halves must share a device (B-37).
+* **Pythia-1B was not run**, per A1 §5.4 — the full 1B S6 comparison is conditional on this control
+  producing a useful distinction. It did at 160M, so a 1B S6 is now defensible if wanted; it was not
+  run here because A1 scopes 1B to cheap layer-level diagnostics only.
+
+---
+
 ### F-32 - Pythia-1B: both budgets hold, the orders split, and the joint gain keeps shrinking {#f-32}
 
 *2026-08-01 - Pythia-1B `f73d7dcc` - 493 x 512 **validation** window - **GPU evaluation** (`cuda:0`) -
@@ -2263,6 +2343,7 @@ recording.
 | B-34 | Block-offload captured block-0 inputs on the **host** ([F-31](#f-31)) | GPT-NeoX computes the rotary `cos`/`sin` in that forward and passes them into every block; CPU and CUDA trigonometry disagree in the last bits, which flipped a near-tie in the saliency ranking. One mask position in block 0 moved `attention.dense` by **2.25 absolute** and cascaded through every later block, for a **1.6% perplexity change that more than doubled the joint gain** (+2.35 pp against +1.08). Caught by the F-23 reproduction gate; would have been invisible to any tolerance-based check |
 | B-34b | The first fix moved the **whole model** to the device for the capture ([F-31](#f-31)) | Numerically correct, and it fitted at 160M and 410M. It then hit `CUDA error: out of memory` at 1B -- the one model offload exists for. Reasoning that no Gram factorisation is live during capture accounted for what was absent and not for what was present: 3.77 GiB of weights, ~0.5 GiB of cached hidden states, and the forward's own activations |
 | B-35 | Recorded quantisation grids did not follow their block back to the host ([F-31](#f-31)) | `grids_by_module` is captured while a block is resident, so under offload it held CUDA codes describing host weights. `convert` then died with a device mismatch **after the whole compression was spent** -- an artefact-stage failure caused by a compression-stage bug |
+| B-37 | The dense reference was matched on window and corpus but not on **device** ([F-33](#f-33)) | Retention is a ratio, so both halves must come from one device. Harmless until GPU evaluation was wired in; after that a GPU-evaluated compressed run could normalise against a CPU-evaluated dense record, putting the ~1e-5 device drift *inside* the retention figure where it cannot even be declared, rather than across tables where it can |
 | B-36 | The allocator's cache was not released between the compression and evaluation stages ([F-32](#f-32)) | Introduced by wiring GPU evaluation. PyTorch's caching allocator holds freed memory, so one stage's peak stayed reserved while the next asked for its own -- and **on Windows the driver satisfies the shortfall from shared system memory instead of raising**. No error, no warning, a plausible perplexity, and a 1B cell at **32 min instead of 8m46s**: compression 21 min against a 4m34s standalone measurement, evaluation 11 min. This is the same silent-spill mechanism [F-29](#f-29) measured at 7x on the widest layer, and it is the clearest argument on record for why deployment measurements are CPU-only -- a latency taken under these conditions would have looked entirely normal |
 | B-13 | Sweep cells inherited the base config's model revision | Every cell pinned to the *first* model's SHA — fails to load, or silently loads the wrong weights if the SHA exists in both repos |
 

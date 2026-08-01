@@ -342,6 +342,32 @@ either retraction.
 **Still exploratory.** Barely over the ≥1.0 pp threshold, one calibration draw so no error bar, and the
 validation split is a declared selection surface. The confirmatory answer comes from steps 9–10.
 
+### 🟢 The S6 control discriminates: the mechanism is precision-specific where it exists at all
+
+**[F-33](findings_log.md#f-33).** A1 step 8, 12 cells, ~2 h, CPU-evaluated. Two recipes at matched
+quality — S5 is 30% + W4, S6 is 40% + W8 — differenced **within each paired draw**:
+
+| Model | rep0 | rep1 | rep2 | mean S5 − S6 | positive |
+| --- | --- | --- | --- | --- | --- |
+| **160M** | +1.31 | +1.60 | +2.42 | **+1.78 pp** | **3/3** |
+| 410M | +0.65 | −0.76 | +1.01 | +0.30 pp | 2/3 |
+
+**At 160M the discrimination is clean and unanimous:** matched quality, and only the 4-bit recipe shows
+a gain (+1.69 pp against −0.09 pp). That **supports a precision-specific mechanism over a
+compression-severity effect**, as [F-05](findings_log.md#f-05) predicts from 8.86% mask divergence at
+W4 against 0.46% at W8.
+
+**At 410M the control is uninformative, which is not a failure of the control** — the primary shows no
+reliable effect there, so there is nothing to attribute. So the honest claim is narrower than "the
+mechanism is precision-specific": it is *precision-specific at the one scale where the mechanism is
+measurable at all.*
+
+**The null is stronger than it looks.** A1 §5.4 specifies P→Q only, and at W8 Q→P is slightly ahead —
+so the omitted order makes the baseline weaker and **flatters joint**. The config's pre-committed
+clause (*run Q→P before believing a positive*) does not fire.
+
+Secondary and non-confirmatory by label, three draws, p = 0.25 at best.
+
 ### 🟢 Three scale points: the joint gain declines monotonically, and 1B is not practically important
 
 **[F-32](findings_log.md#f-32).** The third scale point, runnable only because of per-block offload
@@ -694,9 +720,14 @@ it claims to; it says nothing about absolute quality against published work (A1 
 | — | Replicate the headline at both scales | ✅ **done** — [F-27](findings_log.md#f-27) |
 | — | Per-block GPU offload, so 1B runs at all | ✅ **done** — [F-31](findings_log.md#f-31) |
 | — | 1B budgets confirmed, orders frozen, gain measured | ✅ **done** — [F-32](findings_log.md#f-32) |
-| 8 | Run the reduced S6 mechanistic control (12 runs) | ⬜ ← **next** |
+| 8 | Run the reduced S6 mechanistic control (12 runs) | ✅ **done** — [F-33](findings_log.md#f-33) |
+| — | **A4 downstream tasks** and **A5 prefill/decode** | ⬜ ← **next**; both §-required, neither started |
 | 9 | Freeze the entire confirmatory configuration | ⬜ |
 | 10 | Run test evaluation **once**, with no further tuning | ⬜ |
+
+**A4 and A5 should come before step 9.** Step 10 costs ~38 h and is one-way — no tuning afterwards —
+and both A4 and A5 produce numbers that go in the same paper. Built after the freeze, they either sit
+outside it or force re-freezing.
 
 The screening grid is re-runnable as below, and it still writes to the exploratory (validation)
 configuration. It now costs **~20 minutes** rather than 2 h 08 m ([F-29](findings_log.md#f-29)):

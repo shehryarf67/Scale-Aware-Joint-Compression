@@ -414,6 +414,10 @@ class TestShippedConfigs:
             # A1 step 7 at the third scale: both budgets and both sequential orders on Pythia-1B,
             # runnable only because of per-block offload (F-31).
             "screening_1b.yaml",
+            # A1 step 8 §5.4: the quality-matched mechanistic control. 40% + W8 against the
+            # aggressive 30% + W4 primary, to separate a precision-specific effect from a
+            # compression-severity one. Secondary and never confirmatory.
+            "s6_control.yaml",
         }
         for path in files:
             config = load_config(path)
