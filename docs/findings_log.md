@@ -734,6 +734,69 @@ to zero. **The pruning budget must be verified against `mask_sparsity`.**
 
 ---
 
+### F-34 - Prefill and decode separated, and 30% unstructured sparsity buys no CPU latency {#f-34}
+
+*2026-08-01 - Pythia-160M `50f5173d` - **CPU**, 4 threads, batch 1 - 5 warm-up + 30 measured runs
+per cell, 2 rotation rounds - benchmark host (i7-13620H) - gap A5 / §4.7 -
+`configs/experiments/prefill_decode.yaml`*
+
+First measurement from the phase-separated benchmark. **160M only so far**; 410M and 1B pending.
+
+| Arm | Prompt | Prefill median | IQR | Decode median | IQR |
+| --- | --- | --- | --- | --- | --- |
+| dense | 128 | 156.45 ms | 5.16 | 21.78 ms | 1.85 |
+| dense | 512 | **593.23 ms** | 23.38 | **29.68 ms** | 4.64 |
+| pruning 30% | 128 | 155.43 ms | 6.34 | 23.58 ms | 3.27 |
+| pruning 30% | 512 | **600.04 ms** | 19.71 | **26.28 ms** | 1.58 |
+
+#### The split behaves as the plan says it should, which is the first thing to check
+
+**Prefill scales with prompt length; decode does not.** 4x the prompt gives 3.8x the prefill
+(156 -> 593 ms) and about 1.2x the decode (21.8 -> 29.7 ms). That is the compute-bound versus
+bandwidth-bound distinction §4.7 asks to be made visible, and reporting one blended generation
+latency would have hidden it.
+
+It also **validates the implementation**. Had the decode callable silently re-run the prompt -- the
+failure this whole module was written to avoid -- decode would have tracked prefill's 3.8x. It does
+not, so the cache is genuinely primed and the timed region is genuinely one token.
+
+#### 30% unstructured sparsity gives no speedup, and that is the finding
+
+Dense and pruned are **indistinguishable at every cell**: 156.45 against 155.43 ms, 593.23 against
+600.04 ms, and the decode differences run in *both* directions. Every gap is inside the IQR.
+
+This is expected and it should be stated plainly rather than buried: **an unstructured mask stores
+zeros, and a dense BLAS kernel multiplies by them anyway.** Skipping them needs either a sparse
+kernel or a structured pattern (2:4 / 4:8) the hardware can exploit. So at 30% unstructured:
+
+* the **compression-ratio** and **checkpoint-size** results stand;
+* the **latency** result is a null, and RQ4's sparsity-versus-latency curve is flat here.
+
+**Do not report the compression ratio as though it implied a speedup.** The mask primitives already
+support 2:4 and 4:8 (`compression/masks.py`), so a structured variant is the obvious follow-up if a
+latency claim is wanted — but it is a different experiment, and choosing it *after* seeing this null
+would need declaring as such.
+
+#### Conditions that make these numbers comparable
+
+* **CPU-only, on the benchmark host.** A deployment measurement (§4.6), and one results table never
+  spans two machines.
+* **FP32 arms only.** Per decision D1 a packed W4/W8 layer dequantises on every forward, so timing
+  it would measure the unpacking kernel. The record carries the exclusion as a field rather than
+  omitting it silently.
+* **Model-order rotation**, arms rebuilt inside each round, so thermal drift is spread across arms
+  rather than loaded onto whichever ran first.
+* **Median and IQR**, not mean and std: latency is bounded below with a long right tail, and one
+  scheduler preemption moves the mean while leaving the median alone.
+
+#### Limits
+
+Two rotation rounds at one scale. The dense-versus-pruned null is clear at 160M — the gaps are
+inside the IQR, not marginal — but the prompt-length scaling should be confirmed at 410M and 1B
+before the trend is described as general.
+
+---
+
 ### F-33 - The S6 control: the mechanism is precision-specific where there is a mechanism at all {#f-33}
 
 *2026-08-01 - Pythia-160M `50f5173d` and Pythia-410M `dd47b0e` - 493 x 512 **validation** window -

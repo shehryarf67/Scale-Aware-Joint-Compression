@@ -418,6 +418,9 @@ class TestShippedConfigs:
             # aggressive 30% + W4 primary, to separate a precision-specific effect from a
             # compression-severity one. Secondary and never confirmatory.
             "s6_control.yaml",
+            # Gap A5 (§4.7): prefill and decode timed separately at two prompt lengths, with IQR
+            # and model-order rotation. FP32 arms only, per decision D1.
+            "prefill_decode.yaml",
         }
         for path in files:
             config = load_config(path)

@@ -476,17 +476,127 @@ only.
 
 ---
 
+---
+
+## ⚠️ Read this before starting anything: who is doing what
+
+**On 2026-08-01 we independently did the same three tasks on the same day** — per-block offload, the
+1B selection config, and GPU quality evaluation. Two people, one day, one result. Nobody was at
+fault; there was no protocol.
+
+There is one now. **Claim a task in `docs/STATUS.md` before you start it**, in the "Who is on what"
+table, and push that claim immediately. A one-line commit is cheap; a duplicated day is not.
+
+| Task | Owner | State |
+| --- | --- | --- |
+| Per-block GPU offload | main | ✅ done — [F-31](findings_log.md#f-31) |
+| 1B budgets + order selection | main | ✅ done — [F-32](findings_log.md#f-32) |
+| S6 mechanistic control | main | ✅ done — [F-33](findings_log.md#f-33) |
+| **A5 — prefill/decode split** | **main** | 🔵 **in progress, do not start** |
+| **A4 — downstream tasks** | **unclaimed — yours if you want it** | ⬜ not started |
+| Steps 9–10 — freeze and confirm | unclaimed | ⬜ blocked on A4 and A5 |
+
+### Your parallel run was not wasted — it is now evidence
+
+Your Colab 1B numbers replicate ours on **different hardware, torch and Python**: dense 17.9432
+identical to four decimals, Q→P favoured at moderate, P→Q at aggressive, and a joint gain inside
+our three-draw range. Four qualitative conclusions, independently reproduced. That is worth more
+than a fourth draw on the same machine would have been, and it is going in the paper as a
+cross-host replication.
+
+Two things to know about how it differed from what landed on `main`:
+
+* **Your capture design was right** — staging only the pre-block modules and capturing on the
+  device. We arrived there on the third attempt, after a host-side capture flipped a mask through
+  rotary-embedding numerics (B-34). Yours never had that bug.
+* Two gaps kept it off `main`: recorded quantisation grids do not follow their block back to the
+  host (B-35, which kills `convert` after the whole compression is spent), and
+  `evaluation.device: cuda` has no effect on your branch because the runner change that reads it
+  landed separately.
+
+**Do not merge `phase7-close-phase8-setup`.** It would reintroduce a runner without the GPU-evaluation
+wiring and lacks the B-35 fix, and its `F-31`/`B-34` entries collide with different content on
+`main` in an append-only log. Branch fresh from `main` instead.
+
+---
+
 ### Task 4 — A4 and A5, the two required gaps nobody has started
 
 Both are **§-required**, not optional, and neither is blocked by anything. They have simply been
 behind the correctness work.
 
-**A4 — downstream tasks (§4.3).** HellaSwag, PIQA, ARC-Easy via lm-eval-harness, **pinned** (the
-version is frozen by §2.7). Every arm at every budget at every scale. Perplexity alone does not
-establish that a compressed model is still useful, and a reviewer will ask.
+#### A4 — downstream tasks (§4.3). **This one is yours. Here is everything you need.**
 
-**A5 — prefill vs decode timed separately (§4.7).** At prompt lengths **128 and 512**, reporting
-**IQR**, with **model-order rotation** so thermal drift does not load onto one arm.
+HellaSwag, PIQA, ARC-Easy via lm-eval-harness, **pinned** (§2.7 freezes the environment, and §4.8
+requires the *task versions* logged too — task definitions change between harness releases and an
+unversioned accuracy cannot be compared to a published one). Perplexity alone does not establish
+that a compressed model is still *useful*, and a reviewer will ask.
+
+**What to build**
+
+1. Pin `lm-eval` in `pyproject.toml` and `requirements-dev.txt`. Record the resolved version.
+2. A thin adapter. Our compressed models are still `GPTNeoXForCausalLM` subclasses, so
+   `HFLM(pretrained=model, tokenizer=tokenizer, batch_size=...)` should take one directly —
+   **verify that on a packed model before building anything on top of it**, the same way the
+   packed-on-CUDA path was checked before the 1B grid (`tests/test_arms.py`,
+   `test_a_packed_layer_survives_a_move_to_cuda`).
+3. A `downstream` config section: task list, batch size, and an optional `limit`.
+4. Record fields: per-task accuracy, per-task **version**, harness version, and the evaluation
+   device. Add them to `RESULT_CSV_COLUMNS` so they reach the flat table too.
+5. **Offline tests.** Every test in this repo runs with no network. lm-eval downloads datasets, so
+   the tests must stub the harness at the boundary — assert that our adapter passes the right model
+   and records the right fields, not that HellaSwag scores anything.
+6. A `scripts/run_downstream.py` driver, and a `configs/experiments/downstream.yaml`.
+
+**The one decision to make first, because it sets the cost**
+
+The three tasks are ~14,250 examples, but multiple-choice scoring is one forward *per choice* —
+roughly **53,000 forwards, ~8M tokens, about 32× a perplexity evaluation**.
+
+| Per 1B cell | Perplexity | Downstream |
+| --- | --- | --- |
+| GPU | 3.5 min | ~1.9 h |
+| CPU | ~38 min | **~20 h** |
+
+Across ~15 cells that is **~15–20 h on GPU against ~150 h on CPU**. CPU is not feasible.
+
+**Recommendation: run downstream on GPU and declare it.** `check_evaluation_device` says reported
+numbers must come from CPU, but that is *our* convention; the plan's §4.6 restricts **deployment**
+measurements, and downstream accuracy is a quality metric, not a latency claim. Accuracy is
+device-invariant far below the ~1 pp differences being reported. The alternative — `--limit`
+subsampling — weakens comparability with published numbers, which is the exact thing lm-eval was
+chosen to preserve. **Whichever you pick, write the reasoning into the config before you run it.**
+
+**Traps specific to this task**
+
+* A packed model's `lm_head` is *not* compressed (§2.6 excludes embeddings and the head), so
+  logits come from an FP32 layer. That is correct and worth stating, because a reader may expect
+  quantisation to affect the scoring path.
+* Accuracy has a floor: random is 25% on HellaSwag and ARC-Easy, 50% on PIQA. A compressed model
+  at chance is a *broken* model, not a weak one — check against the floor before reporting a
+  degradation.
+* Report **measured against dense**, the same way retention works for perplexity. An absolute
+  accuracy without its dense reference is not interpretable.
+
+#### A5 — prefill vs decode (§4.7). **Being done on `main`. Do not start it.**
+
+Built in `benchmarking/phases.py`, driven by `scripts/run_prefill_decode.py`, configured by
+`configs/experiments/prefill_decode.yaml`. Recorded here so you know what exists rather than
+rebuilding it:
+
+* **decode is timed against a primed cache** — the prompt forward runs once, untimed, and the timed
+  region is a single-token step. Timing `generate` would fold the prefill into every repetition and
+  report the sum under the decode label. Two tests pin it: decode must emit logits for exactly one
+  position, and the cache must not grow across repetitions.
+* **IQR** (`p25_ms`, `p75_ms`, `iqr_ms`) added to `LatencyStatistics` — §4.7 requires it and it was
+  simply missing.
+* **`rotate()`** for model-order rotation, with arms rebuilt inside each round so the rotation is
+  real and two full-size FP32 models never sit in RAM at once.
+* **FP32 arms only** (dense, pruning-only). Per D1 a packed layer dequantises on every forward, so
+  timing it measures unpacking. The exclusion is written into the record rather than left as a gap.
+
+At prompt lengths **128 and 512**, reporting **IQR**, with **model-order rotation** so thermal drift
+does not load onto one arm.
 **CPU-only, 4 threads, as pinned, on the designated benchmark host** — this is a tier-3 deployment
 measurement, so both the CPU rule and the one-machine rule are absolute. You can *write* it
 anywhere and test it against `tiny_causal_lm`; only the measured numbers are host-bound. Read

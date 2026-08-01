@@ -46,6 +46,28 @@ is not by itself evidence the environment is stable.
 
 ---
 
+## ⚠️ Who is on what — claim a task here *before* starting it
+
+On **2026-08-01** both authors independently did the same three tasks on the same day — per-block
+offload, the 1B selection config, and GPU quality evaluation. Two people, one day, one result.
+Nobody was at fault; there was no protocol. This table is the protocol. **Push the claim before you
+start work**; a one-line commit is cheap and a duplicated day is not.
+
+| Task | Owner | State |
+| --- | --- | --- |
+| Per-block GPU offload | main | ✅ [F-31](findings_log.md#f-31) |
+| 1B budgets + order selection | main | ✅ [F-32](findings_log.md#f-32) |
+| S6 mechanistic control | main | ✅ [F-33](findings_log.md#f-33) |
+| **A5 — prefill/decode split (§4.7)** | **main** | 🔵 built + validated at 160M ([F-34](findings_log.md#f-34)); 410M/1B pending |
+| **A4 — downstream tasks (§4.3)** | **unclaimed** | ⬜ not started — see [partner_handoff.md](partner_handoff.md) |
+| Steps 9–10 — freeze, then confirm | unclaimed | ⬜ blocked on A4 and A5 |
+
+**The parallel 1B run on `phase7-close-phase8-setup` was not wasted.** It replicates our 1B result
+on different hardware, torch and Python — dense 17.9432 identical to four decimals, both order
+decisions agreeing, joint gain inside our three-draw range. It goes in the paper as a cross-host
+replication. **Do not merge that branch**: it lacks the B-35 fix and the runner's GPU-evaluation
+wiring, and its `F-31`/`B-34` entries collide with different content here in an append-only log.
+
 ## Where we are
 
 Infrastructure, the Phase 0 decisions, the compression primitives and the layerwise driver are all

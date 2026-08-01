@@ -30,11 +30,24 @@ class LatencyStatistics:
     mean_ms: float
     median_ms: float
     std_ms: float
+    p25_ms: float
+    p75_ms: float
     p95_ms: float
     p99_ms: float
     min_ms: float
     max_ms: float
     total_seconds: float
+
+    @property
+    def iqr_ms(self) -> float:
+        """Interquartile range, which §4.7 requires reported alongside the median.
+
+        Preferred to the standard deviation for latency because the distribution is bounded
+        below and has a long right tail: one scheduler preemption inflates the std and moves the
+        mean, and leaves the IQR alone. A median with an IQR describes the typical run; a mean
+        with a std describes a distribution these samples do not have.
+        """
+        return self.p75_ms - self.p25_ms
 
     @property
     def coefficient_of_variation(self) -> float:
@@ -52,6 +65,9 @@ class LatencyStatistics:
             "latency_mean_ms": self.mean_ms,
             "latency_median_ms": self.median_ms,
             "latency_std_ms": self.std_ms,
+            "latency_p25_ms": self.p25_ms,
+            "latency_p75_ms": self.p75_ms,
+            "latency_iqr_ms": self.iqr_ms,
             "latency_p95_ms": self.p95_ms,
             "latency_p99_ms": self.p99_ms,
             "latency_min_ms": self.min_ms,
@@ -117,6 +133,8 @@ def summarise_latencies(samples_seconds: Sequence[float]) -> LatencyStatistics:
         # Sample standard deviation: these are repeated measurements of one configuration,
         # not a full population.
         std_ms=statistics.stdev(milliseconds),
+        p25_ms=percentile(milliseconds, 0.25),
+        p75_ms=percentile(milliseconds, 0.75),
         p95_ms=percentile(milliseconds, 0.95),
         p99_ms=percentile(milliseconds, 0.99),
         min_ms=min(milliseconds),
