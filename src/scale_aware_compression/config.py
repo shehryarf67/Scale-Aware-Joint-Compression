@@ -426,6 +426,16 @@ class ReconstructionConfig:
     """
     calibration_dtype: str = "float32"
     """Accumulation dtype for ``H = XᵀX``. fp32 keeps the largest layer Hessian at 256 MiB."""
+    offload_blocks: bool = False
+    """Hold one decoder block on the GPU at a time instead of the whole model.
+
+    Off by default because it changes nothing at 160M or 410M, where the model fits. It is what
+    makes Pythia-1B runnable: with the model resident, 1B peaks at 6.31 GiB on a 6.00 GiB card and
+    completes only by spilling to host memory at 7x the solve time. Block-sequential capture
+    already made the block loop own the forward, so this only changes *residency* -- see
+    docs/capture_refactor_rationale.md.
+
+    Requires CUDA; offloading to CPU would be a silent no-op, so the config rejects it."""
 
     def __post_init__(self) -> None:
         """Validate the optimisation budget."""

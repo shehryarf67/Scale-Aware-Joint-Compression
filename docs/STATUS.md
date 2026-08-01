@@ -59,7 +59,8 @@ done. **Every arm runs from a config to a run record on real Pythia-160M.**
 | Environment | verified end to end: torch 2.13.0+cu126, CUDA available, sm_89 |
 | Runnable today | **all five arms** plus dense, config to run record, on real 160M and 410M |
 | Cost of an exploratory 160M cell | **~1.3 min** (was ~9.3) — [F-29](findings_log.md#f-29) |
-| Not yet done | 1B (needs per-block GPU offload), S6 control, confirmatory test-split runs, downstream tasks (A4), prefill/decode split (A5) |
+| Pythia-1B compression | **runs** — 4.29 GiB reserved, no spill ([F-31](findings_log.md#f-31)) |
+| Not yet done | 1B budgets + order, S6 control, confirmatory test-split runs, downstream tasks (A4), prefill/decode split (A5) |
 
 ### What works
 
@@ -658,7 +659,7 @@ it claims to; it says nothing about absolute quality against published work (A1 
 | 6 | Both sequential orders (P→Q, Q→P) on validation | ✅ **done** — [F-24](findings_log.md#f-24) |
 | 7 | Freeze the winning order per (model, budget) | ✅ **W4 and W8 both frozen at 160M+410M** — [F-28](findings_log.md#f-28); 1B outstanding |
 | — | Replicate the headline at both scales | ✅ **done** — [F-27](findings_log.md#f-27) |
-| — | Per-block GPU offload, so 1B runs at all | ⬜ ← **next** |
+| — | Per-block GPU offload, so 1B runs at all | ✅ **done** — [F-31](findings_log.md#f-31) |
 | 8 | Run the reduced S6 mechanistic control (12 runs) | ⬜ |
 | 9 | Freeze the entire confirmatory configuration | ⬜ |
 | 10 | Run test evaluation **once**, with no further tuning | ⬜ |
@@ -803,8 +804,10 @@ Reduced to the items that genuinely cannot be settled yet. Tracked in
 
 - **W4 latency via `torchao`** — would lift D1's "no W4 latency row" limitation if one 4-bit CPU path
   can serve both arms. Needs measuring, not assuming.
-- **1.4B go/no-go** — §5.2 needs peak VRAM under ~85% of 6.0 GiB, a **5.1 GiB ceiling**. 1B already
-  peaks at 6.31 GiB with the model resident, so this depends entirely on per-block offload landing.
+- **1.4B go/no-go** — §5.2 needs peak VRAM under ~85% of 6.0 GiB, a **5.1 GiB ceiling**. Offload has
+  landed and 1B now reserves 4.29 GiB ([F-31](findings_log.md#f-31)), so 1.4B is no longer
+  obviously out — but the device-level baseline is ~1.0 GiB on top, so it must be **measured**
+  with `scripts/verify_block_offload.py --peak-only`, not extrapolated.
 - **Downstream tasks (A4)** and the **prefill/decode split (A5)** — required by §4.3 and §4.7,
   neither started.
 
@@ -856,30 +859,53 @@ blocked by anything; they have simply been behind the correctness work.
 
 ---
 
-## 🔧 What remains before Pythia-1B will run
+## ✅ Per-block GPU offload — implemented, and the gate caught a real bug first
 
-The capture refactor is **applied and all gates passed** —
-[F-29](findings_log.md#f-29), rationale in
-[capture_refactor_rationale.md](capture_refactor_rationale.md). What it did *not* do is move the model
-off the device.
+**[F-31](findings_log.md#f-31).** `compression.reconstruction.offload_blocks`, defaulting **off**, so
+every existing record and every reproduction gate is untouched. When on, the model stays on the host
+and one block at a time moves to the card.
 
-| | Now | With per-block offload |
+**The first implementation was wrong, and the F-23 reproduction gate is what found it.** It captured
+block-0 inputs on the host, reasoning that only the embedding runs and a lookup is a gather. But
+GPT-NeoX computes the **rotary `cos`/`sin`** in that same forward and passes them into every block,
+and CPU/CUDA trigonometry disagrees in the last bits — which flipped a near-tie in the saliency
+ranking. One mask position moved `attention.dense` in block 0 by **2.25 absolute** and cascaded:
+
+| | Required | First attempt |
 | --- | --- | --- |
-| Block-forwards per 1B cell | **~48** ✅ | ~48 |
-| Model resident on GPU | **3.77 GiB** — whole model | **~0.2 GiB** — one block |
-| Measured 1B GPU peak | **6.31 GiB on a 6.00 GiB card** — spilled to host, 7× slower | ~3.2 GiB |
+| sequential | 65.261 | 65.666 |
+| joint | 64.041 | 63.028 |
+| **joint gain** | **+1.08 pp** | **+2.35 pp** |
 
-`block_size` does **not** help: peak is 6.31/6.37/6.37 GiB at 128/64/32, because the Gram
-factorisation dominates, not the block loop.
+**It flattered joint — the sixth fault in a row to do so** (B-14, B-17, B-22, B-23, B-30, **B-34**).
+Fixed by capturing on the device and pulling the blocks straight back off, which makes the hidden
+states bit-identical to the resident path by construction. The full-model transient that costs is
+affordable only because no Gram factorisation is live during capture.
 
-**The remaining change is small**, because the block loop now owns the forward — move one block to the
-device, compress it, move it back. It gets the same verification treatment: a 160M cell must reproduce
-65.261 / 64.041 and a 410M cell 37.851 / 37.415, exactly.
+| Gate | Result |
+| --- | --- |
+| Weights, offloaded vs resident, 160M, sequential **and** joint | **0 of 148 disagree**, 0.000e+00 |
+| **160M cell** | **65.2614 / 64.0413** — exact |
+| `METHOD_VERSION` | not bumped — nothing moved |
 
-**Correction to an earlier note here:** `scripts/run_sparsegpt_external_anchor.py` does *not* contain a
-working per-block-offload driver, as this file previously claimed. It does block-sequential **replay**
-with the whole model resident — the part already adopted. It is still the right file to read for the
-replay pattern and the `_StopForwardError` catcher, but the offload itself has to be written.
+Also fixed: **B-35**, recorded quantisation grids did not follow their block back to the host, so
+`convert` died with a device mismatch *after* the whole compression was spent.
+
+**Pythia-1B now compresses without spilling** — 3.34 GiB allocated, **4.29 GiB reserved**, in
+**4 m 34 s**, against a resident path that hit 6.31 GiB on a 6.00 GiB card and finished only by
+spilling to host memory at 7× the solve time. `block_size` was never the lever: peak was
+6.31/6.37/6.37 GiB at 128/64/32.
+
+**Read the 5.1 GiB ceiling carefully.** Reserved clears §5.2 with 0.8 GiB to spare, but device-level
+occupancy adds the CUDA context and the desktop — **1.04 GiB** measured with nothing allocated, and a
+spot `nvidia-smi` read 5.05 GiB mid-run. 1B is settled; **1.4B must be measured, not extrapolated**.
+
+**The 52% saving at 160M is not the benefit** and should not be quoted as it — at that size the whole
+model is 0.65 GiB and nothing was at risk of not fitting.
+
+**Note for anyone reading `scripts/run_sparsegpt_external_anchor.py`:** it does block-sequential
+**replay** with the whole model resident, not offload. Useful for the replay pattern and the
+`_StopForwardError` catcher; it was never an offload driver, despite an earlier claim here.
 
 ---
 
@@ -952,7 +978,8 @@ Full record in [protocol_freeze.md](protocol_freeze.md#environment). Summary:
 - [x] Replicate the headline at both scales → [F-27](findings_log.md#f-27)
 - [x] `python scripts/download_models.py --models pythia-1b` — verified at pinned SHA `f73d7dcc`
 - [x] Block-sequential capture applied, all gates passed → [F-29](findings_log.md#f-29)
-- [ ] **Per-block GPU offload** ← **next**; it is what makes 1B runnable
-- [ ] 1B budget confirmation and order selection
+- [x] **Per-block GPU offload** — bit-identical at 160M, 1B reserves 4.29 GiB without spilling
+      → [F-31](findings_log.md#f-31)
+- [ ] **1B budget confirmation and order selection** ← **next**
 - [ ] Reduced S6 control (12 runs)
 - [ ] Freeze the confirmatory config, then test evaluation **once** — no tuning after that

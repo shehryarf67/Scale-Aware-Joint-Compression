@@ -734,6 +734,138 @@ to zero. **The pruning budget must be verified against `mask_sparsity`.**
 
 ---
 
+### F-31 - Per-block GPU offload, and the mask flip that made the first attempt wrong {#f-31}
+
+*2026-08-01 - Pythia-160M `50f5173d` - 493 x 512 validation window - `METHOD_VERSION = 4`, **not
+bumped** - suite 977 passing*
+
+Offload holds **one decoder block** on the card at a time instead of the whole model. It is the
+change [F-29](#f-29) left outstanding, and the one that decides whether Pythia-1B is runnable at
+all: with the model resident, 1B peaks at **6.31 GiB on a 6.00 GiB card** and completes only by
+spilling to host memory at 7x the solve time.
+
+#### The first implementation was wrong, and the reproduction gate is what caught it
+
+Captured on the host, on the reasoning that aborting at block 0 means only the embedding runs, and
+an embedding lookup is a gather -- no arithmetic, so bit-identical on either device.
+
+**That reasoning was incomplete.** GPT-NeoX also computes the **rotary `cos`/`sin`** during that
+forward and passes them into every block as replay context. CPU and CUDA trigonometry disagree in
+the last bits.
+
+| | Required | First attempt | Difference |
+| --- | --- | --- | --- |
+| sequential | 65.261 | **65.666** | +0.405 |
+| joint | 64.041 | **63.028** | −1.013 |
+| joint gain | +1.08 pp | **+2.35 pp** | more than double |
+
+`scripts/verify_block_offload.py` localised it exactly. In block 0, `query_key_value` and both MLP
+projections matched **bit-for-bit**; only **`attention.dense`** differed, by **2.25 absolute** --
+and then every later block with it.
+
+That pattern names the cause. `attention.dense` is the only module in the block whose input is the
+attention output, so it is the only one that sees the perturbed rotary embeddings. **A mask is a
+discrete function of saliency**, so last-bit noise flipped a near-tie, and a flipped mask position
+is not a small numerical difference -- it is a kept weight becoming a pruned one.
+
+This is [F-19](#f-19)'s observation biting for real. There, 4 positions in 85 million flipped
+between float32 and float64 norms and it was harmless. Here one flip in an early block propagated
+through every block downstream.
+
+**The direction is worth recording: it flattered the joint arm**, more than doubling the gain. That
+is now B-14, B-17, B-22, B-23, B-30 and B-34 -- six faults, six in the same direction, none the
+other way.
+
+#### The fix took two attempts, and the second one is the interesting failure
+
+**Attempt one: move the whole model to the device for the capture, then pull the blocks straight
+back off.** Correct -- 0 of 148 parameters disagreed at 160M -- and reasoned as affordable because
+no Gram factorisation is live during capture, so the 6.31 GiB peak that made 1B unrunnable was the
+model and those temporaries *coexisting*, not the model alone.
+
+**It died at 1B with `CUDA error: out of memory`** -- at the exact step offload exists to make
+possible. 3.77 GiB of weights, ~0.5 GiB of cached hidden states and the forward's own activations
+do not fit in the ~4.95 GiB actually free on a 6.00 GiB card. The reasoning about Gram temporaries
+was right and still insufficient: it accounted for what was *absent* and not for what was present.
+
+**Attempt two: move only the modules outside the decoder blocks** -- the embedding and the rotary
+tables are what the capture needs; 3.77 GiB of decoder weights is what it must not drag along.
+`_move_outside_blocks` walks the model with `recurse=False` per module, because moving a parent
+would take its block children with it.
+
+The second attempt is also what makes the 160M saving real rather than cosmetic:
+
+| Capture strategy | 160M offloaded peak | Equivalent? | 1B |
+| --- | --- | --- | --- |
+| whole model to device | 0.89 GiB | ✅ bit-identical | **out of memory** |
+| **pre-block modules only** | **0.60 GiB** | ✅ bit-identical | see below |
+
+#### Verification
+
+Weight-level equivalence, real Pythia-160M, same calibration draw, offloaded against resident:
+
+| Arm | Parameters | Disagreeing | Worst difference | Resident peak | Offloaded peak |
+| --- | --- | --- | --- | --- | --- |
+| sequential | 148 | **0** | **0.000e+00** | 1.25 GiB | **0.60 GiB** |
+| joint | 148 | **0** | **0.000e+00** | 1.25 GiB | **0.60 GiB** |
+
+Compared with `torch.equal`, not `allclose`. A tolerance would hide exactly the failure above: a
+flipped mask position is a large difference in one weight, not a small one everywhere.
+
+Full-cell gate, the authoritative one:
+
+| Arm | Required ([F-23](#f-23)) | Measured | |
+| --- | --- | --- | --- |
+| sequential | 65.261 | **65.2614** | retention 56.66% |
+| joint | 64.041 | **64.0413** | retention 57.73% |
+
+**Exact to four decimals.** `METHOD_VERSION` not bumped, so the existing records stay valid.
+
+#### Pythia-1B now fits, and by a wide margin
+
+**This is the measurement the change exists for.** Compression only, aggressive budget, same
+calibration draw as a real cell:
+
+| | Resident ([F-29](#f-29)) | **Offloaded** |
+| --- | --- | --- |
+| Peak, tensors allocated | — | **3.34 GiB** |
+| Peak, allocator reserved | — | **4.29 GiB** |
+| Peak, device level | **6.31 GiB on a 6.00 GiB card** | ~5.0 GiB observed, not instrumented |
+| Outcome | completed only by spilling to host, **7x** the solve time | **no spill, 4 m 34 s** |
+
+**Report both torch numbers and do not mix them.** `max_memory_allocated` is what the tensors need;
+`max_memory_reserved` is what the caching allocator holds on the device. F-29's 6.31 GiB was a
+*device-level* figure, so **reserved** is what it compares against -- quoting the 3.34 GiB against
+it would overstate the headroom by a gigabyte.
+
+**Against §5.2's 5.1 GiB ceiling (85% of 6.0), be careful.** Reserved at 4.29 GiB clears it with
+0.8 GiB to spare. Device-level occupancy is reserved *plus* the CUDA context and whatever else
+holds VRAM, which on this machine measured **1.04 GiB** with nothing allocated -- a laptop with a
+display attached, so it is desktop plus context rather than a clean constant. A single `nvidia-smi`
+sample mid-run read **5.05 GiB** total. So:
+
+* **1B runs, comfortably, and that is settled** -- no spill, and 4 m 34 s against a resident path
+  that took 7x longer on the widest layer alone.
+* **The margin for 1.4B is thinner than 4.29 against 5.1 makes it look**, because the baseline is
+  not free. The §5.2 go/no-go must be *measured* on 1.4B, not extrapolated from this.
+
+A device-level peak was not instrumented; the 5.05 GiB is a spot reading, not a maximum, and is
+recorded as such.
+
+**52% at 160M is not the benefit and should not be quoted as it.** At that size the whole model is
+0.65 GiB, so nothing was ever at risk of not fitting.
+
+#### Also fixed on the way (B-35)
+
+The first real run died at `convert` with *"found at least two devices, cuda:0 and cpu"* -- **after
+every second of the compression was spent**. `LayerwiseReport.grids_by_module` holds the codes and
+scales captured while a block is resident, so under offload they came back as CUDA tensors
+describing weights that were now on the host. Invisible while everything lived on one device. The
+grids now travel back with their block, and the unit test asserts device as well as value -- the
+first version compared only parameters and sailed straight past it.
+
+---
+
 ### F-30 - The machine policy was stricter than the protocol, and nothing in the code enforced it {#f-30}
 
 *2026-08-01 - no measurement; an audit and a policy amendment - suite 974 passing*
@@ -2027,6 +2159,9 @@ recording.
 | B-31 | A single-draw joint gain was reported as a point estimate, and a scale trend built on two of them ([F-26](#f-26)) | The 410M cell swings from −0.50 to +0.98 pp across calibration draws, so +0.68 pp was luck. The paired difference is *noisier* than either arm, contradicting the stated expectation that pairing would cancel draw noise |
 | B-32 | `exists_valid` did not compare the evaluation device ([F-29](#f-29)) | Switching exploratory runs to GPU evaluation would have let `skip_existing` reuse CPU-evaluated records inside a GPU grid, mixing devices within one comparison at ~1e-5 -- too small to change a conclusion, invisible without the check |
 | B-33 | `exists_valid` did not compare the **machine** ([F-30](#f-30)) | Same class as B-32, and it went live the moment the machine policy allowed a second host to run compression: two hosts writing into one `outputs/metrics/` would have let `skip_existing` pull the other machine's record into a comparison. `host_key` is built from fields every record already carried, so the guard added no recompute |
+| B-34 | Block-offload captured block-0 inputs on the **host** ([F-31](#f-31)) | GPT-NeoX computes the rotary `cos`/`sin` in that forward and passes them into every block; CPU and CUDA trigonometry disagree in the last bits, which flipped a near-tie in the saliency ranking. One mask position in block 0 moved `attention.dense` by **2.25 absolute** and cascaded through every later block, for a **1.6% perplexity change that more than doubled the joint gain** (+2.35 pp against +1.08). Caught by the F-23 reproduction gate; would have been invisible to any tolerance-based check |
+| B-34b | The first fix moved the **whole model** to the device for the capture ([F-31](#f-31)) | Numerically correct, and it fitted at 160M and 410M. It then hit `CUDA error: out of memory` at 1B -- the one model offload exists for. Reasoning that no Gram factorisation is live during capture accounted for what was absent and not for what was present: 3.77 GiB of weights, ~0.5 GiB of cached hidden states, and the forward's own activations |
+| B-35 | Recorded quantisation grids did not follow their block back to the host ([F-31](#f-31)) | `grids_by_module` is captured while a block is resident, so under offload it held CUDA codes describing host weights. `convert` then died with a device mismatch **after the whole compression was spent** -- an artefact-stage failure caused by a compression-stage bug |
 | B-13 | Sweep cells inherited the base config's model revision | Every cell pinned to the *first* model's SHA — fails to load, or silently loads the wrong weights if the SHA exists in both repos |
 
 Two of these were **masked by tests that should have caught them**: B-07 (the test disabled

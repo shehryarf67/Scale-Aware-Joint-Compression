@@ -315,7 +315,33 @@ prints the plan without loading a model.
 
 ---
 
-### Task 1 — Per-block GPU offload. This is what unblocks Pythia-1B.
+### Task 1 — Per-block GPU offload ✅ **done 2026-08-01, [F-31](findings_log.md#f-31)**
+
+Kept in full below because the *way it failed* is the most useful thing in this document for
+anyone about to touch `layerwise.py`.
+
+`compression.reconstruction.offload_blocks`, defaulting off. Verified bit-identical at 160M for
+both arms (0 of 148 parameters differ), and the full cell reproduces **65.2614 / 64.0413** exactly.
+
+**Two wrong implementations before the right one, and neither was caught by reasoning:**
+
+1. **Captured block-0 inputs on the host** (B-34). Aborting at block 0 means only the embedding
+   runs, and a lookup is a gather — so it should be bit-identical. But GPT-NeoX also computes the
+   rotary `cos`/`sin` in that forward, CPU and CUDA trigonometry differ in the last bits, and a
+   **mask is a discrete function of saliency**. One flipped near-tie moved `attention.dense` in
+   block 0 by 2.25 absolute, cascaded through every later block, and **more than doubled the joint
+   gain** (+2.35 pp against +1.08). Only the F-23 reproduction gate caught it.
+2. **Moved the whole model to the device for the capture** (B-34b). Numerically correct, fine at
+   160M and 410M, and it hit `CUDA error: out of memory` at 1B — the one model the whole change
+   exists for.
+
+**The lesson to carry:** in this pipeline a last-bit difference is not a small difference, because
+the mask thresholds it. Verify with `torch.equal`, never `allclose`.
+
+<details>
+<summary>The task as it was originally written</summary>
+
+### Per-block GPU offload. This is what unblocks Pythia-1B.
 
 **The problem.** `load_model` does `model.to(device)`, so the whole model sits on the GPU during
 compression. At 1B that is 3.77 GiB of FP32 weights, and the widest layer's inverse-Cholesky
@@ -391,11 +417,24 @@ but **never** paper over a difference to protect the record count.
 
 Then measure the 1B peak and report it against the **5.1 GiB ceiling** (§5.2's 85% of 6.0 GiB).
 
+</details>
+
+**Two reusable things came out of this**, and they are the right tools for any future change to the
+driver:
+
+* `scripts/verify_block_offload.py` — compresses the same model twice, resident and offloaded, and
+  compares **every parameter with `torch.equal`**. It is what localised B-34 to a single module in
+  a single block, which is what made the cause findable.
+* `configs/experiments/verify_offload_160m.yaml` and `verify_offload_1b.yaml` — the equivalence
+  gate and the peak-memory measurement. Note the split: equivalence is established at 160M where
+  **both** paths run and the right answer is already known, and 1B measures only memory, because
+  there the resident comparison is impossible by construction.
+
 ---
 
-### Task 2 — 1B budget confirmation and order selection
+### Task 2 — 1B budget confirmation and order selection ← **next**
 
-Only after task 1's gates pass.
+Task 1 is done, so this is unblocked.
 
 1. **Dense baseline** at 1B, then the **moderate** and **aggressive** budgets, sequential and joint,
    on the **validation** split with GPU evaluation (exploratory — allowed and 22× faster).

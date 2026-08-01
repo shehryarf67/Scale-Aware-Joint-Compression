@@ -857,6 +857,7 @@ def compress_model_layerwise(
     module_names: Sequence[str] | None = None,
     calibration_fingerprint: str = "",
     device: torch.device | str | None = None,
+    offload_blocks: bool = False,
     progress: Callable[[str, int, int], None] | None = None,
 ) -> LayerwiseReport:
     """Compress every targeted linear layer, block by block, in depth order.
@@ -874,15 +875,22 @@ def compress_model_layerwise(
         module_names: Restrict to these modules. Defaults to the full selection.
         calibration_fingerprint: Recorded so a mismatch between arms is detectable after the fact.
         device: Device to run capture and compression on. GPU is allowed here -- §4.6 restricts
-            only the final deployment measurements to CPU.
+            only the final deployment measurements to CPU. Required when ``offload_blocks`` is set.
+        offload_blocks: Hold one decoder block on ``device`` at a time, keeping the rest of the
+            model on the host. Costs two host/device transfers per block and changes no number;
+            it is what makes a model larger than the card runnable. **The model is left on the
+            host when this returns**, because that is where all but one block already was.
         progress: Optional ``(module_name, index, total)`` callback.
 
     Returns:
         The report, including a per-layer reconstruction loss.
 
     Raises:
-        LayerwiseError: If nothing was selected, or a targeted module is not 2-D.
+        LayerwiseError: If nothing was selected, a targeted module is not 2-D, or offload was
+            requested without a device to offload to.
     """
+    import torch
+
     from scale_aware_compression.models.adapters import (
         get_adapter,
         get_decoder_blocks,
@@ -933,6 +941,30 @@ def compress_model_layerwise(
     total = len(module_names)
     state = {"completed": 0}
 
+    host_device = torch.device("cpu")
+    compute_device = torch.device(device) if device is not None else None
+    if offload_blocks:
+        if compute_device is None or compute_device.type == "cpu":
+            raise LayerwiseError(
+                "offload_blocks=True needs a non-CPU device to offload to; got "
+                f"{device!r}. Offloading blocks to the host from the host moves nothing."
+            )
+        # Everything but the resident block lives on the host. Moving the model here rather than
+        # requiring the caller to load it on CPU means the flag is sufficient on its own -- but a
+        # caller that already loaded onto the card has paid a full-model transient, so the configs
+        # that set this also set `model.device: cpu`.
+        if next(model.parameters()).device != host_device:
+            LOGGER.info(
+                "offload_blocks: moving the model to %s; blocks go to %s one at a time",
+                host_device,
+                compute_device,
+            )
+            model.to(host_device)
+
+    # Where the Gram and the solve happen. Under offload that is the device the resident block is
+    # on, which is not where the model as a whole lives.
+    capture_device = str(compute_device) if offload_blocks else device
+
     # A live key/value cache would accumulate across the repeated single-block replays below, changing
     # the activations each group is fitted against. B-28 is this exact fault in the external SparseGPT
     # driver, found there first.
@@ -943,51 +975,102 @@ def compress_model_layerwise(
     try:
         # The embedding and everything before block 0 run exactly once. From here every capture is a
         # replay of a single block over cached hidden states.
-        cached = _capture_block_inputs(model, blocks[0], batches)
+        #
+        # Under offload this capture happens ON THE DEVICE, with only the modules outside the
+        # decoder blocks moved there. Two rejected alternatives, in the order they were tried:
+        #
+        # Capturing on the HOST is wrong. Aborting at block 0 means only the embedding runs, and an
+        # embedding lookup is a gather -- but GPT-NeoX also computes the rotary cos/sin in that
+        # forward and passes them into every block as replay context, and CPU and CUDA trigonometry
+        # disagree in the last bits. That flips near-ties in the saliency ranking, and a flipped
+        # mask position is not a small numerical difference: on real Pythia-160M it moved
+        # `attention.dense` in block 0 by 2.25 absolute, cascaded through every later block, and
+        # more than doubled the measured joint gain (B-34).
+        #
+        # Moving the WHOLE model for the capture is correct but does not fit. No Gram factorisation
+        # is live yet, so it looked affordable -- but 3.77 GiB of 1B weights plus ~0.5 GiB of cached
+        # hidden states plus the forward's own activations exceeded the card, and 1B died at the one
+        # step offload exists to make possible. Only the pre-block modules are needed, and they are
+        # ~0.8 GiB.
+        if offload_blocks:
+            _move_outside_blocks(model, blocks, compute_device)
+        try:
+            cached = _capture_block_inputs(
+                model, blocks[0], batches, device=compute_device if offload_blocks else None
+            )
+        finally:
+            if offload_blocks:
+                _move_outside_blocks(model, blocks, host_device)
 
         for block_index, names in enumerate(by_block):
             block = blocks[block_index]
-            remaining = list(names)
-            for group in groups:
-                in_group = [name for name in remaining if name.endswith(tuple(group))]
-                if not in_group:
-                    continue
-                _compress_group(
-                    block,
-                    modules,
-                    in_group,
-                    cached=cached,
-                    plan=plan,
-                    arm=arm,
-                    report=report,
-                    device=device,
-                    block_index=block_index,
-                    total=total,
-                    state=state,
-                    progress=progress,
-                )
-                remaining = [name for name in remaining if name not in set(in_group)]
-            if remaining:
-                # A targeted module the adapter's groups do not mention. Compressing it silently
-                # against stale activations is the failure this whole change exists to remove, so
-                # refuse instead.
-                raise LayerwiseError(
-                    f"block {block_index}: {remaining} are targeted but appear in no dependency "
-                    f"group for {type(model).__name__}. Add them to the adapter's "
-                    "dependency_groups, or they would be fitted against activations captured "
-                    "before their inputs were compressed."
-                )
+            if offload_blocks:
+                block.to(compute_device)
+            try:
+                remaining = list(names)
+                for group in groups:
+                    in_group = [name for name in remaining if name.endswith(tuple(group))]
+                    if not in_group:
+                        continue
+                    _compress_group(
+                        block,
+                        modules,
+                        in_group,
+                        cached=cached,
+                        plan=plan,
+                        arm=arm,
+                        report=report,
+                        device=capture_device,
+                        block_index=block_index,
+                        total=total,
+                        state=state,
+                        progress=progress,
+                    )
+                    remaining = [name for name in remaining if name not in set(in_group)]
+                if remaining:
+                    # A targeted module the adapter's groups do not mention. Compressing it silently
+                    # against stale activations is the failure this whole change exists to remove, so
+                    # refuse instead.
+                    raise LayerwiseError(
+                        f"block {block_index}: {remaining} are targeted but appear in no dependency "
+                        f"group for {type(model).__name__}. Add them to the adapter's "
+                        "dependency_groups, or they would be fitted against activations captured "
+                        "before their inputs were compressed."
+                    )
 
-            # Advance the cache through this block in its now-compressed state, so the next block sees
-            # the inputs it will really receive. This runs even when the block had NO targeted
-            # modules: skipping it would leave the next block replaying inputs from the wrong depth,
-            # which is a silent correctness failure rather than an error. Skipped after the last
-            # block, whose output nothing reads.
-            if block_index + 1 < len(blocks):
-                cached = _advance_cache(block, cached)
+                # Advance the cache through this block in its now-compressed state, so the next block
+                # sees the inputs it will really receive. This runs even when the block had NO
+                # targeted modules: skipping it would leave the next block replaying inputs from the
+                # wrong depth, which is a silent correctness failure rather than an error. Skipped
+                # after the last block, whose output nothing reads. Must happen while the block is
+                # still resident, because it is a forward pass.
+                if block_index + 1 < len(blocks):
+                    cached = _advance_cache(block, cached)
+            finally:
+                # In a `finally` so a raise mid-block does not leave weights stranded on the card,
+                # which would make the error message the second problem rather than the first.
+                if offload_blocks:
+                    block.to(host_device)
+                    # The recorded grids have to travel with the block. They are captured while it
+                    # is resident, so they come back as CUDA tensors while the weights they describe
+                    # are on the host -- and `convert` then packs cuda codes against a cpu weight
+                    # and dies at the artefact stage, after all the compute is spent. The invariant
+                    # is that a report's grids live wherever its weights live.
+                    for name in names:
+                        grid = report.grids_by_module.get(name)
+                        if grid is not None:
+                            report.grids_by_module[name] = (
+                                grid[0].to(host_device),
+                                grid[1].to(host_device),
+                            )
     finally:
         if previous_use_cache is not None:
             model.config.use_cache = previous_use_cache
+        if offload_blocks:
+            # The embedding, the final norm and the head were left on the device by the capture.
+            # Nothing after this reads them there, and at 1B they are ~0.8 GiB that the caller's
+            # next stage -- packing, then CPU evaluation -- has no use for.
+            model.to(host_device)
 
     return report
 
@@ -1101,10 +1184,43 @@ class _StopForwardError(Exception):
     """Raised to abort a forward pass once the first block's inputs have been captured."""
 
 
+def _move_outside_blocks(
+    model: nn.Module,
+    blocks: list[nn.Module],
+    device: torch.device,
+) -> None:
+    """Move every parameter and buffer that is *not* inside a decoder block onto ``device``.
+
+    Used by block offload to run the block-0 capture on the compute device without making the whole
+    model resident. What the capture needs is the embedding and the rotary tables; what it must not
+    drag along is 3.77 GiB of decoder weights, which at Pythia-1B is the difference between fitting
+    and an out-of-memory at the one step offload exists to make possible.
+
+    Parameters are moved through ``.data`` and buffers through ``setattr`` so the owning module's
+    registration is updated. Both are done with ``recurse=False`` per module, because moving a
+    parent would take its block children with it.
+
+    Args:
+        model: The model to walk.
+        blocks: The decoder blocks to leave where they are.
+        device: Destination for everything else.
+    """
+    inside = {id(module) for block in blocks for module in block.modules()}
+    for module in model.modules():
+        if id(module) in inside:
+            continue
+        for parameter in module.parameters(recurse=False):
+            parameter.data = parameter.data.to(device)
+        for name, buffer in list(module.named_buffers(recurse=False)):
+            setattr(module, name, buffer.to(device))
+
+
 def _capture_block_inputs(
     model: nn.Module,
     first_block: nn.Module,
     batches: list[torch.Tensor],
+    *,
+    device: torch.device | None = None,
 ) -> list[tuple[torch.Tensor, dict[str, Any]]]:
     """Record the hidden states and replay context entering the first decoder block.
 
@@ -1119,6 +1235,9 @@ def _capture_block_inputs(
         model: The model, run once per batch and aborted at block 0.
         first_block: The block whose inputs are wanted.
         batches: Calibration token-id tensors.
+        device: Where to place the input ids. Defaults to wherever the first parameter lives, which
+            is right for a uniformly placed model and wrong under offload, where the blocks are
+            deliberately somewhere else.
 
     Returns:
         One ``(hidden_states, kwargs)`` pair per batch, in batch order.
@@ -1140,7 +1259,8 @@ def _capture_block_inputs(
         raise _StopForwardError
 
     handle = first_block.register_forward_pre_hook(catcher, with_kwargs=True)
-    device = next(model.parameters()).device
+    if device is None:
+        device = next(model.parameters()).device
     try:
         with torch.no_grad():
             for batch in batches:

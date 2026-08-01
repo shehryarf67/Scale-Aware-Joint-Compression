@@ -405,6 +405,12 @@ class TestShippedConfigs:
             # Diagnostic: does the 160M joint gain survive replication, after F-26 showed the 410M
             # equivalent changes sign between draws?
             "replicate_160m_aggressive.yaml",
+            # Verification: per-block GPU offload must reproduce F-23's S5 cell exactly. Residency
+            # is not allowed to move a number, and that is measured rather than assumed.
+            "verify_offload_160m.yaml",
+            # Verification: the peak-memory measurement offload exists for. Compression only, so it
+            # produces a GiB figure rather than a perplexity.
+            "verify_offload_1b.yaml",
         }
         for path in files:
             config = load_config(path)
