@@ -15,7 +15,7 @@ import importlib.metadata
 import os
 import platform
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from typing import Any
 
@@ -255,6 +255,41 @@ def get_hardware_info() -> dict[str, Any]:
             torch.cuda.get_device_name(index) for index in range(torch.cuda.device_count())
         ]
     return info
+
+
+def host_key(hardware: Mapping[str, Any] | None = None) -> str:
+    """Identify the machine a record was produced on.
+
+    Latency, throughput and peak memory are properties of the machine as much as of the model, so
+    a results table whose rows come from two hosts cannot be read. Compression and quality are far
+    more portable -- they differ across machines only by floating-point reduction order -- but a
+    *comparison* must still not span hosts, because the machine is one of §3.11's matched
+    conditions.
+
+    Built only from fields :func:`get_hardware_info` has always recorded, so it can be computed
+    retroactively for records written before this function existed. That is deliberate: adding it
+    must not invalidate the existing run records.
+
+    Args:
+        hardware: A recorded ``hardware`` mapping. Defaults to this machine's.
+
+    Returns:
+        A stable identifier, or ``"unknown"`` when the mapping carries none of the fields.
+    """
+    info: Mapping[str, Any] = get_hardware_info() if hardware is None else hardware
+    gpus = info.get("cuda_device_names") or []
+    parts = [
+        str(info.get("system") or ""),
+        # `platform.processor()` is descriptive on Windows and often just `x86_64` on Linux, so
+        # this alone does not separate two Linux hosts. The core count and GPU names carry the
+        # rest, and `available_memory_gb` is deliberately excluded because it moves between runs.
+        str(info.get("cpu_model") or ""),
+        str(info.get("cpu_count_logical") or ""),
+        ",".join(str(name) for name in gpus),
+    ]
+    if not any(parts):
+        return "unknown"
+    return "|".join(parts)
 
 
 def get_software_versions() -> dict[str, str | None]:

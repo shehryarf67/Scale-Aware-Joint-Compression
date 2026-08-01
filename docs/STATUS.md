@@ -68,7 +68,7 @@ done. **Every arm runs from a config to a run record on real Pythia-160M.**
 
 | | State |
 | --- | --- |
-| Tests | **966 passing** in ~45 s, offline |
+| Tests | **974 passing** in ~46 s, offline |
 | Lint / format | `ruff check .` and `ruff format --check .` both clean |
 | CI | `.github/workflows/ci.yml` — lint, format, tests on push/PR to `main` |
 | Environment | verified end to end: torch 2.13.0+cu126, CUDA available, sm_89 |
@@ -726,7 +726,7 @@ significance claim exists yet at any effect size**. Only steps 9–10 fix that.
 
 ### The nine fixes that made the re-run possible
 
-All pushed. Suite now at **966 passing**, lint and format clean.
+All pushed. Suite now at **974 passing**, lint and format clean.
 
 | Fix | What it was |
 | --- | --- |
@@ -924,8 +924,11 @@ Expect this again for `pythia-1.4b` if the extended sweep is ever run.
 
 Full record in [protocol_freeze.md](protocol_freeze.md#environment). Summary:
 
-- **Omen is the only machine that runs code.** `outputs/`, `results/`, and `data/` are git-ignored
-  and exist only there.
+- **Machine policy relaxed 2026-08-01.** Compression, capture and quality evaluation run on **any
+  CUDA machine**; only **deployment measurements** (latency, throughput, peak memory, checkpoint
+  size) are bound to the designated benchmark host, which is still the Omen. A comparison must not
+  span machines — enforced by `exists_valid` (**B-33**). `outputs/`, `results/` and `data/` are
+  git-ignored, so they exist only on machines that have run something.
 - CPU i7-13620H (10P/16L) · 13.7 GiB RAM · **RTX 4050 Laptop, 6.0 GiB VRAM**, sm_89 · driver 592.82
 - Python 3.11.9 · torch **2.13.0+cu126** · transformers 5.14.1 · datasets 5.0.0 · numpy 2.4.6
 - Installed from scratch this session: the Omen had **no Python at all** (`python` was the Microsoft
