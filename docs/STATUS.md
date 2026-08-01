@@ -1,6 +1,6 @@
 # Project status
 
-> **Current authoritative update — 2026-07-31:** Phase 7 is complete. The corrected Pythia-160M
+> **Current authoritative update — 2026-08-01:** Phase 7 is complete. The corrected Pythia-160M
 > screening grid and Pythia-410M confirmation froze `moderate` at 30% + W8 and `aggressive` at
 > 30% + W4. The historical handoff notes below remain for review context; where they say that
 > screening is paused or empty, this update supersedes them. See
@@ -13,7 +13,9 @@
 | Phase 7 | **Complete.** Both selected budgets are eligible at 160M and 410M. |
 | Raw evidence | Retained in `outputs/metrics/`; a curated audit is tracked in `results/summaries/`. |
 | Phase 8 configuration | Three paired calibration-subset replicates; final quality evaluation on WikiText-2 `test`. |
-| Next action | Run the confirmatory 160M → 410M → 1B sweep. |
+| Task 1 | Exact-optimum anchor passed in Colab; clean offload gates still need to be preserved in the rerun state. |
+| Task 2 | Provisional Pythia-1B validation values exist, but a clean rerun is required before freezing the 1B order. |
+| Next action | Rerun Task 2 from a clean committed state, then proceed to S6, A4/A5, and confirmation. |
 
 **Last updated:** 2026-07-31 · third session on the HP Omen · **Phases 0, 5 and 6 complete**;
 **Phase 7 has replicated results.** The pipeline passes three independent correctness anchors, the
@@ -967,8 +969,9 @@ Full record in [protocol_freeze.md](protocol_freeze.md#environment). Summary:
 - [x] Replicate the headline at both scales → [F-27](findings_log.md#f-27)
 - [x] `python scripts/download_models.py --models pythia-1b` — verified at pinned SHA `f73d7dcc`
 - [x] Block-sequential capture applied, all gates passed → [F-29](findings_log.md#f-29)
-- [~] **Per-block GPU offload** — opt-in implementation added; Omen reference-value and 1B peak gates
-      remain pending
-- [ ] 1B budget confirmation and order selection
+- [~] **Per-block GPU offload** — exact-optimum anchor passed in Colab; the notebook later restored
+      `layerwise.py`, so the clean before/after offload gates remain pending
+- [~] 1B budget confirmation and order selection — provisional GPU validation values exist, but the
+      notebook's focused tests failed after ad-hoc source patches; rerun from a clean committed state
 - [ ] Reduced S6 control (12 runs)
 - [ ] Freeze the confirmatory config, then test evaluation **once** — no tuning after that

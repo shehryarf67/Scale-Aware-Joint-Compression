@@ -101,6 +101,31 @@ which is what the arm comparison needs.
 
 ## 2. Findings
 
+### F-31 — Provisional Pythia-1B validation values were produced in Colab, but the Task 2 run is not yet admissible {#f-31}
+
+*2026-08-01 — Pythia-1B, revision `f73d7dcc545c8bd326d8559c8ef84ffe92fea6b2` — WikiText-2 validation, 493 × 512 — exploratory GPU evaluation on Tesla T4 — Python 3.12.13, torch 2.11.0+cu128 — repository commit `7ecaa28fb91c273890de54dce32d9ffa46244039` with uncommitted notebook changes*
+
+The Colab notebook produced the following provisional quality values from one calibration draw:
+
+| Budget | Arm | Perplexity | Retention |
+| --- | --- | ---: | ---: |
+| Moderate, 30% + W8 | dense | 17.9432 | 100.00% |
+| Moderate, 30% + W8 | sequential P→Q | 18.6302 | 96.31% |
+| Moderate, 30% + W8 | sequential Q→P | 18.6199 | 96.37% |
+| Moderate, 30% + W8 | joint | 18.6305 | 96.31% |
+| Aggressive, 30% + W4 | sequential P→Q | 20.0938 | 89.30% |
+| Aggressive, 30% + W4 | sequential Q→P | 20.5073 | 87.50% |
+| Aggressive, 30% + W4 | joint | 19.9903 | 89.76% |
+
+The provisional order signal is Q→P for moderate W8 and P→Q for aggressive W4. However, the run
+must not be used to freeze either order: the notebook restored `layerwise.py` from Git before the
+sweep, later patched `activations.py` and `runner.py` in place, and the focused post-run tests failed
+during collection (`capture_activations` / `LayerwiseReport` import errors). The recorded run also
+used an uncommitted state and GPU quality evaluation, which is allowed for exploration but must be
+reported as such. Rerun Task 2 from the clean committed Task 1 state, verify the full test suite and
+offload gates, and then record the trusted 1B order decision.
+
+
 ### F-01 — Smart App Control silently broke the environment 30 minutes after install {#f-01}
 
 *2026-07-28 · environment*
@@ -2027,6 +2052,7 @@ recording.
 | B-31 | A single-draw joint gain was reported as a point estimate, and a scale trend built on two of them ([F-26](#f-26)) | The 410M cell swings from −0.50 to +0.98 pp across calibration draws, so +0.68 pp was luck. The paired difference is *noisier* than either arm, contradicting the stated expectation that pairing would cancel draw noise |
 | B-32 | `exists_valid` did not compare the evaluation device ([F-29](#f-29)) | Switching exploratory runs to GPU evaluation would have let `skip_existing` reuse CPU-evaluated records inside a GPU grid, mixing devices within one comparison at ~1e-5 -- too small to change a conclusion, invisible without the check |
 | B-33 | `exists_valid` did not compare the **machine** ([F-30](#f-30)) | Same class as B-32, and it went live the moment the machine policy allowed a second host to run compression: two hosts writing into one `outputs/metrics/` would have let `skip_existing` pull the other machine's record into a comparison. `host_key` is built from fields every record already carried, so the guard added no recompute |
+| B-34 | The Colab Task 2 notebook restored the Task 1 layerwise implementation and then patched source files in place before running the 1B sweep | The resulting values are useful provisional diagnostics, but the order-selection result cannot be trusted until the sweep is rerun from a clean committed state whose tests and offload gates pass |
 | B-13 | Sweep cells inherited the base config's model revision | Every cell pinned to the *first* model's SHA — fails to load, or silently loads the wrong weights if the SHA exists in both repos |
 
 Two of these were **masked by tests that should have caught them**: B-07 (the test disabled
