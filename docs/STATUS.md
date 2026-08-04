@@ -907,8 +907,9 @@ pre-1B requirement.
 
 Settled since the last revision, no longer open: the backend (**`onednn`** — see below), the
 solver, the mask scoring rule, the Pythia variant (**standard**), lm-eval-harness (**yes, pinned**),
-the practical-importance threshold (**≥ 1.0 pp retention, consistent in sign across all three
-confirmatory seeds, exceeding the seed spread**), Smart App Control, the power profile (**High
+the practical-importance threshold (**≥ 1.0 pp retention, consistent in sign across all paired
+calibration replicates, with R and the exact sign-test p reported per cell** — the seed-spread clause
+is *withdrawn* as vacuous, see [protocol_freeze.md](protocol_freeze.md#the-amended-practical-importance-rule)), Smart App Control, the power profile (**High
 performance**, no downclocking, never sleeps), the benchmark thread count (**4**, inside the P-core
 budget), and all five **model revision SHAs**.
 

@@ -210,11 +210,21 @@ budget-matched and the corresponding joint gain is confounded with extra trainin
 
 ## Table 6 — Joint gain versus scale (the result)
 
-Derived from Tables 4 and 5, matched on model, budget, and seed. Mean over three seeds, with the
-seed-to-seed spread.
+> ⚠️ **This table's columns are superseded.** It was written against the run-seed axis, which
+> Amendment A1 §5.1 **withdrew**: the pipeline is deterministic post-training reconstruction, so two
+> runs at different run seeds are bit-identical ([F-15](findings_log.md#f-15)) and the "seed spread"
+> column is exactly **zero** for every cell. A gate against zero passes for any nonzero gain.
+>
+> **Current form:** matched on model, budget and **calibration replicate**, with the per-replicate
+> gains listed individually, their mean and sd, the count positive, ties counted separately, an exact
+> sign-test p over the non-tied replicates, and **R reported per cell** together with whether
+> significance was reachable at that R. Produced by `metrics.replicates.summarise_replicates`. See
+> [protocol_freeze.md](protocol_freeze.md#the-amended-practical-importance-rule).
 
-| Model | Params | Budget | Sequential retention | Joint retention | Joint gain | Seed spread | Gain > spread? |
-| ----- | ------ | ------ | -------------------- | --------------- | ---------- | ----------- | -------------- |
+Derived from Tables 4 and 5, matched on model, budget, and **calibration replicate**.
+
+| Model | Params | Budget | Sequential retention | Joint retention | Joint gain | Per-draw gains | R | Sign-test p | Reachable? |
+| ----- | ------ | ------ | -------------------- | --------------- | ---------- | -------------- | - | ----------- | ---------- |
 | pythia-160m  | 162M  | moderate   | — | — | — | — | — |
 | pythia-410m  | 405M  | moderate   | — | — | — | — | — |
 | pythia-1b    | 1.01B | moderate   | — | — | — | — | — |
@@ -224,7 +234,11 @@ seed-to-seed spread.
 | pythia-1b    | 1.01B | aggressive | — | — | — | — | — |
 | pythia-1.4b*  | 1.41B | aggressive | — | — | — | — | — |
 
-**A gain smaller than the seed spread is inconclusive and must be reported as such.**
+**A gain whose sign is not consistent across replicates is inconclusive and must be reported as
+such.** The superseded form of this sentence compared the gain to the *seed* spread, which is zero —
+so it excluded nothing. Sign consistency across paired calibration draws is the measurable
+replacement, and F-26 is the case it would have caught: three draws spanning −0.50 to +0.98 pp,
+reported as a point estimate of +0.68.
 
 ---
 
@@ -310,8 +324,13 @@ sajc sweep --config configs/experiments/main_scale_sweep.yaml --plan-only
 - [ ] Generation diagnostics show no degenerate outputs at the aggressive budget
 - [ ] Any 1.4B result was run under settings identical to the main sweep, or is reported separately
       and excluded from the scale trend
-- [ ] Every joint gain is compared against the seed spread, and those smaller than it are reported as
-      inconclusive rather than as small positive effects
+- [ ] Every joint gain lists its **per-replicate values**, not only a mean — a mean that hides a sign
+      flip is what forced the F-25 → F-26 retraction
+- [ ] Every joint gain reports **R**, its exact sign-test p over the **non-tied** replicates, and
+      whether significance was reachable at that R (it is not at R=5, whatever the effect size)
+- [ ] Any gain whose sign is inconsistent across replicates is reported as inconclusive rather than as
+      a small positive effect
+- [ ] No gain is gated on the **seed spread** — that clause is withdrawn and was vacuous (F-15)
 
 Promoting anything from `outputs/` to `results/` has its own checklist — see
 [reproducibility.md](reproducibility.md#promotion-checklist).

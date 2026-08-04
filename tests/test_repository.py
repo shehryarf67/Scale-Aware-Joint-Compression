@@ -697,3 +697,71 @@ class TestNoRunArtefactsCommitted:
             check=False,
         )
         assert result.returncode == 0, f"{probe} is not git-ignored"
+
+
+class TestWithdrawnSeedEraRulesCannotCreepBack:
+    """Amendment A1 withdrew the run-seed axis. Its vocabulary must not read as current policy.
+
+    The specific hazard: §6.3's original practical-importance rule gated a joint gain on exceeding
+    the *seed spread*, and the seed spread is exactly zero because the pipeline is deterministic
+    (F-15) -- so the gate excluded nothing while looking strict. The rule survives in the freeze
+    table and in the experiment protocol as a **record**, which is correct for an append-only
+    history, but every occurrence has to be visibly marked as superseded or withdrawn rather than
+    sitting in a checklist someone will follow.
+
+    This is the guard the external review asked for after finding those documents quotable as
+    current policy.
+    """
+
+    MARKERS = ("supersede", "withdraw", "vacuous", "inert", "f-15", "zero")
+
+    @staticmethod
+    def _paragraphs(text: str) -> list[str]:
+        return [block for block in text.split("\n\n") if block.strip()]
+
+    @pytest.mark.parametrize(
+        "document",
+        ["protocol_freeze.md", "experiment_protocol.md", "STATUS.md", "methodology.md"],
+    )
+    def test_seed_spread_is_never_stated_without_being_marked(
+        self, project_root: Path, document: str
+    ):
+        """Each paragraph mentioning the seed spread must also say it is withdrawn or why."""
+        path = project_root / "docs" / document
+        if not path.exists():  # methodology.md is optional in some checkouts
+            pytest.skip(f"{document} not present")
+        for block in self._paragraphs(path.read_text(encoding="utf-8")):
+            lowered = block.lower()
+            if "seed spread" not in lowered and "seed-to-seed spread" not in lowered:
+                continue
+            assert any(marker in lowered for marker in self.MARKERS), (
+                f"{document} states the seed spread rule without marking it superseded:\n\n{block}"
+            )
+
+    def test_no_checklist_item_asks_for_a_seed_spread_comparison(self, project_root: Path):
+        """A checklist is followed, not read. A vacuous gate in one is worse than in prose."""
+        for document in ("experiment_protocol.md", "benchmarking_protocol.md"):
+            path = project_root / "docs" / document
+            if not path.exists():
+                continue
+            for line in path.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if not stripped.startswith("- [ ]") and not stripped.startswith("- [x]"):
+                    continue
+                lowered = stripped.lower()
+                if "seed spread" in lowered:
+                    assert "withdrawn" in lowered or "vacuous" in lowered, (
+                        f"{document} has a checklist item gating on the seed spread: {stripped}"
+                    )
+
+    def test_the_freeze_table_records_the_amended_rule(self, project_root: Path):
+        """The replacement must be stated, not merely the withdrawal."""
+        text = (project_root / "docs" / "protocol_freeze.md").read_text(encoding="utf-8")
+        assert "amended practical-importance rule" in text.lower()
+        # The amendment is a LOOSENING of a pre-registered rule, and A1 requires the paper to say so.
+        assert "reduction in pre-registered strength" in text.lower()
+
+    def test_the_downstream_rule_is_withdrawn_rather_than_amended(self, project_root: Path):
+        """No replacement is claimed for it, and claiming one would be unsupported."""
+        text = (project_root / "docs" / "protocol_freeze.md").read_text(encoding="utf-8")
+        assert "WITHDRAWN, not amended" in text
