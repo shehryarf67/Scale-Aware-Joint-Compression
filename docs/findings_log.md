@@ -736,46 +736,73 @@ to zero. **The pruning budget must be verified against `mask_sparsity`.**
 
 ### F-34 - Prefill and decode separated, and 30% unstructured sparsity buys no CPU latency {#f-34}
 
-*2026-08-01 - Pythia-160M `50f5173d` - **CPU**, 4 threads, batch 1 - 5 warm-up + 30 measured runs
-per cell, 2 rotation rounds - benchmark host (i7-13620H) - gap A5 / §4.7 -
-`configs/experiments/prefill_decode.yaml`*
+*2026-08-01/04 - Pythia-160M `50f5173d`, 410M `dd47b0e`, 1B `f73d7dcc` - **CPU**, 4 threads, batch 1
+- 5 warm-up + 30 measured runs per cell x 2 rotation rounds = **60 samples per cell** - benchmark
+host (i7-13620H) - gap A5 / §4.7 - `configs/experiments/prefill_decode.yaml`*
 
-First measurement from the phase-separated benchmark. **160M only so far**; 410M and 1B pending.
+All three scales. Compression ran on GPU with block offload; every **measurement** is CPU.
 
-| Arm | Prompt | Prefill median | IQR | Decode median | IQR |
+| Model | Arm | Prefill @128 | @512 | Decode @128 | @512 |
 | --- | --- | --- | --- | --- | --- |
-| dense | 128 | 156.45 ms | 5.16 | 21.78 ms | 1.85 |
-| dense | 512 | **593.23 ms** | 23.38 | **29.68 ms** | 4.64 |
-| pruning 30% | 128 | 155.43 ms | 6.34 | 23.58 ms | 3.27 |
-| pruning 30% | 512 | **600.04 ms** | 19.71 | **26.28 ms** | 1.58 |
+| 160M | dense | 156.45 (5.2) | 593.23 (23.4) | 21.78 (1.9) | 29.68 (4.6) |
+| 160M | pruning 30% | 155.43 (6.3) | 600.04 (19.7) | 23.58 (3.3) | 26.28 (1.6) |
+| 410M | dense | 452.96 (51.3) | 1811.84 (125.7) | 58.61 (5.6) | 70.82 (16.2) |
+| 410M | pruning 30% | 445.01 (63.3) | 1764.69 (41.5) | 54.21 (2.1) | 73.46 (9.7) |
+| 1B | dense | 1061.36 (88.6) | 4223.90 (329.8) | 102.72 (9.8) | 125.36 (7.4) |
+| 1B | pruning 30% | 1053.59 (36.8) | 4098.86 (46.1) | 99.85 (2.0) | 120.40 (1.8) |
 
-#### The split behaves as the plan says it should, which is the first thing to check
+Medians in ms, IQR in parentheses.
 
-**Prefill scales with prompt length; decode does not.** 4x the prompt gives 3.8x the prefill
-(156 -> 593 ms) and about 1.2x the decode (21.8 -> 29.7 ms). That is the compute-bound versus
-bandwidth-bound distinction §4.7 asks to be made visible, and reporting one blended generation
-latency would have hidden it.
+#### The split behaves as the plan says it should, at every scale
+
+Prompt-length scaling, dense, for a **4x** longer prompt:
+
+| Model | Prefill | Decode |
+| --- | --- | --- |
+| 160M | **3.79x** | 1.36x |
+| 410M | **4.00x** | 1.21x |
+| 1B | **3.98x** | 1.22x |
+
+**Prefill scales linearly with prompt length; decode is nearly flat.** That is exactly the
+compute-bound versus bandwidth-bound distinction §4.7 asks to be made visible, it holds at all three
+scales, and a single blended generation latency would have hidden it. Decode is also **8-34x cheaper
+per token than a prefill**, which is why a long generation is dominated by it.
 
 It also **validates the implementation**. Had the decode callable silently re-run the prompt -- the
-failure this whole module was written to avoid -- decode would have tracked prefill's 3.8x. It does
-not, so the cache is genuinely primed and the timed region is genuinely one token.
+failure the module exists to prevent -- decode would have tracked prefill's 4x. It does not, at any
+scale, so the cache is genuinely primed and the timed region is genuinely one token.
 
-#### 30% unstructured sparsity gives no speedup, and that is the finding
+#### 30% unstructured sparsity does not deliver the speedup its compression ratio suggests
 
-Dense and pruned are **indistinguishable at every cell**: 156.45 against 155.43 ms, 593.23 against
-600.04 ms, and the decode differences run in *both* directions. Every gap is inside the IQR.
+The honest reading needs the right comparison. Against **zero** the sign leans towards pruning:
+9 of 12 cells are faster, by 1-3%. But 9/12 reaches only **p = 0.15** on an exact sign test, every
+gap is **inside the IQR** -- 1B prefill @512 differs by 125 ms against a dense IQR of 330 ms -- and
+at 160M the direction is 2/4, i.e. absent where the noise is lowest.
 
-This is expected and it should be stated plainly rather than buried: **an unstructured mask stores
-zeros, and a dense BLAS kernel multiplies by them anyway.** Skipping them needs either a sparse
-kernel or a structured pattern (2:4 / 4:8) the hardware can exploit. So at 30% unstructured:
+Against **what the compression would predict** the answer is unambiguous. Removing 30% of the
+targeted weights predicts roughly a 30% reduction if those weights were being skipped. The measured
+effect is 1-3%, an order of magnitude short.
+
+**An unstructured mask stores zeros, and a dense BLAS kernel multiplies by them anyway.** Skipping
+them needs a sparse kernel or a structured pattern (2:4 / 4:8) the hardware can exploit. So:
 
 * the **compression-ratio** and **checkpoint-size** results stand;
-* the **latency** result is a null, and RQ4's sparsity-versus-latency curve is flat here.
+* the **latency** result is a null, and RQ4's sparsity-versus-latency curve is **flat at all three
+  scales**.
 
 **Do not report the compression ratio as though it implied a speedup.** The mask primitives already
 support 2:4 and 4:8 (`compression/masks.py`), so a structured variant is the obvious follow-up if a
-latency claim is wanted — but it is a different experiment, and choosing it *after* seeing this null
+latency claim is wanted -- but it is a different experiment, and choosing it *after* seeing this null
 would need declaring as such.
+
+#### One measurement-quality note worth carrying
+
+The **pruned arm's IQR is consistently tighter** than the dense arm's -- 46 ms against 330 ms at 1B
+prefill @512, 41 against 126 at 410M. Both arms ran the same protocol under rotation, so this is
+not an artefact of ordering. Most likely the dense arm simply drew more of the machine's background
+noise across these particular rounds. It is a reason to prefer the **median and IQR over the mean
+and std** for anything reported here, not evidence about the arms: a mean would have been dragged
+around by whatever produced those tails.
 
 #### Conditions that make these numbers comparable
 
@@ -789,11 +816,20 @@ would need declaring as such.
 * **Median and IQR**, not mean and std: latency is bounded below with a long right tail, and one
   scheduler preemption moves the mean while leaving the median alone.
 
-#### Limits
+#### Conditions and limits
 
-Two rotation rounds at one scale. The dense-versus-pruned null is clear at 160M — the gaps are
-inside the IQR, not marginal — but the prompt-length scaling should be confirmed at 410M and 1B
-before the trend is described as general.
+* **CPU-only, on the benchmark host.** A deployment measurement (§4.6); one results table never
+  spans two machines.
+* **FP32 arms only.** Per decision D1 a packed W4/W8 layer dequantises on every forward, so timing
+  it would measure the unpacking kernel. The record carries the exclusion as a field.
+* **Model-order rotation**, arms rebuilt inside each round, so thermal drift is spread rather than
+  loaded onto whichever ran first.
+* **Two rotation rounds**, 60 samples per cell. Enough for the prefill/decode structure, which is a
+  4x effect. **Not** enough to resolve the 1-3% dense-versus-pruned question, and that is stated as
+  a bound rather than a null: what is established is that the effect is far smaller than the
+  compression ratio predicts, not that it is exactly zero.
+* Only **one sparsity** (30%, the frozen budgets' value). A real sparsity-versus-latency *curve*
+  would need several, and on this evidence it would be flat.
 
 ---
 

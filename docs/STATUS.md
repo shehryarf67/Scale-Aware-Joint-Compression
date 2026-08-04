@@ -58,7 +58,7 @@ start work**; a one-line commit is cheap and a duplicated day is not.
 | Per-block GPU offload | main | ✅ [F-31](findings_log.md#f-31) |
 | 1B budgets + order selection | main | ✅ [F-32](findings_log.md#f-32) |
 | S6 mechanistic control | main | ✅ [F-33](findings_log.md#f-33) |
-| **A5 — prefill/decode split (§4.7)** | **main** | 🔵 built + validated at 160M ([F-34](findings_log.md#f-34)); 410M/1B pending |
+| **A5 — prefill/decode split (§4.7)** | **main** | ✅ **done, all three scales** — [F-34](findings_log.md#f-34) |
 | **A4 — downstream tasks (§4.3)** | **unclaimed** | ⬜ not started — see [partner_handoff.md](partner_handoff.md) |
 | Steps 9–10 — freeze, then confirm | unclaimed | ⬜ blocked on A4 and A5 |
 
@@ -743,7 +743,8 @@ it claims to; it says nothing about absolute quality against published work (A1 
 | — | Per-block GPU offload, so 1B runs at all | ✅ **done** — [F-31](findings_log.md#f-31) |
 | — | 1B budgets confirmed, orders frozen, gain measured | ✅ **done** — [F-32](findings_log.md#f-32) |
 | 8 | Run the reduced S6 mechanistic control (12 runs) | ✅ **done** — [F-33](findings_log.md#f-33) |
-| — | **A4 downstream tasks** and **A5 prefill/decode** | ⬜ ← **next**; both §-required, neither started |
+| — | **A5 prefill/decode** (§4.7) | ✅ **done** — [F-34](findings_log.md#f-34) |
+| — | **A4 downstream tasks** (§4.3) | ⬜ ← **the last gap before the freeze** |
 | 9 | Freeze the entire confirmatory configuration | ⬜ |
 | 10 | Run test evaluation **once**, with no further tuning | ⬜ |
 
