@@ -52,14 +52,25 @@ dependencies = [
     "matplotlib>=3.8",
     "safetensors>=0.4",
     "sentencepiece>=0.2",
-    # PINNED EXACTLY, unlike everything above. §4.3 requires HellaSwag, PIQA and ARC-Easy, and §4.8
-    # requires the task versions recorded -- task definitions change between harness releases, so a
-    # floor like ">=0.4" would let a later install silently score a different task and still call it
-    # HellaSwag. The freeze table settles the tool; this settles the version.
-    "lm-eval==0.4.12",
 ]
 
 [project.optional-dependencies]
+# Downstream tasks (§4.3). An EXTRA rather than a core dependency, for two reasons:
+#
+#   * nothing in the library or the test suite imports it. `evaluation.downstream` imports lm_eval
+#     inside the one function that calls it and raises a message naming requirements.txt if it is
+#     absent, so the offline tests stub the harness *output* and never need the package. Making it
+#     required would have CI install ~20 packages -- nltk, sacrebleu, rouge_score -- for tests that
+#     never touch them, which is install time and breakage risk for nothing.
+#   * it is stage-specific. A4 needs it; compression, perplexity and the CPU benchmarks do not.
+#
+# PINNED EXACTLY, unlike every floor above. §4.8 requires task versions recorded, and task
+# definitions change between harness releases -- a ">=" would let a later install silently score a
+# different task and still call it HellaSwag. requirements.txt carries the same exact pin for the
+# research environment, and a test asserts the two cannot drift apart.
+downstream = [
+    "lm-eval==0.4.12",
+]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",

@@ -11,6 +11,11 @@ exploratory cell now costs ~1.3 min rather than ~9.3 min ([F-29](findings_log.md
 > Read this first. It is the handoff between sessions and between machines. If it looks stale,
 > check `git log` — the truth is the commit history, this file is a summary of it.
 >
+> **An external review of `4575482` was answered on 2026-08-04.** Every item, every deviation from
+> what it proposed, and every item **still open** is recorded in
+> [external_review_response.md](external_review_response.md). Read it before step 9 — two of its open
+> items block the freeze.
+>
 > **Continuing this work from a cold start?** Read
 > [partner_handoff.md](partner_handoff.md) — it states the research question, every finding that
 > matters with its trust level, and the next five tasks with their exact acceptance criteria.

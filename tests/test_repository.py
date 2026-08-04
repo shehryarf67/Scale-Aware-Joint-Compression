@@ -34,6 +34,9 @@ REQUIRED_DOCS = (
     "reproducibility.md",
     "paper_outline.md",
     "STATUS.md",
+    # The audit trail of the external review: what was fixed, what was deviated from, what is
+    # still open. A review answered only in commit messages is a review whose open items vanish.
+    "external_review_response.md",
 )
 
 
@@ -765,3 +768,54 @@ class TestWithdrawnSeedEraRulesCannotCreepBack:
         """No replacement is claimed for it, and claiming one would be unsupported."""
         text = (project_root / "docs" / "protocol_freeze.md").read_text(encoding="utf-8")
         assert "WITHDRAWN, not amended" in text
+
+
+class TestTheDownstreamHarnessPinCannotDrift:
+    """§4.8 requires task versions recorded, which only means something if the harness is pinned.
+
+    The pin lives in two files -- `requirements.txt` for the research environment and the
+    `downstream` extra in `pyproject.toml` -- and a value copied into a second file and then left
+    behind when the first changed has already happened twice in this repository (the budget freeze,
+    and the seed-axis withdrawal). This asserts they agree, and that neither has drifted to a range.
+    """
+
+    PIN = "lm-eval==0.4.12"
+
+    def test_requirements_pins_the_harness_exactly(self, project_root: Path):
+        text = (project_root / "requirements.txt").read_text(encoding="utf-8")
+        assert self.PIN in text, f"requirements.txt does not pin {self.PIN}"
+
+    def test_the_optional_extra_pins_the_same_version(self, pyproject: dict):
+        extras = pyproject["project"]["optional-dependencies"]
+        assert "downstream" in extras, "the downstream extra is missing"
+        assert self.PIN in extras["downstream"]
+
+    def test_the_harness_is_not_a_core_dependency(self, pyproject: dict):
+        """Nothing in the library or the suite imports it, and CI should not install it.
+
+        `evaluation.downstream` imports lm_eval inside the function that calls it and raises a
+        message naming requirements.txt if it is absent, so the offline tests stub the harness output
+        instead.
+        """
+        core = " ".join(pyproject["project"]["dependencies"])
+        assert "lm-eval" not in core and "lm_eval" not in core
+
+    def test_no_floor_pin_anywhere(self, project_root: Path, pyproject: dict):
+        """A range would let a later install score a different task and still call it HellaSwag."""
+        haystacks = [
+            (project_root / "requirements.txt").read_text(encoding="utf-8"),
+            " ".join(pyproject["project"]["optional-dependencies"]["downstream"]),
+        ]
+        for text in haystacks:
+            for line in text.splitlines():
+                if "lm-eval" in line and not line.strip().startswith("#"):
+                    assert "==" in line, f"lm-eval is not pinned exactly: {line.strip()}"
+
+    def test_importing_the_module_does_not_require_the_harness(self):
+        """The property that lets it be optional: the import is inside the calling function."""
+        import scale_aware_compression.evaluation.downstream as module
+
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        for line in source.splitlines():
+            if line.startswith("import lm_eval") or line.startswith("from lm_eval"):
+                raise AssertionError(f"module-level harness import: {line!r}")
