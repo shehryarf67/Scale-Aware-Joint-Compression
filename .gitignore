@@ -141,6 +141,16 @@ outputs/**
 !outputs/**/
 !outputs/**/.gitkeep
 results/**
+
+# EXCEPTION: the committed evidence set. `results/**` above exists because run artefacts are large,
+# transient and often licence-encumbered -- but it also meant the only copy of every number in
+# docs/findings_log.md lived in an ignored directory, so a fresh clone could not recompute a single
+# table. These four plain-text files close that gap and nothing more: normalised cells, per-replicate
+# joint gains against best-of-sequential, per-window NLL for the paired bootstrap, and a sha256 per
+# source record so excluded artefacts stay identifiable. Regenerate with scripts/export_evidence.py;
+# a test asserts the committed set is current.
+!results/evidence/
+!results/evidence/**
 !results/**/
 !results/**/.gitkeep
 !results/summaries/*.md

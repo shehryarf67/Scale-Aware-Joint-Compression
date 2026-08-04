@@ -9,8 +9,10 @@ Nothing here downloads a model, imports torch, or needs CUDA.
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -656,13 +658,36 @@ class TestResumabilityAndRecordHygiene:
 
 
 class TestNoRunArtefactsCommitted:
-    """Git tracks nothing but `.gitkeep` under `outputs/` and `results/`.
+    """Git tracks nothing but `.gitkeep` and the declared exceptions under `outputs/`/`results/`.
 
     Checked against the index rather than the working tree. On a machine that actually runs the
     experiments these directories are *supposed* to be full of run artefacts, so asserting the
     directory is empty would fail for exactly the machine the rule exists to protect. The invariant
     is that nothing gets committed, not that nothing exists.
+
+    **The exception list is deliberately narrow and enumerated here, not pattern-matched.** Adding a
+    path to it is a decision that should show up in a diff and need a reason:
+
+    * ``results/evidence/`` -- the committed evidence set. `outputs/` being ignored meant the only
+      copy of every number in the findings log lived in an ignored directory, so a fresh clone could
+      not recompute a table. Four plain-text files, ~1.9 MB, regenerable by
+      `scripts/export_evidence.py`.
+    * ``results/summaries/*.md`` -- promoted human-readable summaries, already permitted by
+      `.gitignore`.
+
+    Everything else -- checkpoints, packed artefacts, logs, figures, raw metrics -- stays out.
     """
+
+    ALLOWED_PREFIXES = ("results/evidence/",)
+    ALLOWED_SUFFIXES = (".gitkeep",)
+
+    def _is_permitted(self, path: str) -> bool:
+        """Whether a tracked path under these directories is a declared exception."""
+        if path.endswith(self.ALLOWED_SUFFIXES):
+            return True
+        if path.startswith(self.ALLOWED_PREFIXES):
+            return True
+        return path.startswith("results/summaries/") and path.endswith(".md")
 
     @pytest.mark.parametrize("directory", ["outputs", "results", "data"])
     def test_git_tracks_only_gitkeep(self, project_root: Path, directory: str):
@@ -679,12 +704,31 @@ class TestNoRunArtefactsCommitted:
         unexpected = [
             line
             for line in tracked.stdout.splitlines()
-            if line.strip() and not line.endswith(".gitkeep")
+            if line.strip() and not self._is_permitted(line.strip())
         ]
         assert not unexpected, (
             f"git tracks run artefacts under {directory}/, which must never be committed: "
-            f"{unexpected}"
+            f"{unexpected}. If this is a deliberate new exception, add it to ALLOWED_PREFIXES with "
+            "a reason rather than widening the check."
         )
+
+    def test_no_checkpoint_or_weight_file_is_ever_tracked(self, project_root: Path):
+        """The exception list must not become a hole. Size and extension, independent of directory."""
+        tracked = subprocess.run(
+            ["git", "ls-files", "outputs", "results", "data"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if tracked.returncode != 0:
+            pytest.skip("not a git checkout")
+        forbidden = (".safetensors", ".bin", ".pt", ".pth", ".ckpt", ".gguf", ".onnx")
+        for line in tracked.stdout.splitlines():
+            path = line.strip()
+            if not path:
+                continue
+            assert not path.endswith(forbidden), f"a model artefact is tracked: {path}"
 
     @pytest.mark.parametrize("directory", ["outputs", "results", "data"])
     def test_directory_is_ignored_so_a_stray_artefact_cannot_be_added(
@@ -819,3 +863,106 @@ class TestTheDownstreamHarnessPinCannotDrift:
         for line in source.splitlines():
             if line.startswith("import lm_eval") or line.startswith("from lm_eval"):
                 raise AssertionError(f"module-level harness import: {line!r}")
+
+
+class TestTheCommittedEvidenceSetIsCurrent:
+    """`outputs/` is ignored, so without a committed export the findings log is unverifiable.
+
+    The external review's point: a reviewer with a fresh clone could not recompute a single table in
+    `docs/findings_log.md`, because the only copy of every number lived in a git-ignored directory.
+    `results/evidence/` closes that -- normalised cells, per-replicate joint gains against
+    best-of-sequential, per-window NLL for the paired bootstrap, and a sha256 per source record.
+
+    These tests are about the set not going **stale**, which is the failure mode a committed
+    derivative has. They skip when the source records are absent, because tier-1 machines legitimately
+    have no `outputs/`.
+    """
+
+    @pytest.fixture(scope="class")
+    def evidence_dir(self, project_root: Path) -> Path:
+        return project_root / "results" / "evidence"
+
+    def test_the_evidence_set_is_committed(self, project_root: Path, evidence_dir: Path):
+        """It must be tracked, not merely present -- `results/**` is ignored by default."""
+        tracked = subprocess.run(
+            ["git", "ls-files", "results/evidence"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        names = {line.split("/")[-1] for line in tracked.stdout.splitlines() if line.strip()}
+        for required in ("cells.csv", "joint_gains.csv", "windows.csv", "MANIFEST.json"):
+            assert required in names, f"results/evidence/{required} is not tracked by git"
+
+    def test_every_cell_row_carries_its_provenance(self, evidence_dir: Path):
+        """A measurement without its commit, revision and draw cannot be reproduced."""
+        import csv
+
+        path = evidence_dir / "cells.csv"
+        if not path.exists():
+            pytest.skip("evidence set not present")
+        with path.open(encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        assert rows, "cells.csv is empty"
+        for column in (
+            "experiment_id",
+            "git_commit",
+            "model_revision",
+            "method_version",
+            "host",
+            "eval_split",
+            "evaluation_device",
+            "dataset_fingerprint",
+            "calibration_replicate",
+        ):
+            assert column in rows[0], f"cells.csv is missing the {column!r} column"
+
+    def test_joint_gains_record_which_baseline_each_gain_used(self, evidence_dir: Path):
+        """§6.1 requires best-of {P→Q, Q→P}. B-30 was measuring against the weaker order.
+
+        Making the chosen order an explicit column is what lets a reader check it rather than
+        assume it.
+        """
+        import csv
+
+        path = evidence_dir / "joint_gains.csv"
+        if not path.exists():
+            pytest.skip("evidence set not present")
+        with path.open(encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        assert rows, "joint_gains.csv is empty"
+        assert "best_of_order" in rows[0]
+        assert "orders_available" in rows[0]
+        for row in rows:
+            assert row["best_of_order"] in {"sequential", "sequential_qp"}
+
+    def test_the_manifest_hashes_every_source_record(self, evidence_dir: Path):
+        """The substitute for committing excluded artefacts: they stay identifiable."""
+        path = evidence_dir / "MANIFEST.json"
+        if not path.exists():
+            pytest.skip("evidence set not present")
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        assert manifest["source_records"] == len(manifest["record_sha256"])
+        assert manifest["source_records"] > 0
+        for digest in manifest["record_sha256"].values():
+            assert len(digest) == 64, "not a sha256"
+        assert "excluded_and_why" in manifest, "exclusions must be stated, not implied"
+
+    @pytest.mark.slow
+    def test_the_committed_set_matches_the_records_on_disk(self, project_root: Path):
+        """Guards the staleness failure mode. Skipped where there are no records to compare."""
+        metrics = project_root / "outputs" / "metrics"
+        if not metrics.is_dir() or not any(metrics.glob("*.json")):
+            pytest.skip("no run records on this machine")
+        completed = subprocess.run(
+            [sys.executable, "scripts/export_evidence.py", "--check"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode == 0, (
+            "results/evidence/ is stale against outputs/metrics/. Re-run "
+            f"scripts/export_evidence.py.\n{completed.stderr}"
+        )
