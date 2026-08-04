@@ -64,7 +64,10 @@ start work**; a one-line commit is cheap and a duplicated day is not.
 | 1B budgets + order selection | main | ✅ [F-32](findings_log.md#f-32) |
 | S6 mechanistic control | main | ✅ [F-33](findings_log.md#f-33) |
 | **A5 — prefill/decode split (§4.7)** | **main** | ✅ **done, all three scales** — [F-34](findings_log.md#f-34) |
-| **A4 — downstream tasks (§4.3)** | **unclaimed** | ⬜ not started — see [partner_handoff.md](partner_handoff.md) |
+| **A4 — downstream tasks (§4.3)** | main | ✅ **done, all three scales** — [F-35](findings_log.md#f-35) |
+| Recomputable evidence artefacts | **unclaimed** | ⬜ last item before the freeze |
+| **pythia-1.4b** (extended sweep) | **unclaimed** | ⬜ registered, pinned, config exists, **not downloaded**; needs order selection + a VRAM measurement. §8.2: must not consume the primary sweep's time |
+| **qwen2.5-0.5b** (external validity) | **unclaimed** | ⬜ registered, pinned, **Qwen2 adapter implemented**, not downloaded; needs order selection. Same §8.2 rule |
 | Steps 9–10 — freeze, then confirm | unclaimed | ⬜ blocked on A4 and A5 |
 
 **The parallel 1B run on `phase7-close-phase8-setup` was not wasted.** It replicates our 1B result
@@ -749,7 +752,8 @@ it claims to; it says nothing about absolute quality against published work (A1 
 | — | 1B budgets confirmed, orders frozen, gain measured | ✅ **done** — [F-32](findings_log.md#f-32) |
 | 8 | Run the reduced S6 mechanistic control (12 runs) | ✅ **done** — [F-33](findings_log.md#f-33) |
 | — | **A5 prefill/decode** (§4.7) | ✅ **done** — [F-34](findings_log.md#f-34) |
-| — | **A4 downstream tasks** (§4.3) | ⬜ ← **the last gap before the freeze** |
+| — | **A4 downstream tasks** (§4.3) | ✅ **done** — [F-35](findings_log.md#f-35) |
+| — | Commit recomputable evidence artefacts | ⬜ ← **next**; the last review item before the freeze |
 | 9 | Freeze the entire confirmatory configuration | ⬜ |
 | 10 | Run test evaluation **once**, with no further tuning | ⬜ |
 

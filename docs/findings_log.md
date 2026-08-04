@@ -734,6 +734,118 @@ to zero. **The pruning budget must be verified against `mask_sparsity`.**
 
 ---
 
+### F-35 - Downstream tasks: the harness anchors to published values, and no arm difference is resolvable {#f-35}
+
+*2026-08-04 - Pythia-160M `50f5173d`, 410M `dd47b0e`, 1B `f73d7dcc` - HellaSwag / PIQA / ARC-Easy,
+**full tasks**, no subsampling - lm-eval **0.4.12**, task versions all 1.0 - **GPU** evaluation
+(declared; see below) - aggressive budget 30% + W4 - one calibration draw - 9 evaluations, ~2 h 15 m -
+`configs/experiments/downstream.yaml` - gap A4 / §4.3*
+
+Closes the second of the two §-required gaps. 27 rows, `complete: true`.
+
+#### The anchor: dense scores reproduce published Pythia values
+
+This is the check that the harness is measuring what it claims, and it is the reason to trust
+anything below.
+
+| Model | Task | Ours (dense) | Published | Diff |
+| --- | --- | --- | --- | --- |
+| 160M | hellaswag | 0.2838 | ~0.285 | −0.12 pp |
+| 160M | piqa | 0.6230 | ~0.620 | +0.30 pp |
+| 160M | arc_easy | 0.4364 | ~0.435 | +0.14 pp |
+| 410M | hellaswag | 0.3372 | ~0.337 | +0.02 pp |
+| 410M | piqa | 0.6670 | ~0.668 | −0.10 pp |
+| 410M | arc_easy | 0.5189 | ~0.517 | +0.19 pp |
+| 1B | hellaswag | 0.3778 | ~0.377 | +0.08 pp |
+| 1B | piqa | 0.7073 | ~0.707 | +0.03 pp |
+| 1B | arc_easy | 0.5699 | ~0.569 | +0.09 pp |
+
+**Worst deviation 0.30 pp across nine cells.** Comparability with published work is the entire reason
+the harness was pinned rather than reimplemented (§2.7 freeze table), and this is that decision paying
+off.
+
+**It also resolves the smoke-run anomaly.** The 200-sample prefill run gave HellaSwag 0.3900 against a
+published ~0.29, which was flagged as too high to shrug at. The full-task value is **0.2838**. Cause:
+`--limit` takes the **first N examples, not a random sample**, so a 200-example prefix is biased. Not a
+scoring defect, and worth remembering before anyone quotes a `--limit` number.
+
+#### Compression costs real downstream accuracy, and it is measurable
+
+Accuracy retention against each model's own dense score:
+
+| Model | hellaswag | piqa | arc_easy |
+| --- | --- | --- | --- |
+| 160M | 0.993 / 0.992 | 0.988 / 0.978 | 0.966 / 0.934 |
+| 410M | 0.940 / 0.944 | 0.970 / 0.975 | 0.900 / 0.897 |
+| 1B | 0.965 / 0.962 | 0.964 / 0.970 | 0.935 / 0.934 |
+
+*sequential / joint.* **ARC-Easy is the most sensitive task** -- down to 0.897 at 410M -- and HellaSwag
+the least. Every arm at every scale is **demonstrably above chance** (interval clears the floor), so no
+compressed model is broken; the budget degrades them measurably and non-catastrophically, consistent
+with §5.3.
+
+#### No joint-versus-sequential difference is resolvable, at any scale
+
+| Model | hellaswag | piqa | arc_easy |
+| --- | --- | --- | --- |
+| 160M | −0.01 pp (0.02σ) | −0.60 pp (0.37σ) | −1.39 pp (**0.97σ**) |
+| 410M | +0.14 pp (0.21σ) | +0.33 pp (0.21σ) | −0.17 pp (0.12σ) |
+| 1B | −0.12 pp (0.18σ) | +0.44 pp (0.28σ) | −0.08 pp (0.06σ) |
+
+σ is of the *difference*, from the two arms' own standard errors. **Not one of nine cells reaches 1σ**,
+let alone 2. The honest statement: **these tasks at these sample sizes cannot distinguish the arms.**
+
+That is a *bounded* null, not evidence of no effect. ARC-Easy at 160M would need roughly 4x the items
+to resolve a 1.39 pp difference, and the tasks are fixed-size.
+
+#### The endpoints disagree at 160M, and that belongs in the paper
+
+At 160M aggressive, perplexity says **joint wins by +1.69 pp** ([F-27](#f-27)); downstream says joint is
+*behind* on all three tasks (−0.01, −0.60, −1.39 pp).
+
+Both can be true. Perplexity is average log-likelihood over natural text; multiple-choice accuracy is
+an **argmax over candidate continuations**. A method can lower average NLL while degrading the
+*ranking* between a correct completion and a plausible distractor -- those are different functionals of
+the same distribution.
+
+**What may not be done with this:** the downstream sign must not be used to argue against the
+perplexity result, nor the reverse. Every downstream difference here is under 1σ on one draw, so it is
+not evidence of anything directional. What is reportable is that **the perplexity advantage did not
+transfer to a measurable downstream advantage**, which is a weaker and more defensible claim than
+either endpoint alone.
+
+#### Two limitations that are properties of the design, not of the run
+
+* **160M HellaSwag has almost no headroom.** Dense scores 0.2838 against a 0.25 floor -- 3.4 pp of
+  range. A task cannot show compression damage it has no room to show, and retention of 0.993 there
+  reflects the ceiling rather than robustness.
+* **One calibration draw**, per the policy declared in `downstream.yaml` before the run. Downstream
+  results are **descriptive secondary endpoints**; no formal joint-superiority claim is made from them,
+  and the seed-era downstream importance rule is withdrawn rather than amended
+  ([protocol_freeze.md](protocol_freeze.md)). The harness standard error quantifies **task-item
+  sampling only** -- it says nothing about calibration-draw variance, which [F-26](#f-26) measured at a
+  1.47 pp swing on perplexity.
+
+#### Conditions worth keeping
+
+**GPU-evaluated, declared not assumed.** ~53,000 forward passes per model makes CPU ~150 h against
+~2 h 15 m here. §4.6 binds *deployment* measurements to CPU because those are properties of the
+machine; a multiple-choice accuracy is a property of the weights and the data. `benchmark.device`
+is untouched, and the rationale is written into the record itself.
+
+**Every row carries its provenance** -- commit, model revision, `METHOD_VERSION`, budget, sparsity,
+bits, resolved sequential order, calibration draw and fingerprint, targeted parameter count, task
+version, task split, timestamp, status.
+
+**The sequential arm resolved its frozen order** rather than assuming P→Q ([B-42](#f-35)). At the
+aggressive budget it is P→Q at all three scales, so the resolution changed nothing here -- but it
+logged its evidence per cell, which is what makes that checkable.
+
+**Timing, after the B-41 fix:** 160M 3:48-4:33, 410M 9:05-9:16, 1B 22:59-24:26 per evaluation.
+Compressed cells now run at dense speed; 410M/joint was **3 h 37 m** before the fix.
+
+---
+
 ### F-34 - Prefill and decode separated, and 30% unstructured sparsity buys no CPU latency {#f-34}
 
 *2026-08-01/04 - Pythia-160M `50f5173d`, 410M `dd47b0e`, 1B `f73d7dcc` - **CPU**, 4 threads, batch 1
