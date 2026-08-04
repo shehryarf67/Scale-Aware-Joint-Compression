@@ -661,6 +661,21 @@ class SweepConfig:
     ``{"aggressive": {"compression": {"pruning": {"sparsity": 0.7}}}}``."""
     skip_existing: bool = True
     continue_on_error: bool = False
+    use_frozen_order: bool = False
+    """Resolve a ``sequential`` cell to the **frozen** order for its (model, budget).
+
+    Off by default, and that default is deliberate. Exploratory configs ran ``sequential`` meaning
+    P→Q specifically -- often alongside ``sequential_qp`` as the other half of the order comparison --
+    so making resolution automatic would silently change what ~50 existing records mean and break
+    every reproduction gate.
+
+    **On for anything confirmatory.** §6.1 requires joint gain against best-of {P→Q, Q→P}, and the
+    frozen table has one cell where the winner is Q→P (pythia-1b/moderate). Without this flag the
+    confirmatory sweep would run P→Q there -- the weaker baseline, which inflates the joint gain --
+    which is exactly the fault B-30 recorded. A test asserts every test-split config sets it.
+
+    See :mod:`scale_aware_compression.protocol` for the table and the evidence per cell.
+    """
 
     def __post_init__(self) -> None:
         """Validate the grid."""

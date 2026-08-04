@@ -95,4 +95,13 @@ sweep:
     - pythia-1.4b
 
   # Cells already recorded by the main sweep are skipped, so this run adds the 1.4B cells only.
+  # Honour the frozen sequential order (§6.1). See main_scale_sweep.yaml for the reasoning: one
+  # frozen cell is Q->P, so a `sequential` cell must be resolved rather than assumed to mean P->Q.
+  #
+  # THIS CONFIG WILL REFUSE TO BUILD A PLAN until an order is frozen for every model it names, and
+  # that is intended. No order selection has been run for this model, so §6.1's best-of requirement
+  # cannot be satisfied for it. A config that refuses is a better signal than one that quietly runs
+  # P->Q and calls the result a joint gain. Run both orders on validation, record the winner in
+  # scale_aware_compression.protocol.FROZEN_SEQUENTIAL_ORDER with its evidence, then run this.
+  use_frozen_order: true
   skip_existing: true

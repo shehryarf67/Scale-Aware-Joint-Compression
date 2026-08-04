@@ -57,6 +57,66 @@ and each extra arm is another ~1.9 h per scale.
 """
 
 
+def _write(
+    output: Path,
+    rows: list[dict],
+    models: list[str],
+    arms: tuple[str, ...],
+    tasks: tuple[str, ...],
+    device: str,
+    limit: int | None,
+) -> None:
+    """Write the aggregated record, called after every evaluation rather than once at the end.
+
+    ``complete`` says whether every planned row is present. A partial file is legitimate -- writing
+    after every evaluation is what lets an interrupted run keep what it earned -- but a reader must
+    be able to tell a partial set from a finished one without counting rows by hand.
+
+    Args:
+        output: Destination path.
+        rows: Every row scored so far.
+        models: Models in the plan.
+        arms: Arms in the plan.
+        tasks: Tasks scored.
+        device: Evaluation device.
+        limit: Samples per task, or ``None`` for the full task.
+    """
+    from scale_aware_compression.hardware import get_hardware_info, get_software_versions, host_key
+
+    expected = len(models) * len(arms) * len(tasks)
+    payload = {
+        "schema": "downstream/2",
+        "host": host_key(),
+        "hardware": get_hardware_info(),
+        "software": get_software_versions(),
+        "plan": {
+            "models": models,
+            "arms": list(arms),
+            "tasks": list(tasks),
+            "device": device,
+            "limit": limit,
+            "expected_rows": expected,
+        },
+        "complete": len(rows) == expected,
+        "device_rationale": (
+            "Downstream accuracy is a quality metric, not a deployment measurement: it is a "
+            "property of the weights and the data, device-invariant far below the ~1 pp "
+            "differences reported. §4.6 binds latency, throughput, memory and checkpoint size to "
+            "CPU; those remain CPU-only."
+        ),
+        "omitted_arms": {
+            "pruning, quantisation": (
+                "§4.3 asks whether the compared arms stay usable; each extra arm is another full "
+                "evaluation per scale"
+            )
+        },
+        "rows": rows,
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    LOGGER.info("Wrote %d of %d row(s) to %s", len(rows), expected, output)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser."""
     parser = argparse.ArgumentParser(
@@ -99,22 +159,27 @@ def main(argv: list[str] | None = None) -> int:
     from scale_aware_compression.compression.arms import plan_from_config
     from scale_aware_compression.compression.layerwise import compress_model_layerwise
     from scale_aware_compression.config import ExperimentConfig, deep_merge, load_config
-    from scale_aware_compression.constants import CompressionMethod, Device
+    from scale_aware_compression.constants import METHOD_VERSION, CompressionMethod, Device
     from scale_aware_compression.data.calibration import load_calibration_set
     from scale_aware_compression.evaluation.downstream import (
         DOWNSTREAM_TASKS,
         accuracy_retention,
         evaluate_downstream,
     )
-    from scale_aware_compression.experiments.scale_sweep import _revision_for
-    from scale_aware_compression.hardware import (
-        cuda_available,
-        get_hardware_info,
-        get_software_versions,
-        host_key,
+    from scale_aware_compression.experiments.runner import (
+        _release_device_cache,
+        get_git_commit,
+        utc_timestamp,
     )
+    from scale_aware_compression.experiments.scale_sweep import _revision_for
+    from scale_aware_compression.hardware import cuda_available
+    from scale_aware_compression.models.adapters import select_compressible_modules
     from scale_aware_compression.models.loader import load_model_and_tokenizer
     from scale_aware_compression.models.registry import get_model_spec
+    from scale_aware_compression.protocol import (
+        frozen_order_evidence,
+        resolve_sequential_order,
+    )
 
     config = load_config(arguments.config)
     models = arguments.models or list(config.sweep.models)
@@ -146,6 +211,8 @@ def main(argv: list[str] | None = None) -> int:
 
     rows: list[dict] = []
     dense_by_model: dict[str, dict[str, float]] = {}
+    budget_label = config.compression.budget_label
+    git_commit = get_git_commit()
 
     for model_name in models:
         # Dense first, so each compressed arm has a retention reference by the time it runs.
@@ -160,19 +227,33 @@ def main(argv: list[str] | None = None) -> int:
             document["model"].pop("hf_id", None)
             document["model"]["revision"] = _revision_for(model_name, document)
             document["model"]["device"] = Device.CPU.value
-            if arm != "dense":
-                document["compression"]["method"] = (
-                    CompressionMethod.JOINT.value
-                    if arm == "joint"
-                    else CompressionMethod.SEQUENTIAL.value
+            resolved_order = None
+            if arm == "joint":
+                document["compression"]["method"] = CompressionMethod.JOINT.value
+            elif arm == "sequential":
+                # RESOLVE the frozen order rather than assuming `sequential` means P→Q. It does at
+                # five of the six frozen cells and NOT at pythia-1b/moderate, where Q→P won -- and
+                # P→Q there is the weaker baseline, so assuming it would inflate the joint gain.
+                # Raises rather than defaulting when a cell has no frozen order.
+                method = resolve_sequential_order(model_name, budget_label)
+                document["compression"]["method"] = method.value
+                resolved_order = method.value
+                LOGGER.info(
+                    "  sequential baseline resolved to %s (%s)",
+                    method.value,
+                    frozen_order_evidence(model_name, budget_label),
                 )
             cell_config = ExperimentConfig.from_mapping(document)
 
             loaded = load_model_and_tokenizer(cell_config.model)
             model = loaded.model
 
+            calibration_fingerprint = None
+            targeted_parameters = None
             if arm != "dense":
                 calibration = load_calibration_set(cell_config.data, loaded.tokenizer)
+                calibration_fingerprint = calibration.summary.token_fingerprint
+                targeted_parameters = select_compressible_modules(model).total_parameters
                 batches = [
                     batch["input_ids"] if isinstance(batch, dict) else batch[0]
                     for batch in calibration.loader
@@ -187,6 +268,16 @@ def main(argv: list[str] | None = None) -> int:
                     device=Device.CUDA.value if use_gpu else None,
                     offload_blocks=use_gpu,
                 )
+                del calibration, batches
+                # B-41, and the third appearance of this mechanism. The compression stage leaves
+                # several GiB reserved in the caching allocator; the harness then allocates for
+                # ~53,000 forwards, and on Windows the driver serves the shortfall from shared
+                # system memory instead of raising. MEASURED: 410M joint took 3 h 37 m against
+                # 10 m 44 s for 410M dense -- 24x -- with an *instantaneous* rate of 151-159 it/s
+                # against dense's 181-186. Same peak throughput, catastrophic average: it was
+                # stalling, not running slowly. F-29 saw this at 7x and B-36 at 4x; the runner was
+                # fixed for it and this script was not.
+                _release_device_cache(device)
 
             report = evaluate_downstream(
                 model,
@@ -218,38 +309,38 @@ def main(argv: list[str] | None = None) -> int:
                         "harness_version": report.harness_version,
                         "device": report.device,
                         "limit": report.limit,
+                        # Provenance: a score has to be bound to the artefact that produced it, not
+                        # merely sit next to a hardware dump. Without these a row cannot be
+                        # reproduced or audited, which is the standard the main run-record schema
+                        # already meets.
+                        "git_commit": git_commit,
+                        "model_revision": cell_config.model.revision,
+                        "method_version": METHOD_VERSION,
+                        "budget_label": cell_config.compression.budget_label,
+                        "sparsity": cell_config.compression.effective_sparsity,
+                        "bits": cell_config.compression.effective_bits,
+                        "sequential_order": resolved_order,
+                        "calibration_replicate": cell_config.data.calibration_replicate,
+                        "calibration_fingerprint": calibration_fingerprint,
+                        "targeted_parameters": targeted_parameters,
+                        "task_split": "task default (lm-eval)",
+                        "timestamp": utc_timestamp(),
+                        "status": "success",
                     }
                 )
                 rows.append(payload)
 
+            # Written after EVERY evaluation, not once at the end. The 410M stall (B-41) ran for
+            # 3 h 37 m and would have discarded five completed evaluations if it had been
+            # interrupted, because nothing reached disk until the final line.
+            _write(arguments.output, rows, models, arms, tasks, device, limit)
+
             del model, loaded
+            _release_device_cache(device)
 
     if not rows:
         LOGGER.error("Nothing was scored.")
         return 1
-
-    payload = {
-        "schema": "downstream/1",
-        "host": host_key(),
-        "hardware": get_hardware_info(),
-        "software": get_software_versions(),
-        "device_rationale": (
-            "Downstream accuracy is a quality metric, not a deployment measurement: it is a "
-            "property of the weights and the data, device-invariant far below the ~1 pp "
-            "differences reported. §4.6 binds latency, throughput, memory and checkpoint size to "
-            "CPU; those remain CPU-only. CPU here would be ~150 h against ~15-20 h on GPU."
-        ),
-        "omitted_arms": {
-            "pruning, quantisation": (
-                "§4.3 asks whether the compared arms stay usable; each extra arm adds ~1.9 h per "
-                "scale"
-            )
-        },
-        "rows": rows,
-    }
-    arguments.output.parent.mkdir(parents=True, exist_ok=True)
-    arguments.output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    LOGGER.info("Wrote %d row(s) to %s", len(rows), arguments.output)
 
     print(f"\n  {'model':<13}{'arm':<12}{'task':<11}{'acc':>8}{'chance':>8}{'ret.':>8}  version")
     for row in rows:

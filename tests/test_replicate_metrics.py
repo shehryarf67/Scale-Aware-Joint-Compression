@@ -251,3 +251,113 @@ class TestPairedBlockBootstrap:
         # Identical inputs, so the advantage is exactly zero and the interval must contain it.
         assert interval.point_estimate == pytest.approx(0.0, abs=1e-12)
         assert not interval.excludes_zero
+
+
+class TestTiesAreDiscardedNotCountedAsNegative:
+    """B-40. The conventional sign test discards ties; counting one as negative biases the p-value.
+
+    Verified latent before fixing: no gain in any committed record is exactly zero, so no published
+    figure moves. The smallest recorded 1B gain is +0.0044 pp, which *rounds* to +0.00 in a
+    two-decimal table but is genuinely positive. The bug would first have fired on the confirmatory
+    run, where R=8 gives it more chances and the near-lossless W8 control is the likeliest place to
+    produce an exact equality.
+    """
+
+    def test_split_signs_counts_all_three_categories(self):
+        from scale_aware_compression.metrics.replicates import split_signs
+
+        assert split_signs([1.0, -1.0, 0.0, 0.0]) == (1, 1, 2)
+
+    def test_split_signs_partitions_the_input(self):
+        from scale_aware_compression.metrics.replicates import split_signs
+
+        gains = [0.5, -0.5, 0.0, 2.0, 0.0]
+        assert sum(split_signs(gains)) == len(gains)
+
+    def test_a_tie_reduces_n_rather_than_counting_against(self):
+        """The concrete distortion: three positives and one tie is p=0.25, not p=0.625."""
+        from scale_aware_compression.metrics.replicates import summarise_replicates
+
+        summary = summarise_replicates(
+            model_name="pythia-160m", budget_label="aggressive", gains=[0.5, 0.5, 0.5, 0.0]
+        )
+        assert summary.positive_count == 3
+        assert summary.tie_count == 1
+        assert summary.sign_test_n == 3
+        assert summary.sign_test_p == pytest.approx(0.25)
+        assert summary.consistent_in_sign
+
+    def test_the_old_behaviour_would_have_been_wrong_by_2_5x(self):
+        """Pins the size of the error, so a regression is visible as a number rather than a flake."""
+        from scale_aware_compression.metrics.replicates import sign_test_p_value
+
+        assert sign_test_p_value(3, 4) == pytest.approx(0.625)  # tie treated as negative
+        assert sign_test_p_value(3, 3) == pytest.approx(0.25)  # tie discarded
+
+    def test_all_ties_carry_no_direction(self):
+        from scale_aware_compression.metrics.replicates import summarise_replicates
+
+        summary = summarise_replicates(model_name="m", budget_label="b", gains=[0.0, 0.0, 0.0])
+        assert summary.sign_test_n == 0
+        assert summary.sign_test_p == 1.0
+        # False, not True: identical results must not satisfy §6.3's consistency clause.
+        assert not summary.consistent_in_sign
+        assert not summary.significance_was_reachable
+
+    def test_ties_reduce_the_reachable_power(self):
+        """R=8 with three ties has the power of n=5 and cannot reach p<0.05 however the rest fall."""
+        from scale_aware_compression.metrics.replicates import summarise_replicates
+
+        gains = [0.4, 0.4, 0.4, 0.4, 0.4, 0.0, 0.0, 0.0]
+        summary = summarise_replicates(model_name="m", budget_label="b", gains=gains)
+        assert summary.replicates == 8
+        assert summary.sign_test_n == 5
+        assert not summary.significance_was_reachable
+
+    def test_the_counts_are_serialised(self):
+        from scale_aware_compression.metrics.replicates import summarise_replicates
+
+        payload = summarise_replicates(
+            model_name="m", budget_label="b", gains=[0.5, -0.5, 0.0]
+        ).to_dict()
+        for key in ("positive_count", "negative_count", "tie_count", "sign_test_n"):
+            assert key in payload
+
+    def test_the_recorded_1b_gains_are_unaffected(self):
+        """The check that says no published number moves: F-32's 1B aggressive draws."""
+        from scale_aware_compression.metrics.replicates import summarise_replicates
+
+        summary = summarise_replicates(
+            model_name="pythia-1b",
+            budget_label="aggressive",
+            gains=[0.004400756400741557, 0.15018480455316308, 0.44508568925583347],
+        )
+        assert summary.tie_count == 0
+        assert summary.positive_count == 3
+        assert summary.sign_test_n == 3
+        assert summary.sign_test_p == pytest.approx(0.25)
+
+    def test_scale_comparison_discards_ties_too(self):
+        from scale_aware_compression.metrics.replicates import ScaleComparison
+
+        comparison = ScaleComparison(
+            smaller_model="pythia-160m",
+            larger_model="pythia-1b",
+            budget_label="aggressive",
+            differences=[1.0, 2.0, 0.0],
+        )
+        assert comparison.positive_count == 2
+        assert comparison.tie_count == 1
+        assert comparison.sign_test_n == 2
+        assert comparison.consistent_in_sign
+        assert comparison.sign_test_p == pytest.approx(0.5)
+
+    def test_an_all_tie_scale_comparison_is_not_consistent(self):
+        """Identical gains at two scales are not evidence of a scale effect in either direction."""
+        from scale_aware_compression.metrics.replicates import ScaleComparison
+
+        comparison = ScaleComparison(
+            smaller_model="a", larger_model="b", budget_label="x", differences=[0.0, 0.0]
+        )
+        assert not comparison.consistent_in_sign
+        assert comparison.sign_test_n == 0

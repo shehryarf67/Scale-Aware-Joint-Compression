@@ -28,6 +28,7 @@ from scale_aware_compression.experiments.runner import (
 )
 from scale_aware_compression.logging_utils import get_logger
 from scale_aware_compression.models.registry import get_model_spec
+from scale_aware_compression.protocol import frozen_order_evidence, resolve_sequential_order
 
 LOGGER = get_logger(__name__)
 
@@ -167,6 +168,23 @@ def build_sweep_plan(config: ExperimentConfig) -> SweepPlan:
         ):
             spec = get_model_spec(model_name)
             overrides = _budget_overrides(config, budget_label)
+            # Resolve `sequential` to the FROZEN order for this cell when asked. §6.1 requires joint
+            # gain against best-of {P→Q, Q→P}, and one frozen cell -- pythia-1b/moderate -- is Q→P.
+            # Without this a confirmatory sweep would run P→Q there, which is the weaker baseline and
+            # inflates the joint gain (B-30's fault, in the one run that cannot be redone).
+            resolved_method = method
+            if sweep.use_frozen_order and method is CompressionMethod.SEQUENTIAL:
+                resolved_method = resolve_sequential_order(spec.short_name, budget_label)
+                if resolved_method is not method:
+                    LOGGER.info(
+                        "Frozen order for %s/%s is %s (%s), not %s.",
+                        spec.short_name,
+                        budget_label,
+                        resolved_method.value,
+                        frozen_order_evidence(spec.short_name, budget_label),
+                        method.value,
+                    )
+            method = resolved_method
             sparsity, bits = _resolve_budget(config, method, overrides)
             cells.append(
                 SweepCell(
