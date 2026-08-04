@@ -117,7 +117,10 @@ class TestParsingRefusesToUnderReport:
 
 
 class TestChanceLevelIsSurfaced:
-    """A model at chance has stopped doing the task, not done it worse."""
+    """The literal arithmetic comparison, kept for sorting.
+
+    See TestTheChanceVerdictIsThreeWay for the interpretable one.
+    """
 
     def test_a_score_above_chance_is_flagged_as_such(self):
         result = TaskResult("piqa", 0.62, None, None, "1.0", 100)
@@ -127,25 +130,77 @@ class TestChanceLevelIsSurfaced:
         result = TaskResult("piqa", 0.50, None, None, "1.0", 100)
         assert not result.is_above_chance
 
-    def test_hellaswag_at_26_percent_is_above_chance_but_barely(self):
-        """25% is the floor, so 26% is a real but nearly worthless score -- and 24% is broken."""
+    def test_hellaswag_at_26_percent_is_arithmetically_above_chance(self):
+        """The literal comparison. Not the one to interpret -- see the verdict tests below."""
         assert TaskResult("hellaswag", 0.26, None, None, "1.0", 10).is_above_chance
         assert not TaskResult("hellaswag", 0.24, None, None, "1.0", 10).is_above_chance
 
-    def test_the_report_lists_tasks_at_chance(self):
+    def test_chance_is_serialised_with_the_score(self):
+        payload = TaskResult("piqa", 0.62, 0.01, None, "1.0", 10).to_dict()
+        assert payload["chance_level"] == 0.50
+        assert payload["above_chance"] is True
+        assert payload["chance_verdict"] == "above chance"
+        assert payload["demonstrably_above_chance"] is True
+
+
+class TestTheChanceVerdictIsThreeWay:
+    """B-43. Two labels cannot express "above the floor and indistinguishable from it"; three can.
+
+    0.2501 on a four-choice task is arithmetically above chance and says nothing. The interval is
+    +/- 2 standard errors -- the conventional ~95% default, not a multiplier chosen to make a row
+    read a particular way. The labelling is descriptive: the primary downstream comparison is
+    retention against dense, and no claim depends on which side of this line a row falls.
+    """
+
+    def test_a_score_clear_of_the_floor_is_above_chance(self):
+        result = TaskResult("hellaswag", 0.40, 0.005, None, "1.0", 10000)
+        assert result.chance_verdict == "above chance"
+        assert result.is_demonstrably_above_chance
+
+    def test_a_score_barely_over_the_floor_is_indistinguishable(self):
+        """The case the two-way flag got wrong: above by 0.0001, stderr 0.005."""
+        result = TaskResult("hellaswag", 0.2501, 0.005, None, "1.0", 10000)
+        assert result.is_above_chance  # arithmetically, yes
+        assert result.chance_verdict == "indistinguishable from chance"
+        assert not result.is_demonstrably_above_chance
+
+    def test_a_score_clearly_under_the_floor_is_below_chance(self):
+        """Usually a systematic scoring problem rather than a merely bad model."""
+        result = TaskResult("hellaswag", 0.18, 0.005, None, "1.0", 10000)
+        assert result.chance_verdict == "below chance"
+
+    def test_a_score_just_under_the_floor_is_indistinguishable_not_below(self):
+        result = TaskResult("piqa", 0.495, 0.02, None, "1.0", 1000)
+        assert result.chance_verdict == "indistinguishable from chance"
+
+    def test_a_missing_stderr_yields_unknown_rather_than_a_verdict(self):
+        """No interval exists, so no verdict is defensible. Recorded, not defaulted."""
+        result = TaskResult("piqa", 0.62, None, None, "1.0", 10)
+        assert result.chance_verdict == "unknown (no stderr)"
+        assert not result.is_demonstrably_above_chance
+
+    def test_the_report_lists_everything_not_demonstrably_above_chance(self):
+        """Stricter than before: a score inside the interval counts as at chance."""
         report = DownstreamReport(
             tasks=[
-                TaskResult("hellaswag", 0.2501, None, None, "1.0", 10),
-                TaskResult("piqa", 0.49, None, None, "1.0", 10),
-                TaskResult("arc_easy", 0.24, None, None, "1.0", 10),
+                TaskResult("hellaswag", 0.40, 0.005, None, "1.0", 10000),
+                TaskResult("piqa", 0.505, 0.02, None, "1.0", 1000),
+                TaskResult("arc_easy", 0.2501, 0.005, None, "1.0", 10000),
             ]
         )
         assert report.tasks_at_chance == ["piqa", "arc_easy"]
 
-    def test_chance_is_serialised_with_the_score(self):
-        payload = TaskResult("piqa", 0.62, None, None, "1.0", 10).to_dict()
-        assert payload["chance_level"] == 0.50
-        assert payload["above_chance"] is True
+    def test_the_real_160m_hellaswag_score_is_indistinguishable_from_chance(self):
+        """Measured: 0.2816 with stderr 0.0045 against a 0.25 floor.
+
+        It clears the floor by 7 standard errors, so it IS demonstrably above chance -- but only
+        just over 3 pp above it, which is why 160M HellaSwag has almost no headroom in which to show
+        compression damage. That is a limitation of the scale, not of the method, and the verdict
+        machinery is what makes it visible rather than implied.
+        """
+        result = TaskResult("hellaswag", 0.2816, 0.0045, None, "1.0", 10042)
+        assert result.chance_verdict == "above chance"
+        assert result.accuracy - chance_level("hellaswag") < 0.035
 
 
 class TestReportAggregation:

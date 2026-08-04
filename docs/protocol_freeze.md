@@ -49,7 +49,15 @@ The plan already separates these concerns and does not require a W4 latency numb
 **Research question 4 survives this intact.** RQ4 asks whether theoretical sparsity produces real
 CPU latency gains. That is answerable from the **pruning-only arm**, which §5.4 already mandates
 at two budgets per model: pruning-only weights stay FP32, so they benchmark natively at every
-screened sparsity with no 4-bit kernel involved. The sparsity→latency curve comes free.
+screened sparsity with no 4-bit kernel involved, so the sparsity→latency curve is *obtainable*
+without a 4-bit kernel.
+
+⚠️ **"Comes free" was too strong, and this said so before A5 ran.** It comes free only if the
+pruning-only arm is actually benchmarked at *several* sparsities. [F-34](findings_log.md#f-34)
+measured one (30%, the frozen budgets' value) at three scales and found no commensurate speedup.
+That is one point against dense, not a curve. Reporting a curve needs additional sparsities, and
+choosing them *after* seeing the null would need declaring as a follow-up rather than presented as
+part of the original design.
 
 W4 still needs real int4 packing — quality and size claims require a genuinely converted
 artefact, not a fake-quantised FP32 one. Phase 5 already requires a bit-exact pack/unpack
@@ -224,8 +232,32 @@ otherwise read as an excellent result.
 | Decision | Frozen value | Reasoning |
 | --- | --- | --- |
 | Downstream tasks | `lm-evaluation-harness`, **pinned version**, task versions recorded | §4.3 requires HellaSwag, PIQA, ARC-Easy and §4.8 requires logging task versions. Reimplementing three tasks in-repo risks silent scoring differences from published numbers, which is a worse failure than one heavy dependency. |
-| Practical-importance rule | joint gain counts as practically important only when perplexity retention improves by **≥ 1.0 percentage point**, consistently in sign across **all three** confirmatory seeds, **and** the mean improvement exceeds the seed spread (max − min) at that cell | §6.3 requires this predefined. Stated before any compressed result exists. The seed-spread clause is what stops a gain smaller than noise being reported as a finding. |
-| Downstream importance rule | ≥ 1.0 percentage point accuracy gain on at least 2 of the 3 tasks, same sign across seeds | Same reasoning; §4.3 tasks are secondary evidence. |
+| Practical-importance rule | ⚠️ **SUPERSEDED — see [the amended rule](#the-amended-practical-importance-rule) below.** As originally frozen: joint gain counts as practically important only when perplexity retention improves by **≥ 1.0 percentage point**, consistently in sign across **all three** confirmatory seeds, **and** the mean improvement exceeds the seed spread (max − min) at that cell | §6.3 required this predefined, and it was stated before any compressed result existed. Its binding clause then turned out to be **vacuous**: run seeds are inert under this method ([F-15](findings_log.md#f-15)), so the seed spread is exactly zero and any nonzero gain passed. Amendment A1 §5.1 replaced the seed axis with paired calibration draws. |
+| Downstream importance rule | ⚠️ **WITHDRAWN, not amended.** As frozen: ≥ 1.0 pp accuracy gain on at least 2 of the 3 tasks, same sign across seeds | Same seed-era defect as above, and no replacement is claimed. The downstream run uses **one** calibration draw, so there is no sign to be consistent across. Downstream results are **descriptive secondary endpoints** and no formal joint-superiority claim is made from them; the policy is declared in `configs/experiments/downstream.yaml`. Invoking this rule in the write-up would be invoking a rule the design cannot satisfy. |
+
+### The amended practical-importance rule
+
+**Current governing form**, per Amendment A1 §5.1 and §6.3. This is the rule the write-up uses; the
+row above records what it replaced.
+
+A joint gain counts as practically important when, at a cell:
+
+1. perplexity retention improves by **≥ 1.0 percentage point**; **and**
+2. the sign is **consistent across every paired calibration replicate** at that cell -- ties are
+   excluded and counted, not treated as negatives (B-40); **and**
+3. **R is reported**, together with whether significance was reachable at that R. At R=5 the best
+   possible outcome is p = 0.0625, so 1B can carry effect-size evidence and never significance.
+
+**What was lost and what was gained, stated plainly because §6.3 requires it.** The original rule was
+stricter *on its face* -- it had a third clause -- and unmeasurable *in fact*, because that clause
+evaluated to zero for every cell. Replacing an unmeasurable criterion with a weaker measurable one is
+both a correction and **a reduction in pre-registered strength**. The paper must say so rather than
+present the amended rule as the one that was pre-registered.
+
+The seed-spread clause has no replacement. Paired-draw variance is reported as a standard deviation,
+a per-replicate list and an exact sign test instead of being folded into a pass/fail threshold --
+because F-26 showed the paired difference is *noisier* than either arm alone, so a spread-based gate
+would have been calibrated on the wrong quantity.
 
 ---
 

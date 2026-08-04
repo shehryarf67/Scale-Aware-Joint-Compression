@@ -605,8 +605,9 @@ anywhere and test it against `tiny_causal_lm`; only the measured numbers are hos
 Note the standing limitation from **D1**: the sole latency backend is PyTorch native CPU **INT8**,
 engine **`onednn`** (not `x86` — on the pinned torch, `supported_engines` is `['onednn']` only). W4
 keeps quality and size but **never appears in a latency table**, because a packed 4-bit CPU linear
-would measure the dequantisation kernel. RQ4's sparsity→latency curve comes free from the
-pruning-only arm, whose weights stay FP32.
+would measure the dequantisation kernel. RQ4 is answerable from the pruning-only arm, whose
+weights stay FP32 -- but only at the sparsities actually benchmarked. [F-34](findings_log.md#f-34)
+measured 30% at three scales and found no commensurate speedup; that is one point, not a curve.
 
 ---
 

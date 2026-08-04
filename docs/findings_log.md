@@ -787,8 +787,10 @@ effect is 1-3%, an order of magnitude short.
 them needs a sparse kernel or a structured pattern (2:4 / 4:8) the hardware can exploit. So:
 
 * the **compression-ratio** and **checkpoint-size** results stand;
-* the **latency** result is a null, and RQ4's sparsity-versus-latency curve is **flat at all three
-  scales**.
+* the **latency** result is a null **at the one sparsity measured**. RQ4 asks for a
+  sparsity-versus-latency *curve*; this is a single point (30%) against dense, at three scales.
+  Calling it a flat curve would claim more than one point can support -- what is established is
+  that 30% unstructured pruning did not produce a commensurate CPU speedup.
 
 **Do not report the compression ratio as though it implied a speedup.** The mask primitives already
 support 2:4 and 4:8 (`compression/masks.py`), so a structured variant is the obvious follow-up if a

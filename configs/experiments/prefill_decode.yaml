@@ -13,7 +13,7 @@
 # ONLY FP32 ARMS ARE TIMED -- dense and pruning-only. Per decision D1 a packed W4/W8 layer
 # dequantises on every forward, so a timing would measure the unpacking kernel rather than the
 # compression. The script records the exclusion rather than silently omitting it. This is also why
-# RQ4's sparsity-versus-latency curve comes from the pruning-only arm: it is the one compressed arm
+# RQ4 is answerable from the pruning-only arm at the sparsities benchmarked -- it is the one arm
 # whose timings mean what they appear to mean.
 #
 # CPU-ONLY, ON THE DESIGNATED BENCHMARK HOST. This is a deployment measurement (§4.6), so the

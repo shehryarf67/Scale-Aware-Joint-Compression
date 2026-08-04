@@ -34,6 +34,31 @@
 #   * REPORT AGAINST DENSE. Dense runs first for each model so every compressed arm has a retention
 #     reference, exactly as for perplexity.
 #
+# UNCERTAINTY POLICY, DECIDED AND DECLARED BEFORE THE FREEZE
+#
+# This config runs ONE calibration draw per (model, arm). That is a deliberate choice with a
+# consequence, and the consequence is stated here rather than discovered in review:
+#
+#   * Downstream results are DESCRIPTIVE SECONDARY ENDPOINTS. No formal joint-superiority claim is
+#     made from them. The primary endpoint remains perplexity retention on the test split.
+#   * The older downstream importance rule -- ">= 1.0 pp accuracy gain on at least 2 of 3 tasks, same
+#     sign across seeds" -- CANNOT be invoked, because one draw has no sign to be consistent across.
+#     Amendment A1 withdrew the seed axis as inert (F-15) and replaced it with paired calibration
+#     draws; the downstream rule was written in seed-era language and never updated. It is withdrawn
+#     for downstream, and protocol_freeze.md records that.
+#   * The harness's per-task standard error IS reported, and `chance_verdict` uses it. That quantifies
+#     TASK-ITEM sampling uncertainty only. It says nothing about calibration-draw variance, which is
+#     the dominant source at these effect sizes -- F-26 measured a 1.47 pp swing across draws on
+#     perplexity, wider than either arm's own spread. Do not present an item-level interval as though
+#     it bounded draw-to-draw variation.
+#
+# WHY NOT PAIRED REPLICATES HERE. They would be stronger and they are affordable (~6 min per
+# evaluation at 160M). The reason is scope, not cost: three draws x three models x three arms is 27
+# evaluations, and §4.3 asks whether the compared arms stay usable rather than asking for a second
+# significance test. If the write-up wants a downstream claim with uncertainty, run
+# `--models ... ` with `data.calibration_replicate` varied and treat it as a separate, declared
+# addition -- not as a reinterpretation of this run.
+
 # Aggressive budget only (30% + W4). It is the headline budget and the one where quality is most at
 # risk; the moderate W8 budget retains 96% perplexity at 1B, so a downstream difference there would
 # be below what three tasks at these sample sizes can resolve. Running it as well is a defensible

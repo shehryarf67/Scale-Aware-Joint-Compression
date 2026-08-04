@@ -19,8 +19,10 @@ Multiple-choice scoring asks the model for the log-likelihood of each candidate 
 takes the argmax. So:
 
 * **There is a floor.** Random guessing scores 25% on HellaSwag and ARC-Easy and 50% on PIQA. A
-  compressed model at chance is *broken*, not merely degraded, and :func:`chance_level` is provided
-  so a report can say which.
+  compressed model at chance has stopped doing the task rather than doing it worse -- but "at chance"
+  has to mean *indistinguishable from* the floor, not merely below it, so
+  :attr:`TaskResult.chance_verdict` gives three outcomes over an interval rather than a bare
+  comparison. 0.2501 on a four-choice task is above the floor arithmetically and says nothing.
 * **The scoring path is partly uncompressed.** §2.6 excludes embeddings and the head from the
   targeted modules, so the logits these accuracies are computed from come out of an FP32 layer at
   every budget. That is correct under the plan's scale-invariant definition of the compression
@@ -86,12 +88,50 @@ class TaskResult:
 
     @property
     def is_above_chance(self) -> bool:
-        """Whether the score beats guessing.
+        """Whether the score is *arithmetically* above guessing.
 
-        A compressed model at or below chance has stopped doing the task rather than doing it
-        worse, and that distinction changes what the number means.
+        **A literal comparison, and not sufficient on its own.** 0.2501 on a four-choice task is
+        above chance by this test and statistically indistinguishable from it. Use
+        :attr:`chance_verdict` for anything a reader will interpret; this is kept because a bare
+        comparison is still the right thing to sort or filter on.
         """
         return self.accuracy > chance_level(self.task)
+
+    @property
+    def chance_verdict(self) -> str:
+        """Whether the score is *distinguishable* from guessing, at roughly 95%.
+
+        Three outcomes, because two are not enough to say something honest:
+
+        * ``"above chance"`` -- the interval clears the floor;
+        * ``"indistinguishable from chance"`` -- the floor lies inside the interval. The model may
+          or may not be doing the task; this measurement cannot tell, and saying "it still performs
+          the task" on the strength of accuracy > chance would be an overclaim;
+        * ``"below chance"`` -- the interval is under the floor, which usually means a systematic
+          scoring problem rather than a merely bad model;
+        * ``"unknown (no stderr)"`` -- the harness reported no standard error, so no interval exists.
+          Recorded rather than defaulted to a verdict.
+
+        The interval is +/- 2 standard errors. That multiplier is the conventional ~95% default, not
+        one chosen to make a particular row read a particular way -- and this labelling is
+        **descriptive**: the primary downstream comparison is accuracy retention against dense, not
+        a test against chance. Nothing in the paper's claims depends on which side of this line a
+        row falls.
+        """
+        floor = chance_level(self.task)
+        if self.accuracy_stderr is None:
+            return "unknown (no stderr)"
+        margin = 2.0 * self.accuracy_stderr
+        if self.accuracy - margin > floor:
+            return "above chance"
+        if self.accuracy + margin < floor:
+            return "below chance"
+        return "indistinguishable from chance"
+
+    @property
+    def is_demonstrably_above_chance(self) -> bool:
+        """True only when the interval clears the floor. The strict form of :attr:`is_above_chance`."""
+        return self.chance_verdict == "above chance"
 
     def to_dict(self) -> dict[str, Any]:
         """Return a flat, serialisable mapping."""
@@ -104,6 +144,8 @@ class TaskResult:
             "num_samples": self.num_samples,
             "chance_level": chance_level(self.task),
             "above_chance": self.is_above_chance,
+            "chance_verdict": self.chance_verdict,
+            "demonstrably_above_chance": self.is_demonstrably_above_chance,
         }
 
 
@@ -135,8 +177,12 @@ class DownstreamReport:
 
     @property
     def tasks_at_chance(self) -> list[str]:
-        """Tasks where the model does no better than guessing."""
-        return [result.task for result in self.tasks if not result.is_above_chance]
+        """Tasks not *demonstrably* above guessing, i.e. the floor is inside the interval or above it.
+
+        Uses the interval rather than the bare comparison, so a score sitting 0.0001 above the floor
+        is reported here rather than counted as a working task.
+        """
+        return [result.task for result in self.tasks if not result.is_demonstrably_above_chance]
 
     def to_dict(self) -> dict[str, Any]:
         """Return a serialisable mapping."""
@@ -332,21 +378,22 @@ def evaluate_downstream(
     )
     for result in report.tasks:
         LOGGER.info(
-            "  %-10s acc %.4f (chance %.2f)%s  version=%s  n=%s",
+            "  %-10s acc %.4f +/- %s (chance %.2f, %s)  version=%s  n=%s",
             result.task,
             result.accuracy,
+            f"{result.accuracy_stderr:.4f}" if result.accuracy_stderr is not None else "?",
             chance_level(result.task),
-            "" if result.is_above_chance else "  <-- AT OR BELOW CHANCE",
+            result.chance_verdict,
             result.task_version,
             result.num_samples,
         )
     if report.tasks_at_chance:
         # Not an error: a sufficiently damaged model legitimately scores at chance, and that is a
         # result. But it must be loud, because "42%" reads as a weak score rather than as a model
-        # that has stopped doing the task.
+        # that may have stopped doing the task.
         LOGGER.warning(
-            "At or below chance on %s. That is a model which has stopped doing the task, not one "
-            "doing it worse -- report it as such.",
+            "Not demonstrably above chance on %s. Do not write that the model still performs these "
+            "tasks -- the interval includes guessing.",
             ", ".join(report.tasks_at_chance),
         )
     return report
