@@ -30,3 +30,8 @@ psutil>=5.9
 
 # Figures
 matplotlib>=3.8
+
+# Downstream tasks (§4.3). PINNED EXACTLY, unlike the floors above: §4.8 requires task versions
+# recorded, and task definitions change between harness releases, so a floor would let a later
+# install score a different task and still call it HellaSwag.
+lm-eval==0.4.12

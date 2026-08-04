@@ -421,6 +421,9 @@ class TestShippedConfigs:
             # Gap A5 (§4.7): prefill and decode timed separately at two prompt lengths, with IQR
             # and model-order rotation. FP32 arms only, per decision D1.
             "prefill_decode.yaml",
+            # Gap A4 (§4.3): HellaSwag, PIQA and ARC-Easy via a pinned harness, with task versions
+            # recorded (§4.8). GPU-evaluated and declared as such; `benchmark.device` stays CPU.
+            "downstream.yaml",
         }
         for path in files:
             config = load_config(path)

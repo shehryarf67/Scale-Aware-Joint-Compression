@@ -52,6 +52,11 @@ dependencies = [
     "matplotlib>=3.8",
     "safetensors>=0.4",
     "sentencepiece>=0.2",
+    # PINNED EXACTLY, unlike everything above. §4.3 requires HellaSwag, PIQA and ARC-Easy, and §4.8
+    # requires the task versions recorded -- task definitions change between harness releases, so a
+    # floor like ">=0.4" would let a later install silently score a different task and still call it
+    # HellaSwag. The freeze table settles the tool; this settles the version.
+    "lm-eval==0.4.12",
 ]
 
 [project.optional-dependencies]

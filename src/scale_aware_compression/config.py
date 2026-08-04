@@ -531,6 +531,26 @@ class EvaluationConfig:
     """Prompts used for dense-vs-compressed top-1 agreement."""
     generation_prompts: int = 16
     generation_max_new_tokens: int = 64
+    downstream_tasks: list[str] = field(default_factory=list)
+    """Downstream tasks to score (§4.3). Empty means skip them.
+
+    Empty by default because they are ~32x the cost of a perplexity evaluation -- one forward per
+    candidate continuation, not per sequence -- so they belong on the runs that report them rather
+    than on every exploratory cell."""
+    downstream_device: Device | None = None
+    """Device for downstream tasks. ``None`` follows ``device``.
+
+    Separable from perplexity's device on purpose: at ~53,000 forwards per model the CPU path is
+    ~150 h across the sweep against ~15-20 h on GPU. §4.6 restricts *deployment* measurements to
+    CPU, and a multiple-choice accuracy is a quality metric, not a latency claim -- it is
+    device-invariant far below the ~1 pp differences being reported. Whichever is chosen is
+    recorded in the run record."""
+    downstream_batch_size: int = 4
+    downstream_limit: int | None = None
+    """Samples per task. ``None`` runs the full task.
+
+    A subsampled score is **not** comparable with a published number, which is why it is recorded
+    alongside the accuracy rather than only living in the config."""
 
     def __post_init__(self) -> None:
         """Validate evaluation sizes."""
@@ -542,6 +562,26 @@ class EvaluationConfig:
             _require_positive("evaluation.max_samples", self.max_samples)
         if not self.metrics:
             raise ConfigError("evaluation.metrics must list at least one metric")
+        _require_positive("evaluation.downstream_batch_size", self.downstream_batch_size)
+        if self.downstream_limit is not None:
+            _require_positive("evaluation.downstream_limit", self.downstream_limit)
+        if isinstance(self.downstream_device, str):
+            self.downstream_device = Device(self.downstream_device)
+        from scale_aware_compression.evaluation.downstream import DOWNSTREAM_TASKS
+
+        unknown = [task for task in self.downstream_tasks if task not in DOWNSTREAM_TASKS]
+        if unknown:
+            # §4.3 names three tasks. A typo would otherwise surface as a harness error after the
+            # model is loaded, or worse, score a real but unplanned task and record it as evidence.
+            raise ConfigError(
+                f"evaluation.downstream_tasks contains {unknown}, which §4.3 does not name. "
+                f"Permitted: {sorted(DOWNSTREAM_TASKS)}"
+            )
+
+    @property
+    def effective_downstream_device(self) -> Device:
+        """The device downstream tasks actually run on."""
+        return self.downstream_device or self.device
 
 
 @dataclass(slots=True)

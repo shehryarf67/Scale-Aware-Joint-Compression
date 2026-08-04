@@ -1,0 +1,132 @@
+# Downstream task accuracy (plan §4.3, gap A4)
+#
+# Perplexity says a compressed model still predicts text. It does not say the model is still USEFUL.
+# §4.3 requires three multiple-choice tasks alongside it, scored by a pinned lm-evaluation-harness
+# with the task versions recorded (§4.8):
+#
+#     HellaSwag   commonsense sentence completion, 4 choices, chance 25%
+#     PIQA        physical commonsense, 2 choices, chance 50%
+#     ARC-Easy    grade-school science, 4 choices, chance 25%
+#
+# GPU EVALUATION, DECLARED RATHER THAN ASSUMED. Multiple-choice scoring is one forward per CANDIDATE
+# CONTINUATION, not per sequence: ~53,000 forwards and ~8M tokens across the three tasks, roughly
+# 32x a perplexity evaluation. That is ~15-20 h on GPU against ~150 h on CPU across the sweep.
+#
+# This does not weaken the CPU rule. §4.6 binds DEPLOYMENT measurements -- latency, throughput, peak
+# memory, checkpoint size -- to CPU, because those are properties of the machine. A multiple-choice
+# accuracy is a quality metric: a property of the weights and the data, device-invariant far below
+# the ~1 pp differences being reported. `benchmark.device` stays CPU and is untouched. The device is
+# written into every row, so the choice is auditable rather than remembered.
+#
+# The rejected alternative was `downstream_limit` subsampling. It is cheaper, but it weakens
+# comparability with published numbers -- and comparability is the entire reason the harness was
+# chosen over reimplementing three tasks (freeze table, §2.7). Recorded here so the choice is not
+# reopened silently later.
+#
+# WHAT TO READ CAREFULLY
+#
+#   * THERE IS A FLOOR. A model at chance has stopped doing the task, not done it worse. Every row
+#     carries the task's chance level and an `above_chance` flag, and the run warns.
+#   * THE SCORING PATH IS PARTLY UNCOMPRESSED. §2.6 excludes embeddings and the head from the
+#     targeted modules, so the logits come from an FP32 layer at every budget. Correct under the
+#     plan's scale-invariant budget definition, and worth stating because a reader may expect
+#     otherwise.
+#   * REPORT AGAINST DENSE. Dense runs first for each model so every compressed arm has a retention
+#     reference, exactly as for perplexity.
+#
+# Aggressive budget only (30% + W4). It is the headline budget and the one where quality is most at
+# risk; the moderate W8 budget retains 96% perplexity at 1B, so a downstream difference there would
+# be below what three tasks at these sample sizes can resolve. Running it as well is a defensible
+# addition, not a substitute.
+#
+#     python scripts/run_downstream.py --config configs/experiments/downstream.yaml
+#     python scripts/run_downstream.py --config ... --models pythia-160m --limit 200
+#
+# Validation-adjacent: these are the tasks' own splits, which lm-eval selects. Not the WikiText test
+# split, so nothing here spends the confirmatory perplexity split.
+
+include:
+  - ../models/pythia_160m.yaml
+  - ../compression/sequential.yaml
+  - ../evaluation/quality.yaml
+  - ../evaluation/cpu_benchmark.yaml
+
+experiment:
+  id: downstream
+  name: Downstream task accuracy across arms and scales
+  description: >-
+    HellaSwag, PIQA and ARC-Easy for the dense, sequential and joint arms at the aggressive budget
+    across all three Pythia scales, with per-task versions and accuracy retention against dense.
+  tags:
+    - exploratory
+    - downstream
+    - a4
+
+runtime:
+  seed: 1234
+  deterministic: true
+  output_dir: outputs
+  log_level: INFO
+
+model:
+  # Loaded on the host; compression stages one block at a time to the card, and the harness moves
+  # the model to `downstream_device` itself.
+  device: cpu
+
+data:
+  # Matched to the screening grid, so the compressed models scored here are the same ones the
+  # quality tables describe rather than something adjacent.
+  calibration_samples: 128
+  calibration_split: train
+  sequence_length: 512
+  max_eval_samples: 512
+  batch_size: 4
+
+evaluation:
+  downstream_tasks:
+    - hellaswag
+    - piqa
+    - arc_easy
+  downstream_device: cuda
+  downstream_batch_size: 8
+  # Full tasks. `null` on purpose -- see the subsampling note above.
+  downstream_limit: null
+
+compression:
+  # The aggressive budget: 30% + W4, where the joint mechanism is live (F-05) and quality is most at
+  # risk.
+  budget_label: aggressive
+  pruning:
+    sparsity: 0.3
+  quantisation:
+    bits: 4
+  reconstruction:
+    solver: sweep
+    local_steps: 1
+    joint_iterations: 2
+    comparison_group: output
+    scale_search: false
+    keep_benefit_saliency: false
+    offload_blocks: true
+
+sweep:
+  models:
+    - pythia-160m
+    - pythia-410m
+    - pythia-1b
+  methods:
+    - dense
+    - sequential
+    - joint
+  budgets:
+    - aggressive
+  budget_overrides:
+    aggressive:
+      compression:
+        budget_label: aggressive
+        pruning:
+          sparsity: 0.3
+        quantisation:
+          bits: 4
+  skip_existing: false
+  continue_on_error: false
