@@ -966,3 +966,89 @@ class TestTheCommittedEvidenceSetIsCurrent:
             "results/evidence/ is stale against outputs/metrics/. Re-run "
             f"scripts/export_evidence.py.\n{completed.stderr}"
         )
+
+
+class TestTheConfirmatoryManifest:
+    """A1 step 9. Step 10 runs once, costs ~38 h, and forbids tuning afterwards.
+
+    The manifest is the artefact that makes "frozen" checkable instead of asserted: every commit,
+    revision, cell, replicate, order, device and exclusion rule resolved in one place, with the
+    checks that had to pass recorded alongside.
+    """
+
+    @pytest.fixture(scope="class")
+    def manifest(self, project_root: Path) -> dict | None:
+        path = project_root / "results" / "evidence" / "confirmatory_manifest.json"
+        if not path.exists():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def test_the_builder_refuses_a_dirty_tree(self, project_root: Path):
+        """A freeze recorded at a -dirty commit cannot be reproduced.
+
+        This project's one unusable result set came from a `-dirty` tree 22 commits behind main, so
+        the builder refuses rather than warns. Asserted by reading the source, because the test
+        cannot make the working tree dirty on demand without side effects.
+        """
+        source = (project_root / "scripts" / "build_confirmatory_manifest.py").read_text(
+            encoding="utf-8"
+        )
+        assert "working tree is dirty" in source
+        assert "valid_for_freeze" in source
+
+    def test_the_manifest_records_whether_it_is_valid_for_freeze(self, manifest):
+        if manifest is None:
+            pytest.skip("manifest not generated on this machine")
+        assert "valid_for_freeze" in manifest
+        assert isinstance(manifest["valid_for_freeze"], bool)
+
+    def test_a_frozen_manifest_has_no_failed_checks_and_a_clean_tree(self, manifest):
+        """The two conditions that make the artefact mean anything."""
+        if manifest is None:
+            pytest.skip("manifest not generated on this machine")
+        if not manifest["valid_for_freeze"]:
+            pytest.skip("manifest is marked inspection-only")
+        assert manifest["checks_failed"] == []
+        assert manifest["tree_clean"] is True
+        assert not str(manifest["git_commit"]).endswith("-dirty")
+
+    def test_it_pins_the_confirmatory_conditions(self, manifest):
+        if manifest is None:
+            pytest.skip("manifest not generated on this machine")
+        assert manifest["evaluation"]["split"] == "test", "confirmation must use the held-out split"
+        assert manifest["evaluation"]["device"] == "cpu", "reported quality must come from CPU"
+        assert manifest["benchmark"]["device"] == "cpu", "§4.6 deployment measurements are CPU-only"
+
+    def test_every_model_revision_is_a_full_sha(self, manifest):
+        """§2.7. B-13 was a sweep inheriting one model's revision for every cell."""
+        if manifest is None:
+            pytest.skip("manifest not generated on this machine")
+        for model, revision in manifest["model_revisions"].items():
+            assert re.fullmatch(r"[0-9a-f]{40}", str(revision)), f"{model}: {revision!r}"
+
+    def test_the_frozen_order_includes_the_one_reversed_cell(self, manifest):
+        """If pythia-1b/moderate is not Q→P in the manifest, the resolution did not happen."""
+        if manifest is None:
+            pytest.skip("manifest not generated on this machine")
+        assert manifest["frozen_sequential_order"]["pythia-1b/moderate"] == "sequential_qp"
+
+    def test_it_states_where_significance_is_unreachable(self, manifest):
+        """R=5 at 1B cannot reach p < 0.05 at any effect size, and that must be on the record."""
+        if manifest is None:
+            pytest.skip("manifest not generated on this machine")
+        assert manifest["replicates"]["pythia-1b"]["significance_reachable"] is False
+        assert manifest["replicates"]["pythia-160m"]["significance_reachable"] is True
+
+    def test_it_records_the_withdrawn_clause_and_the_loosening(self, manifest):
+        """A1 requires the write-up to admit the amended rule is weaker, not neutral."""
+        if manifest is None:
+            pytest.skip("manifest not generated on this machine")
+        rule = manifest["practical_importance_rule"]
+        assert "withdrawn_clause" in rule
+        assert "REDUCTION" in rule["withdrawn_clause"]
+
+    def test_it_states_the_exclusions_rather_than_leaving_gaps(self, manifest):
+        if manifest is None:
+            pytest.skip("manifest not generated on this machine")
+        for key in ("latency", "downstream", "1b_significance", "extended_models"):
+            assert key in manifest["exclusion_rules"], f"exclusion {key!r} is not stated"
