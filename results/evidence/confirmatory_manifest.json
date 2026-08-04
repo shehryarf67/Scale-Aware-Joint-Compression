@@ -1,0 +1,2091 @@
+{
+  "benchmark": {
+    "device": "cpu",
+    "measured_runs": 30,
+    "num_threads": 4,
+    "warmup_runs": 5
+  },
+  "budgets": {
+    "aggressive": {
+      "bits": 4,
+      "sparsity": 0.3
+    },
+    "moderate": {
+      "bits": 8,
+      "sparsity": 0.3
+    }
+  },
+  "cell_count": 210,
+  "cells": [
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_dense_moderate_s00_b32_rep0",
+      "method": "dense",
+      "model": "pythia-160m",
+      "replicate": 0,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_dense_moderate_s00_b32_rep1",
+      "method": "dense",
+      "model": "pythia-160m",
+      "replicate": 1,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_dense_moderate_s00_b32_rep2",
+      "method": "dense",
+      "model": "pythia-160m",
+      "replicate": 2,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_dense_moderate_s00_b32_rep3",
+      "method": "dense",
+      "model": "pythia-160m",
+      "replicate": 3,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_dense_moderate_s00_b32_rep4",
+      "method": "dense",
+      "model": "pythia-160m",
+      "replicate": 4,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_dense_moderate_s00_b32_rep5",
+      "method": "dense",
+      "model": "pythia-160m",
+      "replicate": 5,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_dense_moderate_s00_b32_rep6",
+      "method": "dense",
+      "model": "pythia-160m",
+      "replicate": 6,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_dense_moderate_s00_b32_rep7",
+      "method": "dense",
+      "model": "pythia-160m",
+      "replicate": 7,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_dense_aggressive_s00_b32_rep0",
+      "method": "dense",
+      "model": "pythia-160m",
+      "replicate": 0,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_dense_aggressive_s00_b32_rep1",
+      "method": "dense",
+      "model": "pythia-160m",
+      "replicate": 1,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_dense_aggressive_s00_b32_rep2",
+      "method": "dense",
+      "model": "pythia-160m",
+      "replicate": 2,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_dense_aggressive_s00_b32_rep3",
+      "method": "dense",
+      "model": "pythia-160m",
+      "replicate": 3,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_dense_aggressive_s00_b32_rep4",
+      "method": "dense",
+      "model": "pythia-160m",
+      "replicate": 4,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_dense_aggressive_s00_b32_rep5",
+      "method": "dense",
+      "model": "pythia-160m",
+      "replicate": 5,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_dense_aggressive_s00_b32_rep6",
+      "method": "dense",
+      "model": "pythia-160m",
+      "replicate": 6,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_dense_aggressive_s00_b32_rep7",
+      "method": "dense",
+      "model": "pythia-160m",
+      "replicate": 7,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_pruning_moderate_s30_b32_rep0",
+      "method": "pruning",
+      "model": "pythia-160m",
+      "replicate": 0,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_pruning_moderate_s30_b32_rep1",
+      "method": "pruning",
+      "model": "pythia-160m",
+      "replicate": 1,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_pruning_moderate_s30_b32_rep2",
+      "method": "pruning",
+      "model": "pythia-160m",
+      "replicate": 2,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_pruning_moderate_s30_b32_rep3",
+      "method": "pruning",
+      "model": "pythia-160m",
+      "replicate": 3,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_pruning_moderate_s30_b32_rep4",
+      "method": "pruning",
+      "model": "pythia-160m",
+      "replicate": 4,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_pruning_moderate_s30_b32_rep5",
+      "method": "pruning",
+      "model": "pythia-160m",
+      "replicate": 5,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_pruning_moderate_s30_b32_rep6",
+      "method": "pruning",
+      "model": "pythia-160m",
+      "replicate": 6,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_pruning_moderate_s30_b32_rep7",
+      "method": "pruning",
+      "model": "pythia-160m",
+      "replicate": 7,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_pruning_aggressive_s30_b32_rep0",
+      "method": "pruning",
+      "model": "pythia-160m",
+      "replicate": 0,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_pruning_aggressive_s30_b32_rep1",
+      "method": "pruning",
+      "model": "pythia-160m",
+      "replicate": 1,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_pruning_aggressive_s30_b32_rep2",
+      "method": "pruning",
+      "model": "pythia-160m",
+      "replicate": 2,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_pruning_aggressive_s30_b32_rep3",
+      "method": "pruning",
+      "model": "pythia-160m",
+      "replicate": 3,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_pruning_aggressive_s30_b32_rep4",
+      "method": "pruning",
+      "model": "pythia-160m",
+      "replicate": 4,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_pruning_aggressive_s30_b32_rep5",
+      "method": "pruning",
+      "model": "pythia-160m",
+      "replicate": 5,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_pruning_aggressive_s30_b32_rep6",
+      "method": "pruning",
+      "model": "pythia-160m",
+      "replicate": 6,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_pruning_aggressive_s30_b32_rep7",
+      "method": "pruning",
+      "model": "pythia-160m",
+      "replicate": 7,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_quantisation_moderate_s00_b8_rep0",
+      "method": "quantisation",
+      "model": "pythia-160m",
+      "replicate": 0,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_quantisation_moderate_s00_b8_rep1",
+      "method": "quantisation",
+      "model": "pythia-160m",
+      "replicate": 1,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_quantisation_moderate_s00_b8_rep2",
+      "method": "quantisation",
+      "model": "pythia-160m",
+      "replicate": 2,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_quantisation_moderate_s00_b8_rep3",
+      "method": "quantisation",
+      "model": "pythia-160m",
+      "replicate": 3,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_quantisation_moderate_s00_b8_rep4",
+      "method": "quantisation",
+      "model": "pythia-160m",
+      "replicate": 4,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_quantisation_moderate_s00_b8_rep5",
+      "method": "quantisation",
+      "model": "pythia-160m",
+      "replicate": 5,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_quantisation_moderate_s00_b8_rep6",
+      "method": "quantisation",
+      "model": "pythia-160m",
+      "replicate": 6,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_quantisation_moderate_s00_b8_rep7",
+      "method": "quantisation",
+      "model": "pythia-160m",
+      "replicate": 7,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_quantisation_aggressive_s00_b4_rep0",
+      "method": "quantisation",
+      "model": "pythia-160m",
+      "replicate": 0,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_quantisation_aggressive_s00_b4_rep1",
+      "method": "quantisation",
+      "model": "pythia-160m",
+      "replicate": 1,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_quantisation_aggressive_s00_b4_rep2",
+      "method": "quantisation",
+      "model": "pythia-160m",
+      "replicate": 2,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_quantisation_aggressive_s00_b4_rep3",
+      "method": "quantisation",
+      "model": "pythia-160m",
+      "replicate": 3,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_quantisation_aggressive_s00_b4_rep4",
+      "method": "quantisation",
+      "model": "pythia-160m",
+      "replicate": 4,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_quantisation_aggressive_s00_b4_rep5",
+      "method": "quantisation",
+      "model": "pythia-160m",
+      "replicate": 5,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_quantisation_aggressive_s00_b4_rep6",
+      "method": "quantisation",
+      "model": "pythia-160m",
+      "replicate": 6,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_quantisation_aggressive_s00_b4_rep7",
+      "method": "quantisation",
+      "model": "pythia-160m",
+      "replicate": 7,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_sequential_moderate_s30_b8_rep0",
+      "frozen_order_evidence": "F-28: indistinguishable over 5 draws, P\u2192Q by pre-declared fallback",
+      "method": "sequential",
+      "model": "pythia-160m",
+      "replicate": 0,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_sequential_moderate_s30_b8_rep1",
+      "frozen_order_evidence": "F-28: indistinguishable over 5 draws, P\u2192Q by pre-declared fallback",
+      "method": "sequential",
+      "model": "pythia-160m",
+      "replicate": 1,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_sequential_moderate_s30_b8_rep2",
+      "frozen_order_evidence": "F-28: indistinguishable over 5 draws, P\u2192Q by pre-declared fallback",
+      "method": "sequential",
+      "model": "pythia-160m",
+      "replicate": 2,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_sequential_moderate_s30_b8_rep3",
+      "frozen_order_evidence": "F-28: indistinguishable over 5 draws, P\u2192Q by pre-declared fallback",
+      "method": "sequential",
+      "model": "pythia-160m",
+      "replicate": 3,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_sequential_moderate_s30_b8_rep4",
+      "frozen_order_evidence": "F-28: indistinguishable over 5 draws, P\u2192Q by pre-declared fallback",
+      "method": "sequential",
+      "model": "pythia-160m",
+      "replicate": 4,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_sequential_moderate_s30_b8_rep5",
+      "frozen_order_evidence": "F-28: indistinguishable over 5 draws, P\u2192Q by pre-declared fallback",
+      "method": "sequential",
+      "model": "pythia-160m",
+      "replicate": 5,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_sequential_moderate_s30_b8_rep6",
+      "frozen_order_evidence": "F-28: indistinguishable over 5 draws, P\u2192Q by pre-declared fallback",
+      "method": "sequential",
+      "model": "pythia-160m",
+      "replicate": 6,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_sequential_moderate_s30_b8_rep7",
+      "frozen_order_evidence": "F-28: indistinguishable over 5 draws, P\u2192Q by pre-declared fallback",
+      "method": "sequential",
+      "model": "pythia-160m",
+      "replicate": 7,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_sequential_aggressive_s30_b4_rep0",
+      "frozen_order_evidence": "F-24: P\u2192Q by +4.26 pp",
+      "method": "sequential",
+      "model": "pythia-160m",
+      "replicate": 0,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_sequential_aggressive_s30_b4_rep1",
+      "frozen_order_evidence": "F-24: P\u2192Q by +4.26 pp",
+      "method": "sequential",
+      "model": "pythia-160m",
+      "replicate": 1,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_sequential_aggressive_s30_b4_rep2",
+      "frozen_order_evidence": "F-24: P\u2192Q by +4.26 pp",
+      "method": "sequential",
+      "model": "pythia-160m",
+      "replicate": 2,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_sequential_aggressive_s30_b4_rep3",
+      "frozen_order_evidence": "F-24: P\u2192Q by +4.26 pp",
+      "method": "sequential",
+      "model": "pythia-160m",
+      "replicate": 3,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_sequential_aggressive_s30_b4_rep4",
+      "frozen_order_evidence": "F-24: P\u2192Q by +4.26 pp",
+      "method": "sequential",
+      "model": "pythia-160m",
+      "replicate": 4,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_sequential_aggressive_s30_b4_rep5",
+      "frozen_order_evidence": "F-24: P\u2192Q by +4.26 pp",
+      "method": "sequential",
+      "model": "pythia-160m",
+      "replicate": 5,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_sequential_aggressive_s30_b4_rep6",
+      "frozen_order_evidence": "F-24: P\u2192Q by +4.26 pp",
+      "method": "sequential",
+      "model": "pythia-160m",
+      "replicate": 6,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_sequential_aggressive_s30_b4_rep7",
+      "frozen_order_evidence": "F-24: P\u2192Q by +4.26 pp",
+      "method": "sequential",
+      "model": "pythia-160m",
+      "replicate": 7,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_joint_moderate_s30_b8_rep0",
+      "method": "joint",
+      "model": "pythia-160m",
+      "replicate": 0,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_joint_moderate_s30_b8_rep1",
+      "method": "joint",
+      "model": "pythia-160m",
+      "replicate": 1,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_joint_moderate_s30_b8_rep2",
+      "method": "joint",
+      "model": "pythia-160m",
+      "replicate": 2,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_joint_moderate_s30_b8_rep3",
+      "method": "joint",
+      "model": "pythia-160m",
+      "replicate": 3,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_joint_moderate_s30_b8_rep4",
+      "method": "joint",
+      "model": "pythia-160m",
+      "replicate": 4,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_joint_moderate_s30_b8_rep5",
+      "method": "joint",
+      "model": "pythia-160m",
+      "replicate": 5,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_joint_moderate_s30_b8_rep6",
+      "method": "joint",
+      "model": "pythia-160m",
+      "replicate": 6,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-160m_joint_moderate_s30_b8_rep7",
+      "method": "joint",
+      "model": "pythia-160m",
+      "replicate": 7,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_joint_aggressive_s30_b4_rep0",
+      "method": "joint",
+      "model": "pythia-160m",
+      "replicate": 0,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_joint_aggressive_s30_b4_rep1",
+      "method": "joint",
+      "model": "pythia-160m",
+      "replicate": 1,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_joint_aggressive_s30_b4_rep2",
+      "method": "joint",
+      "model": "pythia-160m",
+      "replicate": 2,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_joint_aggressive_s30_b4_rep3",
+      "method": "joint",
+      "model": "pythia-160m",
+      "replicate": 3,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_joint_aggressive_s30_b4_rep4",
+      "method": "joint",
+      "model": "pythia-160m",
+      "replicate": 4,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_joint_aggressive_s30_b4_rep5",
+      "method": "joint",
+      "model": "pythia-160m",
+      "replicate": 5,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_joint_aggressive_s30_b4_rep6",
+      "method": "joint",
+      "model": "pythia-160m",
+      "replicate": 6,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-160m_joint_aggressive_s30_b4_rep7",
+      "method": "joint",
+      "model": "pythia-160m",
+      "replicate": 7,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_dense_moderate_s00_b32_rep0",
+      "method": "dense",
+      "model": "pythia-410m",
+      "replicate": 0,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_dense_moderate_s00_b32_rep1",
+      "method": "dense",
+      "model": "pythia-410m",
+      "replicate": 1,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_dense_moderate_s00_b32_rep2",
+      "method": "dense",
+      "model": "pythia-410m",
+      "replicate": 2,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_dense_moderate_s00_b32_rep3",
+      "method": "dense",
+      "model": "pythia-410m",
+      "replicate": 3,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_dense_moderate_s00_b32_rep4",
+      "method": "dense",
+      "model": "pythia-410m",
+      "replicate": 4,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_dense_moderate_s00_b32_rep5",
+      "method": "dense",
+      "model": "pythia-410m",
+      "replicate": 5,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_dense_moderate_s00_b32_rep6",
+      "method": "dense",
+      "model": "pythia-410m",
+      "replicate": 6,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_dense_moderate_s00_b32_rep7",
+      "method": "dense",
+      "model": "pythia-410m",
+      "replicate": 7,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_dense_aggressive_s00_b32_rep0",
+      "method": "dense",
+      "model": "pythia-410m",
+      "replicate": 0,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_dense_aggressive_s00_b32_rep1",
+      "method": "dense",
+      "model": "pythia-410m",
+      "replicate": 1,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_dense_aggressive_s00_b32_rep2",
+      "method": "dense",
+      "model": "pythia-410m",
+      "replicate": 2,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_dense_aggressive_s00_b32_rep3",
+      "method": "dense",
+      "model": "pythia-410m",
+      "replicate": 3,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_dense_aggressive_s00_b32_rep4",
+      "method": "dense",
+      "model": "pythia-410m",
+      "replicate": 4,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_dense_aggressive_s00_b32_rep5",
+      "method": "dense",
+      "model": "pythia-410m",
+      "replicate": 5,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_dense_aggressive_s00_b32_rep6",
+      "method": "dense",
+      "model": "pythia-410m",
+      "replicate": 6,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_dense_aggressive_s00_b32_rep7",
+      "method": "dense",
+      "model": "pythia-410m",
+      "replicate": 7,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_pruning_moderate_s30_b32_rep0",
+      "method": "pruning",
+      "model": "pythia-410m",
+      "replicate": 0,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_pruning_moderate_s30_b32_rep1",
+      "method": "pruning",
+      "model": "pythia-410m",
+      "replicate": 1,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_pruning_moderate_s30_b32_rep2",
+      "method": "pruning",
+      "model": "pythia-410m",
+      "replicate": 2,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_pruning_moderate_s30_b32_rep3",
+      "method": "pruning",
+      "model": "pythia-410m",
+      "replicate": 3,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_pruning_moderate_s30_b32_rep4",
+      "method": "pruning",
+      "model": "pythia-410m",
+      "replicate": 4,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_pruning_moderate_s30_b32_rep5",
+      "method": "pruning",
+      "model": "pythia-410m",
+      "replicate": 5,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_pruning_moderate_s30_b32_rep6",
+      "method": "pruning",
+      "model": "pythia-410m",
+      "replicate": 6,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_pruning_moderate_s30_b32_rep7",
+      "method": "pruning",
+      "model": "pythia-410m",
+      "replicate": 7,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_pruning_aggressive_s30_b32_rep0",
+      "method": "pruning",
+      "model": "pythia-410m",
+      "replicate": 0,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_pruning_aggressive_s30_b32_rep1",
+      "method": "pruning",
+      "model": "pythia-410m",
+      "replicate": 1,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_pruning_aggressive_s30_b32_rep2",
+      "method": "pruning",
+      "model": "pythia-410m",
+      "replicate": 2,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_pruning_aggressive_s30_b32_rep3",
+      "method": "pruning",
+      "model": "pythia-410m",
+      "replicate": 3,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_pruning_aggressive_s30_b32_rep4",
+      "method": "pruning",
+      "model": "pythia-410m",
+      "replicate": 4,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_pruning_aggressive_s30_b32_rep5",
+      "method": "pruning",
+      "model": "pythia-410m",
+      "replicate": 5,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_pruning_aggressive_s30_b32_rep6",
+      "method": "pruning",
+      "model": "pythia-410m",
+      "replicate": 6,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_pruning_aggressive_s30_b32_rep7",
+      "method": "pruning",
+      "model": "pythia-410m",
+      "replicate": 7,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_quantisation_moderate_s00_b8_rep0",
+      "method": "quantisation",
+      "model": "pythia-410m",
+      "replicate": 0,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_quantisation_moderate_s00_b8_rep1",
+      "method": "quantisation",
+      "model": "pythia-410m",
+      "replicate": 1,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_quantisation_moderate_s00_b8_rep2",
+      "method": "quantisation",
+      "model": "pythia-410m",
+      "replicate": 2,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_quantisation_moderate_s00_b8_rep3",
+      "method": "quantisation",
+      "model": "pythia-410m",
+      "replicate": 3,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_quantisation_moderate_s00_b8_rep4",
+      "method": "quantisation",
+      "model": "pythia-410m",
+      "replicate": 4,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_quantisation_moderate_s00_b8_rep5",
+      "method": "quantisation",
+      "model": "pythia-410m",
+      "replicate": 5,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_quantisation_moderate_s00_b8_rep6",
+      "method": "quantisation",
+      "model": "pythia-410m",
+      "replicate": 6,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_quantisation_moderate_s00_b8_rep7",
+      "method": "quantisation",
+      "model": "pythia-410m",
+      "replicate": 7,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_quantisation_aggressive_s00_b4_rep0",
+      "method": "quantisation",
+      "model": "pythia-410m",
+      "replicate": 0,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_quantisation_aggressive_s00_b4_rep1",
+      "method": "quantisation",
+      "model": "pythia-410m",
+      "replicate": 1,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_quantisation_aggressive_s00_b4_rep2",
+      "method": "quantisation",
+      "model": "pythia-410m",
+      "replicate": 2,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_quantisation_aggressive_s00_b4_rep3",
+      "method": "quantisation",
+      "model": "pythia-410m",
+      "replicate": 3,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_quantisation_aggressive_s00_b4_rep4",
+      "method": "quantisation",
+      "model": "pythia-410m",
+      "replicate": 4,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_quantisation_aggressive_s00_b4_rep5",
+      "method": "quantisation",
+      "model": "pythia-410m",
+      "replicate": 5,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_quantisation_aggressive_s00_b4_rep6",
+      "method": "quantisation",
+      "model": "pythia-410m",
+      "replicate": 6,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_quantisation_aggressive_s00_b4_rep7",
+      "method": "quantisation",
+      "model": "pythia-410m",
+      "replicate": 7,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_sequential_moderate_s30_b8_rep0",
+      "frozen_order_evidence": "F-28: indistinguishable, P\u2192Q by the same fallback",
+      "method": "sequential",
+      "model": "pythia-410m",
+      "replicate": 0,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_sequential_moderate_s30_b8_rep1",
+      "frozen_order_evidence": "F-28: indistinguishable, P\u2192Q by the same fallback",
+      "method": "sequential",
+      "model": "pythia-410m",
+      "replicate": 1,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_sequential_moderate_s30_b8_rep2",
+      "frozen_order_evidence": "F-28: indistinguishable, P\u2192Q by the same fallback",
+      "method": "sequential",
+      "model": "pythia-410m",
+      "replicate": 2,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_sequential_moderate_s30_b8_rep3",
+      "frozen_order_evidence": "F-28: indistinguishable, P\u2192Q by the same fallback",
+      "method": "sequential",
+      "model": "pythia-410m",
+      "replicate": 3,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_sequential_moderate_s30_b8_rep4",
+      "frozen_order_evidence": "F-28: indistinguishable, P\u2192Q by the same fallback",
+      "method": "sequential",
+      "model": "pythia-410m",
+      "replicate": 4,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_sequential_moderate_s30_b8_rep5",
+      "frozen_order_evidence": "F-28: indistinguishable, P\u2192Q by the same fallback",
+      "method": "sequential",
+      "model": "pythia-410m",
+      "replicate": 5,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_sequential_moderate_s30_b8_rep6",
+      "frozen_order_evidence": "F-28: indistinguishable, P\u2192Q by the same fallback",
+      "method": "sequential",
+      "model": "pythia-410m",
+      "replicate": 6,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_sequential_moderate_s30_b8_rep7",
+      "frozen_order_evidence": "F-28: indistinguishable, P\u2192Q by the same fallback",
+      "method": "sequential",
+      "model": "pythia-410m",
+      "replicate": 7,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_sequential_aggressive_s30_b4_rep0",
+      "frozen_order_evidence": "F-25: P\u2192Q by +6.82 pp",
+      "method": "sequential",
+      "model": "pythia-410m",
+      "replicate": 0,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_sequential_aggressive_s30_b4_rep1",
+      "frozen_order_evidence": "F-25: P\u2192Q by +6.82 pp",
+      "method": "sequential",
+      "model": "pythia-410m",
+      "replicate": 1,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_sequential_aggressive_s30_b4_rep2",
+      "frozen_order_evidence": "F-25: P\u2192Q by +6.82 pp",
+      "method": "sequential",
+      "model": "pythia-410m",
+      "replicate": 2,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_sequential_aggressive_s30_b4_rep3",
+      "frozen_order_evidence": "F-25: P\u2192Q by +6.82 pp",
+      "method": "sequential",
+      "model": "pythia-410m",
+      "replicate": 3,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_sequential_aggressive_s30_b4_rep4",
+      "frozen_order_evidence": "F-25: P\u2192Q by +6.82 pp",
+      "method": "sequential",
+      "model": "pythia-410m",
+      "replicate": 4,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_sequential_aggressive_s30_b4_rep5",
+      "frozen_order_evidence": "F-25: P\u2192Q by +6.82 pp",
+      "method": "sequential",
+      "model": "pythia-410m",
+      "replicate": 5,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_sequential_aggressive_s30_b4_rep6",
+      "frozen_order_evidence": "F-25: P\u2192Q by +6.82 pp",
+      "method": "sequential",
+      "model": "pythia-410m",
+      "replicate": 6,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_sequential_aggressive_s30_b4_rep7",
+      "frozen_order_evidence": "F-25: P\u2192Q by +6.82 pp",
+      "method": "sequential",
+      "model": "pythia-410m",
+      "replicate": 7,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_joint_moderate_s30_b8_rep0",
+      "method": "joint",
+      "model": "pythia-410m",
+      "replicate": 0,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_joint_moderate_s30_b8_rep1",
+      "method": "joint",
+      "model": "pythia-410m",
+      "replicate": 1,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_joint_moderate_s30_b8_rep2",
+      "method": "joint",
+      "model": "pythia-410m",
+      "replicate": 2,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_joint_moderate_s30_b8_rep3",
+      "method": "joint",
+      "model": "pythia-410m",
+      "replicate": 3,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_joint_moderate_s30_b8_rep4",
+      "method": "joint",
+      "model": "pythia-410m",
+      "replicate": 4,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_joint_moderate_s30_b8_rep5",
+      "method": "joint",
+      "model": "pythia-410m",
+      "replicate": 5,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_joint_moderate_s30_b8_rep6",
+      "method": "joint",
+      "model": "pythia-410m",
+      "replicate": 6,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-410m_joint_moderate_s30_b8_rep7",
+      "method": "joint",
+      "model": "pythia-410m",
+      "replicate": 7,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_joint_aggressive_s30_b4_rep0",
+      "method": "joint",
+      "model": "pythia-410m",
+      "replicate": 0,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_joint_aggressive_s30_b4_rep1",
+      "method": "joint",
+      "model": "pythia-410m",
+      "replicate": 1,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_joint_aggressive_s30_b4_rep2",
+      "method": "joint",
+      "model": "pythia-410m",
+      "replicate": 2,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_joint_aggressive_s30_b4_rep3",
+      "method": "joint",
+      "model": "pythia-410m",
+      "replicate": 3,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_joint_aggressive_s30_b4_rep4",
+      "method": "joint",
+      "model": "pythia-410m",
+      "replicate": 4,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_joint_aggressive_s30_b4_rep5",
+      "method": "joint",
+      "model": "pythia-410m",
+      "replicate": 5,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_joint_aggressive_s30_b4_rep6",
+      "method": "joint",
+      "model": "pythia-410m",
+      "replicate": 6,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-410m_joint_aggressive_s30_b4_rep7",
+      "method": "joint",
+      "model": "pythia-410m",
+      "replicate": 7,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_dense_moderate_s00_b32_rep0",
+      "method": "dense",
+      "model": "pythia-1b",
+      "replicate": 0,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_dense_moderate_s00_b32_rep1",
+      "method": "dense",
+      "model": "pythia-1b",
+      "replicate": 1,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_dense_moderate_s00_b32_rep2",
+      "method": "dense",
+      "model": "pythia-1b",
+      "replicate": 2,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_dense_moderate_s00_b32_rep3",
+      "method": "dense",
+      "model": "pythia-1b",
+      "replicate": 3,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_dense_moderate_s00_b32_rep4",
+      "method": "dense",
+      "model": "pythia-1b",
+      "replicate": 4,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_dense_aggressive_s00_b32_rep0",
+      "method": "dense",
+      "model": "pythia-1b",
+      "replicate": 0,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_dense_aggressive_s00_b32_rep1",
+      "method": "dense",
+      "model": "pythia-1b",
+      "replicate": 1,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_dense_aggressive_s00_b32_rep2",
+      "method": "dense",
+      "model": "pythia-1b",
+      "replicate": 2,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_dense_aggressive_s00_b32_rep3",
+      "method": "dense",
+      "model": "pythia-1b",
+      "replicate": 3,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_dense_aggressive_s00_b32_rep4",
+      "method": "dense",
+      "model": "pythia-1b",
+      "replicate": 4,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_pruning_moderate_s30_b32_rep0",
+      "method": "pruning",
+      "model": "pythia-1b",
+      "replicate": 0,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_pruning_moderate_s30_b32_rep1",
+      "method": "pruning",
+      "model": "pythia-1b",
+      "replicate": 1,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_pruning_moderate_s30_b32_rep2",
+      "method": "pruning",
+      "model": "pythia-1b",
+      "replicate": 2,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_pruning_moderate_s30_b32_rep3",
+      "method": "pruning",
+      "model": "pythia-1b",
+      "replicate": 3,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_pruning_moderate_s30_b32_rep4",
+      "method": "pruning",
+      "model": "pythia-1b",
+      "replicate": 4,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_pruning_aggressive_s30_b32_rep0",
+      "method": "pruning",
+      "model": "pythia-1b",
+      "replicate": 0,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_pruning_aggressive_s30_b32_rep1",
+      "method": "pruning",
+      "model": "pythia-1b",
+      "replicate": 1,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_pruning_aggressive_s30_b32_rep2",
+      "method": "pruning",
+      "model": "pythia-1b",
+      "replicate": 2,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_pruning_aggressive_s30_b32_rep3",
+      "method": "pruning",
+      "model": "pythia-1b",
+      "replicate": 3,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 32,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_pruning_aggressive_s30_b32_rep4",
+      "method": "pruning",
+      "model": "pythia-1b",
+      "replicate": 4,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_quantisation_moderate_s00_b8_rep0",
+      "method": "quantisation",
+      "model": "pythia-1b",
+      "replicate": 0,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_quantisation_moderate_s00_b8_rep1",
+      "method": "quantisation",
+      "model": "pythia-1b",
+      "replicate": 1,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_quantisation_moderate_s00_b8_rep2",
+      "method": "quantisation",
+      "model": "pythia-1b",
+      "replicate": 2,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_quantisation_moderate_s00_b8_rep3",
+      "method": "quantisation",
+      "model": "pythia-1b",
+      "replicate": 3,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_quantisation_moderate_s00_b8_rep4",
+      "method": "quantisation",
+      "model": "pythia-1b",
+      "replicate": 4,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_quantisation_aggressive_s00_b4_rep0",
+      "method": "quantisation",
+      "model": "pythia-1b",
+      "replicate": 0,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_quantisation_aggressive_s00_b4_rep1",
+      "method": "quantisation",
+      "model": "pythia-1b",
+      "replicate": 1,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_quantisation_aggressive_s00_b4_rep2",
+      "method": "quantisation",
+      "model": "pythia-1b",
+      "replicate": 2,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_quantisation_aggressive_s00_b4_rep3",
+      "method": "quantisation",
+      "model": "pythia-1b",
+      "replicate": 3,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_quantisation_aggressive_s00_b4_rep4",
+      "method": "quantisation",
+      "model": "pythia-1b",
+      "replicate": 4,
+      "sparsity": 0.0
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_sequential_qp_moderate_s30_b8_rep0",
+      "frozen_order_evidence": "F-32: Q\u2192P by +0.10 pp, 3/3 draws",
+      "method": "sequential_qp",
+      "model": "pythia-1b",
+      "replicate": 0,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_sequential_qp_moderate_s30_b8_rep1",
+      "frozen_order_evidence": "F-32: Q\u2192P by +0.10 pp, 3/3 draws",
+      "method": "sequential_qp",
+      "model": "pythia-1b",
+      "replicate": 1,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_sequential_qp_moderate_s30_b8_rep2",
+      "frozen_order_evidence": "F-32: Q\u2192P by +0.10 pp, 3/3 draws",
+      "method": "sequential_qp",
+      "model": "pythia-1b",
+      "replicate": 2,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_sequential_qp_moderate_s30_b8_rep3",
+      "frozen_order_evidence": "F-32: Q\u2192P by +0.10 pp, 3/3 draws",
+      "method": "sequential_qp",
+      "model": "pythia-1b",
+      "replicate": 3,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_sequential_qp_moderate_s30_b8_rep4",
+      "frozen_order_evidence": "F-32: Q\u2192P by +0.10 pp, 3/3 draws",
+      "method": "sequential_qp",
+      "model": "pythia-1b",
+      "replicate": 4,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_sequential_aggressive_s30_b4_rep0",
+      "frozen_order_evidence": "F-32: P\u2192Q by +2.15 pp, 3/3 draws",
+      "method": "sequential",
+      "model": "pythia-1b",
+      "replicate": 0,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_sequential_aggressive_s30_b4_rep1",
+      "frozen_order_evidence": "F-32: P\u2192Q by +2.15 pp, 3/3 draws",
+      "method": "sequential",
+      "model": "pythia-1b",
+      "replicate": 1,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_sequential_aggressive_s30_b4_rep2",
+      "frozen_order_evidence": "F-32: P\u2192Q by +2.15 pp, 3/3 draws",
+      "method": "sequential",
+      "model": "pythia-1b",
+      "replicate": 2,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_sequential_aggressive_s30_b4_rep3",
+      "frozen_order_evidence": "F-32: P\u2192Q by +2.15 pp, 3/3 draws",
+      "method": "sequential",
+      "model": "pythia-1b",
+      "replicate": 3,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_sequential_aggressive_s30_b4_rep4",
+      "frozen_order_evidence": "F-32: P\u2192Q by +2.15 pp, 3/3 draws",
+      "method": "sequential",
+      "model": "pythia-1b",
+      "replicate": 4,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_joint_moderate_s30_b8_rep0",
+      "method": "joint",
+      "model": "pythia-1b",
+      "replicate": 0,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_joint_moderate_s30_b8_rep1",
+      "method": "joint",
+      "model": "pythia-1b",
+      "replicate": 1,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_joint_moderate_s30_b8_rep2",
+      "method": "joint",
+      "model": "pythia-1b",
+      "replicate": 2,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_joint_moderate_s30_b8_rep3",
+      "method": "joint",
+      "model": "pythia-1b",
+      "replicate": 3,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 8,
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_joint_moderate_s30_b8_rep4",
+      "method": "joint",
+      "model": "pythia-1b",
+      "replicate": 4,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_joint_aggressive_s30_b4_rep0",
+      "method": "joint",
+      "model": "pythia-1b",
+      "replicate": 0,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_joint_aggressive_s30_b4_rep1",
+      "method": "joint",
+      "model": "pythia-1b",
+      "replicate": 1,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_joint_aggressive_s30_b4_rep2",
+      "method": "joint",
+      "model": "pythia-1b",
+      "replicate": 2,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_joint_aggressive_s30_b4_rep3",
+      "method": "joint",
+      "model": "pythia-1b",
+      "replicate": 3,
+      "sparsity": 0.3
+    },
+    {
+      "bits": 4,
+      "budget": "aggressive",
+      "experiment_id": "pythia-1b_joint_aggressive_s30_b4_rep4",
+      "method": "joint",
+      "model": "pythia-1b",
+      "replicate": 4,
+      "sparsity": 0.3
+    }
+  ],
+  "checks_failed": [],
+  "config_path": "configs/experiments/main_scale_sweep.yaml",
+  "config_sha256": "cab8ddf070d73ca35b3c474d0565ae9a825da9e00b8c7edde54d20b08eac2bfb",
+  "environment": {
+    "hardware": {
+      "available_memory_gb": 5.26,
+      "cpu_count_logical": 16,
+      "cpu_count_physical": 10,
+      "cpu_max_frequency_mhz": 2400.0,
+      "cpu_model": "Intel64 Family 6 Model 186 Stepping 2, GenuineIntel",
+      "cuda_available": true,
+      "cuda_device_count": 1,
+      "cuda_device_names": [
+        "NVIDIA GeForce RTX 4050 Laptop GPU"
+      ],
+      "machine": "AMD64",
+      "platform": "Windows-10-10.0.26200-SP0",
+      "processor": "Intel64 Family 6 Model 186 Stepping 2, GenuineIntel",
+      "python_implementation": "CPython",
+      "python_version": "3.11.9",
+      "release": "10",
+      "system": "Windows",
+      "thread_env": {
+        "MKL_NUM_THREADS": null,
+        "NUMEXPR_NUM_THREADS": null,
+        "OMP_NUM_THREADS": null,
+        "OPENBLAS_NUM_THREADS": null
+      },
+      "torch_num_interop_threads": 10,
+      "torch_num_threads": 10,
+      "total_memory_gb": 13.701
+    },
+    "host": "Windows|Intel64 Family 6 Model 186 Stepping 2, GenuineIntel|16|NVIDIA GeForce RTX 4050 Laptop GPU",
+    "software": {
+      "accelerate": "1.14.0",
+      "datasets": "5.0.0",
+      "evaluate": "0.4.6",
+      "numpy": "2.4.6",
+      "pandas": "3.0.5",
+      "python": "3.11.9",
+      "safetensors": "0.8.0",
+      "scale_aware_compression": "0.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.17.1",
+      "torch": "2.13.0+cu126",
+      "transformers": "5.14.1"
+    }
+  },
+  "evaluation": {
+    "device": "cpu",
+    "max_samples": 512,
+    "sequence_length": 512,
+    "split": "test"
+  },
+  "exclusion_rules": {
+    "1b_significance": "R=5 at 1B cannot reach p < 0.05 at any effect size; 1B carries effect-size evidence only.",
+    "downstream": "descriptive secondary endpoint, one calibration draw, no formal joint-superiority claim. The seed-era downstream importance rule is withdrawn, not amended.",
+    "extended_models": "pythia-1.4b and qwen2.5-0.5b are excluded from this manifest and from the scale trend. Neither has a frozen sequential order, and \u00a78.2 forbids them consuming the primary sweep's time.",
+    "latency": "only FP32 runtime representations are timed -- dense and pruning-only. A packed W4/W8 layer dequantises on every forward, so a timing would measure the unpacking kernel (decision D1). The absence is recorded per record, not omitted."
+  },
+  "frozen_sequential_order": {
+    "pythia-160m/aggressive": "sequential",
+    "pythia-160m/moderate": "sequential",
+    "pythia-1b/aggressive": "sequential",
+    "pythia-1b/moderate": "sequential_qp",
+    "pythia-410m/aggressive": "sequential",
+    "pythia-410m/moderate": "sequential"
+  },
+  "git_commit": "cbe2098945dcf9851223e7fb55e25ba60a4af73a",
+  "method_version": "4",
+  "model_revisions": {
+    "pythia-160m": "50f5173d932e8e61f858120bcb800b97af589f46",
+    "pythia-1b": "f73d7dcc545c8bd326d8559c8ef84ffe92fea6b2",
+    "pythia-410m": "9879c9b5f8bea9051dcb0e68dff21493d67e9d4f"
+  },
+  "models": [
+    "pythia-160m",
+    "pythia-410m",
+    "pythia-1b"
+  ],
+  "practical_importance_rule": {
+    "criteria": [
+      "perplexity retention improves by >= 1.0 percentage point",
+      "sign consistent across every paired calibration replicate, ties excluded (B-40)",
+      "R reported per cell, with whether significance was reachable at that R"
+    ],
+    "form": "amended (A1 \u00a75.1, \u00a76.3)",
+    "withdrawn_clause": "the original 'mean exceeds the seed spread' clause is withdrawn: run seeds are inert (F-15) so the spread is exactly zero and the gate excluded nothing. Replacing an unmeasurable criterion with a weaker measurable one is a REDUCTION in pre-registered strength and the write-up must say so."
+  },
+  "purpose": "The fully resolved confirmatory configuration for A1 step 10. Step 10 runs once, costs ~38 h, and forbids methodological tuning afterwards, so everything it depends on is pinned and checked here rather than reassembled later.",
+  "replicates": {
+    "pythia-160m": {
+      "R": 8,
+      "seeds": [
+        1234,
+        2718,
+        3141,
+        5772,
+        8111,
+        1729,
+        4669,
+        6180
+      ],
+      "significance_reachable": true
+    },
+    "pythia-1b": {
+      "R": 5,
+      "seeds": [
+        1234,
+        2718,
+        3141,
+        5772,
+        8111
+      ],
+      "significance_reachable": false
+    },
+    "pythia-410m": {
+      "R": 8,
+      "seeds": [
+        1234,
+        2718,
+        3141,
+        5772,
+        8111,
+        1729,
+        4669,
+        6180
+      ],
+      "significance_reachable": true
+    }
+  },
+  "result_schema_version": "2",
+  "schema": "confirmatory_manifest/1",
+  "tree_clean": true,
+  "valid_for_freeze": true,
+  "warnings": [
+    "pythia-1b runs R=5, below 6: no significance claim is reachable at any effect size. Report effect size and sign consistency only."
+  ]
+}

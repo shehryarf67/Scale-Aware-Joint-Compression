@@ -753,9 +753,9 @@ it claims to; it says nothing about absolute quality against published work (A1 
 | 8 | Run the reduced S6 mechanistic control (12 runs) | ✅ **done** — [F-33](findings_log.md#f-33) |
 | — | **A5 prefill/decode** (§4.7) | ✅ **done** — [F-34](findings_log.md#f-34) |
 | — | **A4 downstream tasks** (§4.3) | ✅ **done** — [F-35](findings_log.md#f-35) |
-| — | Commit recomputable evidence artefacts | ⬜ ← **next**; the last review item before the freeze |
-| 9 | Freeze the entire confirmatory configuration | ⬜ |
-| 10 | Run test evaluation **once**, with no further tuning | ⬜ |
+| — | Commit recomputable evidence artefacts | ✅ `results/evidence/`, headline verified reproducible |
+| 9 | Freeze the entire confirmatory configuration | 🔒 **DONE 2026-08-04** at `cbe2098` — [the freeze](protocol_freeze.md#-the-confirmatory-freeze--a1-step-9-executed-2026-08-04) |
+| 10 | Run test evaluation **once**, with no further tuning | ⬜ ← **next and final**; ~38 h, one-way |
 
 **A4 and A5 should come before step 9.** Step 10 costs ~38 h and is one-way — no tuning afterwards —
 and both A4 and A5 produce numbers that go in the same paper. Built after the freeze, they either sit
@@ -1082,4 +1082,5 @@ Full record in [protocol_freeze.md](protocol_freeze.md#environment). Summary:
 - [x] **1B budget confirmation and order selection** → [F-32](findings_log.md#f-32)
 - [ ] **Reduced S6 control (12 runs)** ← **next**
 - [ ] **A4 downstream tasks** and **A5 prefill/decode** — both §-required, neither started
-- [ ] Freeze the confirmatory config, then test evaluation **once** — no tuning after that
+- [x] **Freeze the confirmatory config** — 🔒 done at `cbe2098`, 210 cells, all checks passed
+- [ ] **Test evaluation once** — ~38 h, CPU, R=8/8/5. No tuning after that, and no tuning is now permitted
