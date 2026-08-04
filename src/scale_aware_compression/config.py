@@ -403,7 +403,12 @@ class ReconstructionConfig:
     damping: float = 1e-2
     """Ridge coefficient, relative to the mean Gram diagonal so one value works at every width."""
     block_size: int = 128
-    """Column block width for the sweep solver. Throughput knob; does not change the result."""
+    """Column block width for the sweep solver.
+
+    A throughput knob that does not *meaningfully* change the result -- not one that leaves it
+    bit-identical. Three block sizes gave three distinct losses differing at ~5e-7 relative
+    (findings_log.md F-29), smaller than the CPU thread-configuration sensitivity in F-23, so it is
+    negligible in effect. The earlier wording promised exactly no change, which was false."""
     activation_order: bool = True
     """Visit high-energy columns first in the sweep. Ignored for per-group quantisation."""
     comparison_group: MaskComparisonGroup = MaskComparisonGroup.OUTPUT

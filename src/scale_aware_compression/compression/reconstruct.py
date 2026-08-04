@@ -496,7 +496,11 @@ def sweep_reconstruct(
         granularity: Quantisation granularity.
         group_size: Elements per quantisation group, for per-group granularity.
         block_size: Columns processed before the accumulated error is flushed to the remaining
-            columns. Purely a memory/throughput knob; it does not change the result.
+            columns. A memory/throughput knob that does not *meaningfully* change the result --
+            not one that leaves it bit-identical. Three block sizes gave three distinct losses
+            differing at ~5e-7 relative (findings_log.md F-29), which is below the thread-
+            configuration sensitivity already recorded in F-23. The earlier wording promised
+            exactly no change, which was false.
         scales: Pre-fitted quantisation scales. Shared with the naive baseline, so the reported
             improvement measures reconstruction alone rather than mixing in a change of grid.
             Per-channel and per-tensor scales are invariant to the activation-order permutation.

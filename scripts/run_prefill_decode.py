@@ -125,7 +125,12 @@ def main(argv: list[str] | None = None) -> int:
     from scale_aware_compression.constants import Device
     from scale_aware_compression.data.calibration import load_calibration_set
     from scale_aware_compression.experiments.scale_sweep import _revision_for
-    from scale_aware_compression.hardware import get_hardware_info, get_software_versions, host_key
+    from scale_aware_compression.hardware import (
+        cuda_available,
+        get_hardware_info,
+        get_software_versions,
+        host_key,
+    )
     from scale_aware_compression.models.loader import load_model_and_tokenizer
     from scale_aware_compression.models.registry import get_model_spec
 
@@ -178,12 +183,21 @@ def main(argv: list[str] | None = None) -> int:
                         batch["input_ids"] if isinstance(batch, dict) else batch[0]
                         for batch in calibration.loader
                     ]
+                    # Compression on the GPU, measurement on the CPU. §4.6 restricts the
+                    # *measurement*, not how the artefact was produced, and the phase callables move
+                    # the model back to CPU before timing anything. Without this, building the
+                    # pruned 1B model would run the Gram accumulation and every solve on the host --
+                    # hours of work the card does in minutes, for a mask that latency does not even
+                    # depend on. Offload keeps 1B inside the 6 GiB card (F-31).
+                    use_gpu = cuda_available()
                     compress_model_layerwise(
                         model,
                         batches,
                         plan_from_config(config),
                         arm="pruning",
                         calibration_fingerprint=calibration.summary.token_fingerprint,
+                        device=Device.CUDA.value if use_gpu else None,
+                        offload_blocks=use_gpu,
                     )
 
                 for prompt_length in PROMPT_LENGTHS:

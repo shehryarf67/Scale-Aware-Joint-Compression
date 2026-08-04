@@ -51,6 +51,11 @@ class Cell:
     retention: float | None
     status: str
     experiment_id: str
+    replicate: int | None = None
+    """Which calibration draw. `None` for records predating Amendment A1's replicate axis.
+
+    Carried so this tool can *refuse* rather than silently pick one draw out of several. Reporting
+    a single draw as a point estimate is the fault B-31 retracted a headline for."""
     eval_sequences: int | None = None
     eval_sequence_length: int | None = None
     local_steps: int | None = None
@@ -90,6 +95,9 @@ def load_cells(metrics_dir: Path, model: str | None) -> list[Cell]:
                 retention=_retention(quality),
                 status=record.get("status", "?"),
                 experiment_id=record.get("experiment_id", path.stem),
+                replicate=((record.get("config") or {}).get("data") or {}).get(
+                    "calibration_replicate"
+                ),
                 eval_sequences=_window(quality, "num_sequences"),
                 eval_sequence_length=_window(quality, "sequence_length"),
                 local_steps=((record.get("compression") or {}).get("statistics") or {}).get(
@@ -212,14 +220,37 @@ def main(argv: list[str] | None = None) -> int:
     dense = [cell for cell in cells if cell.method == "dense"]
     budgets = sorted({cell.budget for cell in cells if cell.method != "dense"})
 
+    # REFUSE on multiple calibration draws, the same way this tool already refuses on mixed
+    # evaluation windows. The row builder below takes the FIRST matching cell per (budget, method),
+    # so with replicates in the directory it would silently report one arbitrary draw as though it
+    # were the number -- which is exactly the fault B-31 retracted a headline for, except automated
+    # and invisible. A multi-draw record set belongs in `metrics/replicates.py`, which reports a
+    # mean, an sd and n; this table has no column for uncertainty and should not pretend otherwise.
+    draws_per_cell: dict[tuple[str, str], set[int]] = {}
+    for cell in cells:
+        if cell.replicate is not None:
+            draws_per_cell.setdefault((cell.budget, cell.method), set()).add(cell.replicate)
+    replicated = {key: draws for key, draws in draws_per_cell.items() if len(draws) > 1}
+    if replicated:
+        print(
+            "REFUSING to summarise: these cells span more than one calibration draw, and this "
+            "table reports a single value per cell. Aggregate with "
+            "`metrics.replicates.summarise_replicates`, which reports mean, sd and n, or filter "
+            "the record set to one draw and say which.",
+            file=sys.stderr,
+        )
+        for (budget, method), draws in sorted(replicated.items()):
+            print(f"  {budget} / {method}: draws {sorted(draws)}", file=sys.stderr)
+        return 2
+
     lines: list[str] = []
     lines.append("# Budget screening evidence (research plan §5.3)")
     lines.append("")
     window = next(iter(windows), (None, None))
     lines.append(
         f"Evaluation window: **{window[0]} sequences x {window[1]} tokens** on the "
-        "**validation** split. One calibration draw (§5.5 gives exploratory screening a single "
-        "draw)."
+        "**validation** split. One calibration draw -- the refusal above guarantees it, rather "
+        "than this line asserting it."
     )
     lines.append("")
     if dense:
