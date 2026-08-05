@@ -1,11 +1,11 @@
 {
-  "cells": 85,
+  "cells": 86,
   "excluded_and_why": {
     "checkpoints, packed artefacts, model weights": "large and derivable from the config",
     "datasets": "licence and size; the dataset fingerprint in cells.csv identifies them",
     "logs": "transient, and their content is in the findings log"
   },
-  "generated_at_commit": "37ebc5e2747e8e0be02f597910cc13cd832cf56f-dirty",
+  "generated_at_commit": "dead77f2d2bff670e83e38bddaef11da368699c9-dirty",
   "generated_by": "scripts/export_evidence.py",
   "joint_gain_rows": 26,
   "purpose": "Enough committed, plain-text evidence to recompute every table in docs/findings_log.md from a fresh clone. outputs/ is git-ignored and holds the only copy of the source records, so without this the findings log is assertions rather than a derivation.",
@@ -15,7 +15,7 @@
     "prefill_decode_160m.json": "ecde305a1fcdefb14c2e940cb682f933276b63ce901cd20b3e881a8341866b87",
     "prefill_decode_410m_1b.json": "b3a30bcae6d09dd76e9c44dd40eb3c118a53d06fbc39d5dd1538891d162ecb2a",
     "pythia-160m_dense_aggressive_s00_b32_rep0.json": "d7b543528e53d199de837c1f7df58f8eaf8dd2dde52f9ec220c157e2bbaca70a",
-    "pythia-160m_dense_moderate_s00_b32_rep0.json": "0ffdb709d69b95365fd1c49026e4068b8a10eadcfe8802e6d7f05161c136167e",
+    "pythia-160m_dense_moderate_s00_b32_rep0.json": "a2fb9b9361581cfeab0df0ab43961bc6190fc74e0e5fa86b4d6aebdd061afbd8",
     "pythia-160m_dense_moderate_s00_b32_seed1234.json": "549c7230fe1f9030661471567e38459cee67e985dccd45901eabcffa3870715a",
     "pythia-160m_dense_s1_30_w8_s00_b32_seed1234.json": "a23483a88ed67ed0a96ef3459a98a76c5c396faaa4d16b9a98fcebe0dc8799af",
     "pythia-160m_joint_aggressive_s30_b4_rep0.json": "c8128fefd9ec9c77e5d1df65db8529a266a232dc337b1ccc4eecdb537f662928",
@@ -56,7 +56,7 @@
     "pythia-160m_sequential_s6_40_w8_s40_b8_rep1.json": "09b62fda68af6bbc570e7ae3c27afa9e3379d3d9a8117f524c5789d7bef5735b",
     "pythia-160m_sequential_s6_40_w8_s40_b8_rep2.json": "e5dbe699ac7b4b2ce412875cdd7b923a5be2983b76dab7c3ca852c4289b0e397",
     "pythia-160m_sequential_s6_40_w8_s40_b8_seed1234.json": "9b08113b1be1e2b269375d39e40b9c1f6636d26e56e0f5f2bc740a0f3691db30",
-    "pythia-1b_dense_moderate_s00_b32_rep0.json": "f9510c9ff0815bec2affcad85f3e4558c7a9925856f34f1cf300ae9f807c8b8b",
+    "pythia-1b_dense_moderate_s00_b32_rep0.json": "025abd464291d643a58057090b7af30a50e841b22e1f3298694a85f41ad66b2c",
     "pythia-1b_joint_aggressive_s30_b4_rep0.json": "42d851c62fa60d70d7625ca1aa479470fb57400a3733d26299aaacae68156fa9",
     "pythia-1b_joint_aggressive_s30_b4_rep1.json": "48b8bb04f91dca98139bc95bdd7592b049d3c0b18ab1ddf8725bf85a47226ced",
     "pythia-1b_joint_aggressive_s30_b4_rep2.json": "c20757961f50a0e6a73278c660c5c2187d858859a998678047bb2ef9f39e8a78",
@@ -76,6 +76,7 @@
     "pythia-1b_sequential_qp_moderate_s30_b8_rep1.json": "f1777adb0e012d163c646441c33d53bb31c3babda2874d39b918987803004be8",
     "pythia-1b_sequential_qp_moderate_s30_b8_rep2.json": "ccbccd607442864391819531b08fd1d5306133e332dc77018e54d12a4abffa39",
     "pythia-410m_dense_aggressive_s00_b32_rep0.json": "3f095bf87df6dbda7e2d82f347ab621f81239bc20d4389719d6496d6d9abb3c0",
+    "pythia-410m_dense_moderate_s00_b32_rep0.json": "0bd783d92ca95b187ea5eac3726693f8f49975325799ac42f670ad2ea7c0baf6",
     "pythia-410m_dense_moderate_s00_b32_seed1234.json": "23d4c38ce606cdd6f88aa784ac5435201e13e5188fe777a50f400913ab63af78",
     "pythia-410m_joint_aggressive_s30_b4_rep0.json": "c8f1ac5c17a69e89a32870dc2893a80b5ed99fe962dfe6836517056e4fa1eee3",
     "pythia-410m_joint_aggressive_s30_b4_rep1.json": "5681c4d198fe242d8f33c2e748e2c64339cf1c1329b94c101a1aad9d3130c369",
@@ -97,6 +98,6 @@
     "pythia-410m_sequential_s6_40_w8_s40_b8_rep2.json": "3060fcbd4167860be58150322b1ada1fefbb25c40a9547cbe35517ec897a8c65"
   },
   "schema": "evidence/1",
-  "source_records": 85,
-  "window_rows": 27608
+  "source_records": 86,
+  "window_rows": 28158
 }

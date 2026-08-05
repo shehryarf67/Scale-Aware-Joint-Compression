@@ -1126,6 +1126,17 @@ class ExperimentRunner:
         Best-effort: the fingerprint is a property of the tokenised split, so resolving it needs the
         cache. A ``None`` result weakens the dense-reference check to the window comparison rather
         than failing the run.
+
+        **It is ``None`` at the point that matters, and that was B-45.** ``_eval_fingerprint`` is set
+        *during* evaluation, while the dense reference is loaded *before* evaluation to be passed
+        into it -- so the corpus comparison in :meth:`_window_mismatch` could never fire for the
+        lookup it existed to protect. Validation and test share identical 493x512 window shapes, so
+        nothing else caught the substitution either.
+
+        The lookup now filters on ``config.data.eval_split`` directly, which *is* available then.
+        This is kept because it is a finer guard than the split -- two records on the same split but
+        different corpus revisions would differ here -- and because it does fire for the paths that
+        set the attribute first.
         """
         return getattr(self, "_eval_fingerprint", None)
 
@@ -1202,6 +1213,28 @@ class ExperimentRunner:
             if candidate.get("model_name") != config.model.name:
                 continue
             if candidate.get("seed") != config.runtime.seed:
+                continue
+            # The SPLIT, checked here from the record rather than downstream from a fingerprint.
+            #
+            # B-45. The corpus check below reads `_eval_fingerprint`, which is set *during*
+            # evaluation -- and the dense reference is loaded *before* evaluation in order to be
+            # passed into it. So the expected fingerprint was always None here, that check
+            # short-circuited, and the remaining window checks passed because validation and test
+            # share identical 493x512 shapes. A test-split cell therefore accepted a
+            # validation-split dense record, and the error only surfaced later in `add_quality`:
+            # 17 of the first 20 confirmatory records failed this way.
+            #
+            # `config.data.eval_split` is recorded in every record and is available now, so it is
+            # the check that can actually run at this point. The fingerprint comparison is kept as
+            # the finer-grained guard for when it *is* resolvable.
+            candidate_split = ((candidate.get("config") or {}).get("data") or {}).get("eval_split")
+            if candidate_split is not None and candidate_split != config.data.eval_split:
+                LOGGER.debug(
+                    "Skipping dense record %s: evaluated on the %s split, this run uses %s",
+                    candidate.get("experiment_id"),
+                    candidate_split,
+                    config.data.eval_split,
+                )
                 continue
             payload = candidate.get("quality", {}).get("perplexity")
             if not payload:
