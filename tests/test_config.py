@@ -387,6 +387,8 @@ class TestShippedConfigs:
     def test_experiment_configs_parse(self, configs_dir: Path):
         files = self._yaml_files(configs_dir / "experiments")
         assert {path.name for path in files} == {
+            # A2 prelaunch timing only: validation split, dense plus slowest 1B compressed cell.
+            "confirmatory_timing_pilot.yaml",
             "pilot.yaml",
             "main_scale_sweep.yaml",
             "extended_scale_sweep.yaml",

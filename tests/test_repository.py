@@ -530,11 +530,19 @@ class TestResumabilityAndRecordHygiene:
 
         return ExperimentTracker(tmp_path)
 
-    def _record(self, config, **overrides):
+    def _record(self, config, *, checkpoint_dir=None, **overrides):
         from scale_aware_compression.experiments.runner import ExperimentRecord
 
         record = ExperimentRecord.from_config(config, capture_environment=False)
         record.status = "success"
+        if checkpoint_dir is not None:
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            record.checkpoint_path = checkpoint_dir
+            record.checkpoint = {
+                "reload_verified": True,
+                "artifact_sha256": "test-digest",
+                "artifact_retained": True,
+            }
         for key, value in overrides.items():
             setattr(record, key, value)
         return record
@@ -554,9 +562,15 @@ class TestResumabilityAndRecordHygiene:
 
     def test_a_successful_matching_record_is_skippable(self, tmp_path, config):
         tracker = self._tracker(tmp_path)
-        record = self._record(config)
+        record = self._record(config, checkpoint_dir=tmp_path / "checkpoint")
         tracker.save(record)
         assert tracker.exists_valid(record.experiment_id, config) is True
+
+    def test_an_old_success_without_verified_checkpoint_is_re_run(self, tmp_path, config):
+        tracker = self._tracker(tmp_path)
+        record = self._record(config)
+        tracker.save(record)
+        assert tracker.exists_valid(record.experiment_id, config) is False
 
     def test_a_failed_record_is_re_run(self, tmp_path, config):
         """A crashed cell must not be mistaken for a completed one."""
@@ -570,7 +584,7 @@ class TestResumabilityAndRecordHygiene:
         import copy
 
         tracker = self._tracker(tmp_path)
-        record = self._record(config)
+        record = self._record(config, checkpoint_dir=tmp_path / "checkpoint")
         tracker.save(record)
 
         moved = copy.deepcopy(config)
@@ -581,7 +595,7 @@ class TestResumabilityAndRecordHygiene:
         import copy
 
         tracker = self._tracker(tmp_path)
-        record = self._record(config)
+        record = self._record(config, checkpoint_dir=tmp_path / "checkpoint")
         tracker.save(record)
 
         rebudgeted = copy.deepcopy(config)
@@ -628,7 +642,7 @@ class TestResumabilityAndRecordHygiene:
         difference is floating-point reduction order rather than anything a reader would notice.
         """
         tracker = self._tracker(tmp_path)
-        record = self._record(config)
+        record = self._record(config, checkpoint_dir=tmp_path / "checkpoint")
         record.hardware = {
             "system": "Linux",
             "cpu_model": "x86_64",
@@ -643,7 +657,7 @@ class TestResumabilityAndRecordHygiene:
         from scale_aware_compression.hardware import get_hardware_info
 
         tracker = self._tracker(tmp_path)
-        record = self._record(config)
+        record = self._record(config, checkpoint_dir=tmp_path / "checkpoint")
         record.hardware = get_hardware_info()
         tracker.save(record)
         assert tracker.exists_valid(record.experiment_id, config) is True
@@ -651,7 +665,7 @@ class TestResumabilityAndRecordHygiene:
     def test_a_record_with_no_hardware_recorded_is_not_invalidated(self, tmp_path, config):
         """Records predating the field report "unknown"; a new guard must not force a recompute."""
         tracker = self._tracker(tmp_path)
-        record = self._record(config)
+        record = self._record(config, checkpoint_dir=tmp_path / "checkpoint")
         record.hardware = {}
         tracker.save(record)
         assert tracker.exists_valid(record.experiment_id, config) is True
@@ -1018,6 +1032,30 @@ class TestTheConfirmatoryManifest:
         assert manifest["evaluation"]["split"] == "test", "confirmation must use the held-out split"
         assert manifest["evaluation"]["device"] == "cpu", "reported quality must come from CPU"
         assert manifest["benchmark"]["device"] == "cpu", "§4.6 deployment measurements are CPU-only"
+
+    def test_a2_builder_freezes_the_executable_policy(self, project_root: Path):
+        """A2 keeps logical coverage explicit while listing only records that can exist."""
+        source = (project_root / "scripts" / "build_confirmatory_manifest.py").read_text(
+            encoding="utf-8"
+        )
+        for field in (
+            "logical_grid_cell_count",
+            "executable_cell_count",
+            "deduplicated_dense_slots",
+            "dense_policy",
+        ):
+            assert field in source
+        assert "executable_cells(plan)" in source
+
+    def test_a2_has_a_validation_only_timing_pilot(self, project_root: Path):
+        from scale_aware_compression.config import load_config
+
+        config = load_config(project_root / "configs/experiments/confirmatory_timing_pilot.yaml")
+        assert config.data.eval_split == "validation"
+        assert config.runtime.output_dir.as_posix().endswith("outputs/timing_pilot")
+        assert config.sweep.models == ["pythia-1b"]
+        assert [method.value for method in config.sweep.methods] == ["dense", "joint"]
+        assert config.sweep.budgets == ["aggressive"]
 
     def test_every_model_revision_is_a_full_sha(self, manifest):
         """§2.7. B-13 was a sweep inheriting one model's revision for every cell."""

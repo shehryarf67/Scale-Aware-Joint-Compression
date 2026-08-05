@@ -92,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from scale_aware_compression.experiments.scale_sweep import (
         build_sweep_plan,
+        executable_cells,
         find_comparison_pairs,
         run_sweep,
     )
@@ -103,11 +104,13 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     log_key_values(LOGGER, "Sweep plan", plan.summary())
+    executable = executable_cells(plan)
+    LOGGER.info("%d logical grid slot(s), %d executable cell(s)", len(plan.cells), len(executable))
     pairs = find_comparison_pairs(plan)
     LOGGER.info("%d joint/sequential pair(s) can yield a joint gain", len(pairs))
 
     if arguments.plan_only or arguments.dry_run:
-        for cell in plan.cells:
+        for cell in executable:
             LOGGER.info("  %s", cell.experiment_id)
         LOGGER.info("Plan only: nothing was executed")
         return 0

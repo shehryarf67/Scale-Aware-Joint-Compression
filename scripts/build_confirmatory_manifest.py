@@ -1,6 +1,6 @@
 r"""Resolve and validate the confirmatory configuration into one auditable manifest (A1 step 9).
 
-Step 10 costs ~38 hours, runs **once**, and forbids methodological tuning afterwards. Everything it
+Step 10 is a multi-day run, runs **once**, and forbids methodological tuning afterwards. Everything it
 depends on therefore has to be pinned, resolved and checked *before* it starts -- not described in
 prose across six documents and reassembled from memory later.
 
@@ -98,7 +98,10 @@ def main(argv: list[str] | None = None) -> int:
         CompressionMethod,
     )
     from scale_aware_compression.experiments.runner import get_git_commit
-    from scale_aware_compression.experiments.scale_sweep import build_sweep_plan
+    from scale_aware_compression.experiments.scale_sweep import (
+        build_sweep_plan,
+        executable_cells,
+    )
     from scale_aware_compression.hardware import get_hardware_info, get_software_versions, host_key
     from scale_aware_compression.metrics.replicates import MIN_R_FOR_SIGNIFICANCE
     from scale_aware_compression.protocol import (
@@ -143,6 +146,11 @@ def main(argv: list[str] | None = None) -> int:
             "including pythia-1b/moderate, where Q→P is frozen and P→Q is the weaker baseline "
             "(B-42)"
         )
+    if not config.sweep.continue_on_error:
+        failures.append(
+            "sweep.continue_on_error is false. Amendment A2 requires a multi-day run to continue "
+            "after a failed cell and rely on the strict final audit"
+        )
 
     for label, expected in FROZEN_BUDGETS.items():
         override = (config.sweep.budget_overrides.get(label) or {}).get("compression") or {}
@@ -178,8 +186,10 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     # Every cell, fully resolved. This is the artefact's point: no cell is left to interpretation.
+    logical_grid_cell_count = len(plan.cells)
+    executable = executable_cells(plan)
     cells = []
-    for cell in plan.cells:
+    for cell in executable:
         entry = {
             "experiment_id": cell.experiment_id,
             "model": cell.model_name,
@@ -209,11 +219,12 @@ def main(argv: list[str] | None = None) -> int:
     config_bytes = arguments.config.read_bytes()
 
     manifest = {
-        "schema": "confirmatory_manifest/1",
+        "schema": "confirmatory_manifest/2",
         "valid_for_freeze": not failures and not dirty,
         "purpose": (
-            "The fully resolved confirmatory configuration for A1 step 10. Step 10 runs once, costs "
-            "~38 h, and forbids methodological tuning afterwards, so everything it depends on is "
+            "The fully resolved confirmatory configuration for A1 step 10, as operationally "
+            "amended by A2. Step 10 runs once and forbids methodological tuning afterwards, so "
+            "everything it depends on is "
             "pinned and checked here rather than reassembled later."
         ),
         "git_commit": commit,
@@ -242,7 +253,15 @@ def main(argv: list[str] | None = None) -> int:
             f"{model}/{budget}": method.value
             for (model, budget), method in sorted(FROZEN_SEQUENTIAL_ORDER.items())
         },
+        # `cell_count` remains as a compatibility alias, but now means executable records. The
+        # explicit fields below prevent logical-grid scope from being confused with actual work.
         "cell_count": len(cells),
+        "logical_grid_cell_count": logical_grid_cell_count,
+        "executable_cell_count": len(cells),
+        "deduplicated_dense_slots": logical_grid_cell_count - len(cells),
+        "dense_policy": (
+            "one dense evaluation per model; dense is independent of budget and calibration draw"
+        ),
         "cells": cells,
         "practical_importance_rule": {
             "form": "amended (A1 §5.1, §6.3)",
@@ -294,7 +313,8 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"\n  manifest: {arguments.output}")
     print(f"  commit           {commit}")
-    print(f"  cells            {len(cells)}")
+    print(f"  logical slots    {logical_grid_cell_count}")
+    print(f"  executable cells {len(cells)}")
     print(f"  split / device   {config.data.eval_split} / {config.evaluation.device.value}")
     summary = ", ".join(f"{model}=R{value['R']}" for model, value in replicates.items())
     print(f"  R per model      {summary}")

@@ -203,9 +203,9 @@ sweep:
 
   # Resumable: an interrupted sweep re-runs only the cells with no record yet.
   skip_existing: true
-  # Fail fast while the pipeline is new. Flip to true for long unattended runs, but then check
-  # find_comparison_pairs() afterwards -- a failed joint run silently removes a whole comparison.
-  continue_on_error: false
+  # Amendment A2: this multi-day run continues after a failed cell. Failed records are never valid
+  # resume candidates, and scripts/audit_confirmatory_run.py must pass before any analysis begins.
+  continue_on_error: true
 
 benchmark:
   num_threads: 4

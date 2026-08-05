@@ -270,9 +270,13 @@ def find_comparison_pairs(plan: SweepPlan) -> list[tuple[SweepCell, SweepCell]]:
     def key_for(cell: SweepCell) -> tuple[Any, ...]:
         return (cell.model_name, cell.budget_label, cell.seed, cell.replicate)
 
-    sequential = {
-        key_for(cell): cell for cell in plan.cells_for(method=CompressionMethod.SEQUENTIAL)
-    }
+    # The frozen best sequential baseline is Q->P for pythia-1b/moderate. It remains a sequential
+    # comparator even though its resolved method enum is ``SEQUENTIAL_QP``; excluding it silently
+    # drops five required confirmatory pairs.
+    sequential_cells = plan.cells_for(method=CompressionMethod.SEQUENTIAL) + plan.cells_for(
+        method=CompressionMethod.SEQUENTIAL_QP
+    )
+    sequential = {key_for(cell): cell for cell in sequential_cells}
     joint = {key_for(cell): cell for cell in plan.cells_for(method=CompressionMethod.JOINT)}
 
     pairs: list[tuple[SweepCell, SweepCell]] = []
@@ -329,7 +333,7 @@ def run_sweep(
     # discovering it after the whole grid is invalid.
     _assert_grid_is_fair(config, plan)
 
-    ordered = _dense_first(plan.cells)
+    ordered = executable_cells(plan)
     records: list[ExperimentRecord] = []
     failures: list[tuple[SweepCell, Exception]] = []
 
@@ -359,11 +363,15 @@ def run_sweep(
             ", ".join(cell.experiment_id for cell, _ in failures),
         )
 
-    incomplete = [
-        (cell_a.model_name, cell_a.budget_label)
-        for cell_a, cell_b in find_comparison_pairs(plan)
-        if not (tracker.exists(cell_a.experiment_id) and tracker.exists(cell_b.experiment_id))
-    ]
+    incomplete = []
+    for cell_a, cell_b in find_comparison_pairs(plan):
+        config_a = build_cell_config(config, cell_a)
+        config_b = build_cell_config(config, cell_b)
+        if not (
+            tracker.exists_valid(cell_a.experiment_id, config_a)
+            and tracker.exists_valid(cell_b.experiment_id, config_b)
+        ):
+            incomplete.append((cell_a.model_name, cell_a.budget_label, cell_a.replicate))
     if incomplete:
         LOGGER.warning(
             "These model/budget cells have no complete sequential-versus-joint pair, so they "
@@ -394,6 +402,23 @@ def _assert_grid_is_fair(config: ExperimentConfig, plan: SweepPlan) -> None:
         return
     assert_arms_can_be_matched(plan_from_config(config), arms)
     LOGGER.info("Fairness pre-flight passed: arms %s share one solver budget", arms)
+
+
+def executable_cells(plan: SweepPlan) -> list[SweepCell]:
+    """Return the exact cells the runner executes, in execution order.
+
+    The logical grid deliberately contains dense aliases for every budget and calibration draw so
+    its Cartesian structure remains explicit. Dense evaluation depends on neither, however, and
+    execution represents it once per ``(model, run seed)``. Manifest generation, audits and the
+    runner must all call this function so their definition of completeness cannot drift apart.
+
+    Args:
+        plan: The logical sweep plan.
+
+    Returns:
+        Dense cells first and deduplicated, followed by every compressed cell.
+    """
+    return _dense_first(plan.cells)
 
 
 def _dense_first(cells: Sequence[SweepCell]) -> list[SweepCell]:
