@@ -801,10 +801,16 @@ error-prone as producing one, and neither reading was checked before it was repo
 
 **Cost, measured rather than extrapolated.** Dense cells came in at 160M **5.6 min**, 410M
 **15.3 min**, 1B **33.6 min** — the 1B figure against an assumed ~50 min. On measured per-cell
-times the grid is **~50–55 h**, not the ~38 h the freeze recorded. One further caveat: an
-intermittent stall was observed twice (a 6.2 min cell taking 43.7 min at ~3.8 cores busy, so
-working rather than hung), which is [B-36](findings_log.md#f-33)/[B-41](findings_log.md#f-35)
-territory and inflates the total by an amount not yet characterised.
+times the grid is **~50–55 h**, not the ~38 h the freeze recorded.
+
+**The "intermittent stall" is solved, and it was not the allocator.** Two cells ran long (43.6 and
+52.5 min against 6.2 and 7.8 min norms) and I filed it as
+[B-36](findings_log.md#f-33)/[B-41](findings_log.md#f-35) territory. It was **Modern Standby**: each
+slow window contains a standby period exactly, and subtracting it returns 6.0 and 7.8 min — the
+normal times, to the minute. That attribution is withdrawn; see
+[B-47](findings_log.md#4-bugs-found-that-would-have-invalidated-results). The per-cell estimates
+above are the clean times, so the ~50–55 h figure stands **provided the host is stopped from
+sleeping**.
 
 **Dense test-split baselines, now measured** (these supersede nothing — they are the first
 test-split numbers this project has):
@@ -1011,8 +1017,21 @@ solver, the mask scoring rule, the Pythia variant (**standard**), lm-eval-harnes
 the practical-importance threshold (**≥ 1.0 pp retention, consistent in sign across all paired
 calibration replicates, with R and the exact sign-test p reported per cell** — the seed-spread clause
 is *withdrawn* as vacuous, see [protocol_freeze.md](protocol_freeze.md#the-amended-practical-importance-rule)), Smart App Control, the power profile (**High
-performance**, no downclocking, never sleeps), the benchmark thread count (**4**, inside the P-core
-budget), and all five **model revision SHAs**.
+performance**, no downclocking — but **"never sleeps" was wrong**, see
+[B-47](findings_log.md#4-bugs-found-that-would-have-invalidated-results)), the benchmark thread
+count (**4**, inside the P-core budget), and all five **model revision SHAs**.
+
+> ⚠️ **The machine does sleep, and it did so during the confirmatory run.** `powercfg` reports
+> `STANDBYIDLE` on AC = **3600 s**, not 0, and Modern Standby logs Kernel-Power **506/507** rather
+> than the classic 42 — so a sleep check that greps for 42 reports a clean history while the machine
+> has been suspending all day. Set it to 0 on AC (elevated prompt) before any unattended run:
+>
+> ```
+> powercfg /change standby-timeout-ac 0
+> powercfg /change hibernate-timeout-ac 0
+> ```
+>
+> This is also the whole of the "intermittent stall" — see [B-47](findings_log.md#4-bugs-found-that-would-have-invalidated-results).
 
 ### One correction found by probing rather than reading docs
 
