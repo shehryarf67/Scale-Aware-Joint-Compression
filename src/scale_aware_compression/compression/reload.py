@@ -239,11 +239,25 @@ def _verify_reloaded(model: nn.Module, manifest: dict[str, Any], *, bits: int) -
         weight = module.dequantise()
         if target > 0.0:
             zeros = float((weight == 0).float().mean())
-            # The mask budget is a floor, not a target: quantisation rounds some survivors to zero, so
-            # the numeric zero fraction is legitimately higher. Falling *short* means sparsity was
-            # lost in serialisation.
-            if zeros < target - 1e-6:
+            # Quantisation rounds some survivors to zero, so the numeric zero fraction is
+            # legitimately *higher* than the mask budget. Only a shortfall is suspicious.
+            #
+            # But the budget is not exactly attainable, and that was B-46. The default comparison
+            # group is the output row, and `build_mask` prunes `round(in_features * sparsity)` per
+            # row -- an integer count. So the realised fraction is quantised to multiples of
+            # 1/in_features and lands up to 0.5/in_features either side of the target. A 768-wide
+            # module at 30% prunes round(230.4) = 230, realising 0.299479: short of target by
+            # 5.2e-04, which the old 1e-6 tolerance read as corruption. Every sequential and joint
+            # cell of the confirmatory run failed here, on masks that were exactly right.
+            #
+            # The allowance is derived from the row width rather than fixed, so it stays tight: at
+            # 768 it is 1.3e-03, still three orders of magnitude below any real serialisation loss
+            # (a dropped mask leaves the fraction near zero, not one row-step short).
+            in_features = int(manifest["packed_modules"][name][1])
+            allowance = 1.0 / in_features if in_features else 1e-6
+            if zeros < target - allowance:
                 raise ReloadError(
-                    f"{name!r} reloaded with {zeros:.4f} zeros against a {target:.4f} target: "
-                    "sparsity did not survive serialisation"
+                    f"{name!r} reloaded with {zeros:.4f} zeros against a {target:.4f} target "
+                    f"(allowance {allowance:.2e} for per-row integer rounding at "
+                    f"in_features={in_features}): sparsity did not survive serialisation"
                 )

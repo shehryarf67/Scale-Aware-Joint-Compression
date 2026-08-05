@@ -761,11 +761,69 @@ it claims to; it says nothing about absolute quality against published work (A1 
 | — | **A4 downstream tasks** (§4.3) | ✅ **done** — [F-35](findings_log.md#f-35) |
 | — | Commit recomputable evidence artefacts | ✅ `results/evidence/`, headline verified reproducible |
 | 9 | Freeze the entire confirmatory configuration | 🔒 **DONE 2026-08-04** at `cbe2098` — [the freeze](protocol_freeze.md#-the-confirmatory-freeze--a1-step-9-executed-2026-08-04) |
-| 10 | Run test evaluation **once**, with no further tuning | ⬜ ← **next and final**; ~38 h, one-way |
+| 10 | Run test evaluation **once**, with no further tuning | 🟡 **launched 2026-08-05, stopped twice by pre-existing guards, relaunching** — see below |
 
 **A4 and A5 should come before step 9.** Step 10 costs ~38 h and is one-way — no tuning afterwards —
 and both A4 and A5 produce numbers that go in the same paper. Built after the freeze, they either sit
 outside it or force re-freezing.
+
+### 🟡 Step 10 has been launched, and two dormant guards fired on the way
+
+Launched **2026-08-05 15:54**. Both stoppages were **pre-existing checks that had never been
+exercised on the test split**, and both were caught by watching the run rather than by a test.
+Neither changes a number: one selected the wrong reference, the other rejected correct work.
+
+| # | What fired | Effect if unnoticed |
+| --- | --- | --- |
+| **B-45** | `_load_dense_reference` compared splits via a fingerprint that is `None` at lookup time | A test-split cell normalising against a **validation-split** dense record. 17 of the first 20 records failed |
+| **B-46** | The reload guard demanded a sparsity per-row integer arithmetic cannot reach | **Every `sequential` and `joint` cell failed** — both arms of every comparison — while the controls stayed green |
+
+**B-46 is worth reading carefully, because the failure was in the check and not in the work.**
+`build_mask_from_scores` prunes `round(in_features × sparsity)` per output row, so the realised
+fraction is quantised to multiples of `1/in_features`. A 768-wide module at 30% prunes
+`round(230.4) = 230`, realising **0.299479** — short of target by 5.2e-04, against a tolerance of
+1e-6. The masks were exactly right; the guard rejected them, and its comment asserted the opposite
+of the truth ("the mask budget is a floor, not a target"). Verified by reloading the **real
+artefact the failing cell left behind**: all 48 modules now pass, and `query_key_value` measures
+0.299479 = 230/768 exactly.
+
+**The shape of this fault is the part to remember.** It hit `sequential` and `joint` only —
+pruning-only stays FP32 and never reaches `load_packed_model`, quantisation-only has `target = 0`
+so the check is skipped — so it removed **both arms of every comparison while leaving every control
+green**. 36 records looked healthy and 0 comparisons existed. A record count is not a progress
+measure; **`find_comparison_pairs` against the records is.**
+
+**Correction against myself, recorded because it is the same class of error the run exposed.** I
+reported "23 cells done, 0 failures" mid-run, then corrected it to "0 ok, 44 failed". Both were
+wrong: the status sentinel is `success`/`failure`, and I had tested against `ok` and then against
+the wrong field. The true state was **36 success, 8 failure**. Reading a record set is exactly as
+error-prone as producing one, and neither reading was checked before it was reported.
+
+**Cost, measured rather than extrapolated.** Dense cells came in at 160M **5.6 min**, 410M
+**15.3 min**, 1B **33.6 min** — the 1B figure against an assumed ~50 min. On measured per-cell
+times the grid is **~50–55 h**, not the ~38 h the freeze recorded. One further caveat: an
+intermittent stall was observed twice (a 6.2 min cell taking 43.7 min at ~3.8 cores busy, so
+working rather than hung), which is [B-36](findings_log.md#f-33)/[B-41](findings_log.md#f-35)
+territory and inflates the total by an amount not yet characterised.
+
+**Dense test-split baselines, now measured** (these supersede nothing — they are the first
+test-split numbers this project has):
+
+| Model | Dense perplexity, test split |
+| --- | --- |
+| pythia-160m | **35.8575** |
+| pythia-410m | **21.3231** |
+| pythia-1b | **17.2564** |
+
+**The pre-flight is now honest**, which it was not: `find_comparison_pairs` keyed on
+`(model, budget, seed)` and collided every replicate, reporting **6** pairs for a 42-pair grid
+(**B-38**). With the replicate in the key it reports **210 logical slots, 171 executable cells, 42
+pairs** — matching the grid.
+
+**Before the results can be written up:** regenerate `results/evidence/` (the staleness guard fails
+until you do — that is it working), and check `find_comparison_pairs` against the **records** for
+incomplete pairs, because `continue_on_error` is on and one failed cell silently removes a whole
+comparison rather than stopping the run.
 
 The screening grid is re-runnable as below, and it still writes to the exploratory (validation)
 configuration. It now costs **~20 minutes** rather than 2 h 08 m ([F-29](findings_log.md#f-29)):
@@ -1093,4 +1151,8 @@ Full record in [protocol_freeze.md](protocol_freeze.md#environment). Summary:
       **121.40 min**; exposed missing offload pin → [F-36](findings_log.md#f-36)
 - [x] **Re-freeze the confirmatory config** — v3 pins `offload_blocks: true`; manifest valid at
       `e0c06ac`; B-44 closed before test evaluation
-- [ ] **Test evaluation once** — ~65.3 h, CPU, R=8/8/5. No tuning after launch; use v3 only
+- [ ] **Test evaluation once** — CPU, R=8/8/5, use v3 only. **Launched 2026-08-05**; stopped twice
+      by dormant guards ([B-45](findings_log.md#4-bugs-found-that-would-have-invalidated-results),
+      [B-46](findings_log.md#4-bugs-found-that-would-have-invalidated-results)), both numerically
+      inert, relaunched from the fixed tree. Cost now **~50–55 h** on measured per-cell times, plus
+      an uncharacterised intermittent stall
