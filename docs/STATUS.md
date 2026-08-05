@@ -1,11 +1,10 @@
 # Project status
 
-> **2026-08-05 prelaunch hold:** the validation-only CPU timing pilot completed 2/2 cells, but
-> exposed [F-36](findings_log.md#f-36) / B-44: `main_scale_sweep.yaml` froze
-> `offload_blocks: false` by omission. Dense 1B took **25.12 min**; joint W4 took **121.40 min**, of
-> which **65.67 min** was the non-offloaded compression path versus F-31's verified **4 min 34 s**
-> offloaded path. No test result was inspected. `confirmatory-freeze-v2` must not be launched; freeze
-> offload explicitly and build a successor manifest first.
+> **2026-08-05 prelaunch timing complete:** the validation-only pilot exposed
+> [F-36](findings_log.md#f-36) / B-44 in v2, and Amendment A3 closed it before any test result was
+> inspected. `confirmatory-freeze-v3` explicitly pins and audits `offload_blocks: true`. The corrected
+> joint W4 cell took **53.51 min** versus the invalid v2 pilot's 121.40 min, independently reloaded
+> with identical logits and the same checkpoint hash. Revised full-run estimate: **~65.3 hours**.
 
 **Last updated:** 2026-07-31 · third session on the HP Omen · **Phases 0, 5 and 6 complete**;
 **Phase 7 has replicated results.** The pipeline passes three independent correctness anchors, the
@@ -1092,6 +1091,6 @@ Full record in [protocol_freeze.md](protocol_freeze.md#environment). Summary:
 - [x] **Freeze the confirmatory config** — 🔒 done at `cbe2098`, 210 cells, all checks passed
 - [x] **Validation-only 1B CPU timing pilot** — 2/2 succeeded; dense **25.12 min**, joint W4
       **121.40 min**; exposed missing offload pin → [F-36](findings_log.md#f-36)
-- [ ] **Re-freeze the confirmatory config** — v2 is superseded before launch by B-44; explicitly pin
-      `offload_blocks: true`, validate, and build a successor manifest
-- [ ] **Test evaluation once** — CPU, R=8/8/5. No tuning after that; do not launch from v2
+- [x] **Re-freeze the confirmatory config** — v3 pins `offload_blocks: true`; manifest valid at
+      `e0c06ac`; B-44 closed before test evaluation
+- [ ] **Test evaluation once** — ~65.3 h, CPU, R=8/8/5. No tuning after launch; use v3 only

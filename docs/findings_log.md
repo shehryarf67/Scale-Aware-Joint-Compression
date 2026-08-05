@@ -142,6 +142,28 @@ path and an accidental 65.67 min for non-offloaded compression — but does not 
 whole-grid total. Re-run only the joint timing cell after freezing offload; do not multiply 121.40
 minutes by every compressed arm.
 
+**Follow-up, 2026-08-05, commit `e0c06ac` (`confirmatory-freeze-v3`).** Amendment A3 pinned
+`offload_blocks: true`, made both manifest generation and resume validation enforce it, and rebuilt a
+clean valid manifest. The corrected joint-only timing cell then completed successfully:
+
+| | Non-offloaded v2 pilot | Corrected offloaded v3 pilot |
+| --- | ---: | ---: |
+| joint apply | 65.40 min | **11.55 min** |
+| full compression | 65.67 min | **11.70 min** |
+| checkpoint verification | 0.42 min | **0.37 min** |
+| CPU quality | 55.13 min | **40.98 min** |
+| total | 121.40 min | **53.51 min** |
+
+The independently reloaded artefact again had maximum logit difference **0.0** and the same SHA-256,
+which is direct run-level confirmation that the residency correction did not change the checkpoint.
+B-44 is closed before test evaluation.
+
+The revised planning estimate is approximately **65.3 hours** before retries: 65 executable 160M
+cells at the measured 7.5 min/cell (8.1 h), 65 executable 410M cells at 19.5 min/cell (21.1 h), plus
+one 25.12-minute dense 1B cell and 40 compressed 1B cells conservatively costed at the corrected
+joint/W4 total (36.1 h). This is an operational estimate, not a coverage change: the logical grid is
+still 210 slots and the executable manifest still contains 171 records.
+
 ### F-01 — Smart App Control silently broke the environment 30 minutes after install {#f-01}
 
 *2026-07-28 · environment*
