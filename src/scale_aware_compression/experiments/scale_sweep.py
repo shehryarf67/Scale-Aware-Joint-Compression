@@ -28,6 +28,7 @@ from scale_aware_compression.experiments.runner import (
 )
 from scale_aware_compression.logging_utils import get_logger
 from scale_aware_compression.models.registry import get_model_spec
+from scale_aware_compression.protocol import frozen_order_evidence, resolve_sequential_order
 
 LOGGER = get_logger(__name__)
 
@@ -167,6 +168,23 @@ def build_sweep_plan(config: ExperimentConfig) -> SweepPlan:
         ):
             spec = get_model_spec(model_name)
             overrides = _budget_overrides(config, budget_label)
+            # Resolve `sequential` to the FROZEN order for this cell when asked. §6.1 requires joint
+            # gain against best-of {P→Q, Q→P}, and one frozen cell -- pythia-1b/moderate -- is Q→P.
+            # Without this a confirmatory sweep would run P→Q there, which is the weaker baseline and
+            # inflates the joint gain (B-30's fault, in the one run that cannot be redone).
+            resolved_method = method
+            if sweep.use_frozen_order and method is CompressionMethod.SEQUENTIAL:
+                resolved_method = resolve_sequential_order(spec.short_name, budget_label)
+                if resolved_method is not method:
+                    LOGGER.info(
+                        "Frozen order for %s/%s is %s (%s), not %s.",
+                        spec.short_name,
+                        budget_label,
+                        resolved_method.value,
+                        frozen_order_evidence(spec.short_name, budget_label),
+                        method.value,
+                    )
+            method = resolved_method
             sparsity, bits = _resolve_budget(config, method, overrides)
             cells.append(
                 SweepCell(
@@ -238,31 +256,45 @@ def find_comparison_pairs(plan: SweepPlan) -> list[tuple[SweepCell, SweepCell]]:
         plan: The expanded sweep plan.
 
     Returns:
-        Pairs matched on model, budget, and seed, ordered by parameter count then budget. Cells
-        without a counterpart are logged and omitted: a joint gain computed against a different
-        model, budget, or seed is not a joint gain.
+        Pairs matched on model, budget, seed **and calibration replicate**, ordered by parameter
+        count then budget then replicate. Cells without a counterpart are logged and omitted: a
+        joint gain computed against a different model, budget, seed or draw is not a joint gain.
     """
+
+    # The REPLICATE is part of the key. Amendment A1 replaced the run-seed axis with paired
+    # calibration replicates, and every replicate shares one run seed -- so keying on
+    # (model, budget, seed) alone made all R replicates collide, and the dict silently kept only
+    # the last. A 3-replicate grid with 6 sequential and 6 joint cells reported *2* pairs, and the
+    # symmetric-difference warning below could not fire for the 4 it dropped, because they were
+    # never distinct keys (B-38).
+    def key_for(cell: SweepCell) -> tuple[Any, ...]:
+        return (cell.model_name, cell.budget_label, cell.seed, cell.replicate)
+
     sequential = {
-        (cell.model_name, cell.budget_label, cell.seed): cell
-        for cell in plan.cells_for(method=CompressionMethod.SEQUENTIAL)
+        key_for(cell): cell for cell in plan.cells_for(method=CompressionMethod.SEQUENTIAL)
     }
-    joint = {
-        (cell.model_name, cell.budget_label, cell.seed): cell
-        for cell in plan.cells_for(method=CompressionMethod.JOINT)
-    }
+    joint = {key_for(cell): cell for cell in plan.cells_for(method=CompressionMethod.JOINT)}
 
     pairs: list[tuple[SweepCell, SweepCell]] = []
-    for key in sorted(sequential.keys() & joint.keys()):
+    for key in sorted(sequential.keys() & joint.keys(), key=repr):
         pairs.append((sequential[key], joint[key]))
 
-    for key in sorted(sequential.keys() ^ joint.keys()):
+    for key in sorted(sequential.keys() ^ joint.keys(), key=repr):
         LOGGER.warning(
-            "No joint/sequential counterpart for model=%s budget=%s seed=%s; this cell cannot "
-            "contribute a joint gain.",
+            "No joint/sequential counterpart for model=%s budget=%s seed=%s replicate=%s; this "
+            "cell cannot contribute a joint gain.",
             *key,
         )
     if pairs:
-        pairs.sort(key=lambda pair: (pair[0].parameter_count, pair[0].budget_label, pair[0].seed))
+        pairs.sort(
+            key=lambda pair: (
+                pair[0].parameter_count,
+                pair[0].budget_label,
+                pair[0].seed,
+                # `replicate` is None outside a replicate grid, and None does not order against int.
+                -1 if pair[0].replicate is None else pair[0].replicate,
+            )
+        )
     return pairs
 
 

@@ -405,6 +405,25 @@ class TestShippedConfigs:
             # Diagnostic: does the 160M joint gain survive replication, after F-26 showed the 410M
             # equivalent changes sign between draws?
             "replicate_160m_aggressive.yaml",
+            # Verification: per-block GPU offload must reproduce F-23's S5 cell exactly. Residency
+            # is not allowed to move a number, and that is measured rather than assumed.
+            "verify_offload_160m.yaml",
+            # Verification: the peak-memory measurement offload exists for. Compression only, so it
+            # produces a GiB figure rather than a perplexity.
+            "verify_offload_1b.yaml",
+            # A1 step 7 at the third scale: both budgets and both sequential orders on Pythia-1B,
+            # runnable only because of per-block offload (F-31).
+            "screening_1b.yaml",
+            # A1 step 8 §5.4: the quality-matched mechanistic control. 40% + W8 against the
+            # aggressive 30% + W4 primary, to separate a precision-specific effect from a
+            # compression-severity one. Secondary and never confirmatory.
+            "s6_control.yaml",
+            # Gap A5 (§4.7): prefill and decode timed separately at two prompt lengths, with IQR
+            # and model-order rotation. FP32 arms only, per decision D1.
+            "prefill_decode.yaml",
+            # Gap A4 (§4.3): HellaSwag, PIQA and ARC-Easy via a pinned harness, with task versions
+            # recorded (§4.8). GPU-evaluated and declared as such; `benchmark.device` stays CPU.
+            "downstream.yaml",
         }
         for path in files:
             config = load_config(path)

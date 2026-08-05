@@ -28,6 +28,11 @@ exploratory cell now costs ~1.3 min rather than ~9.3 min ([F-29](findings_log.md
 > Read this first. It is the handoff between sessions and between machines. If it looks stale,
 > check `git log` — the truth is the commit history, this file is a summary of it.
 >
+> **An external review of `4575482` was answered on 2026-08-04.** Every item, every deviation from
+> what it proposed, and every item **still open** is recorded in
+> [external_review_response.md](external_review_response.md). Read it before step 9 — two of its open
+> items block the freeze.
+>
 > **Continuing this work from a cold start?** Read
 > [partner_handoff.md](partner_handoff.md) — it states the research question, every finding that
 > matters with its trust level, and the next five tasks with their exact acceptance criteria.
@@ -63,6 +68,31 @@ is not by itself evidence the environment is stable.
 
 ---
 
+## ⚠️ Who is on what — claim a task here *before* starting it
+
+On **2026-08-01** both authors independently did the same three tasks on the same day — per-block
+offload, the 1B selection config, and GPU quality evaluation. Two people, one day, one result.
+Nobody was at fault; there was no protocol. This table is the protocol. **Push the claim before you
+start work**; a one-line commit is cheap and a duplicated day is not.
+
+| Task | Owner | State |
+| --- | --- | --- |
+| Per-block GPU offload | main | ✅ [F-31](findings_log.md#f-31) |
+| 1B budgets + order selection | main | ✅ [F-32](findings_log.md#f-32) |
+| S6 mechanistic control | main | ✅ [F-33](findings_log.md#f-33) |
+| **A5 — prefill/decode split (§4.7)** | **main** | ✅ **done, all three scales** — [F-34](findings_log.md#f-34) |
+| **A4 — downstream tasks (§4.3)** | main | ✅ **done, all three scales** — [F-35](findings_log.md#f-35) |
+| Recomputable evidence artefacts | **unclaimed** | ⬜ last item before the freeze |
+| **pythia-1.4b** (extended sweep) | **unclaimed** | ⬜ registered, pinned, config exists, **not downloaded**; needs order selection + a VRAM measurement. §8.2: must not consume the primary sweep's time |
+| **qwen2.5-0.5b** (external validity) | **unclaimed** | ⬜ registered, pinned, **Qwen2 adapter implemented**, not downloaded; needs order selection. Same §8.2 rule |
+| Steps 9–10 — freeze, then confirm | unclaimed | ⬜ blocked on A4 and A5 |
+
+**The parallel 1B run on `phase7-close-phase8-setup` was not wasted.** It replicates our 1B result
+on different hardware, torch and Python — dense 17.9432 identical to four decimals, both order
+decisions agreeing, joint gain inside our three-draw range. It goes in the paper as a cross-host
+replication. **Do not merge that branch**: it lacks the B-35 fix and the runner's GPU-evaluation
+wiring, and its `F-31`/`B-34` entries collide with different content here in an append-only log.
+
 ## Where we are
 
 Infrastructure, the Phase 0 decisions, the compression primitives and the layerwise driver are all
@@ -76,7 +106,8 @@ done. **Every arm runs from a config to a run record on real Pythia-160M.**
 | Environment | verified end to end: torch 2.13.0+cu126, CUDA available, sm_89 |
 | Runnable today | **all five arms** plus dense, config to run record, on real 160M and 410M |
 | Cost of an exploratory 160M cell | **~1.3 min** (was ~9.3) — [F-29](findings_log.md#f-29) |
-| Not yet done | 1B (needs per-block GPU offload), S6 control, confirmatory test-split runs, downstream tasks (A4), prefill/decode split (A5) |
+| Pythia-1B compression | **runs** — 4.29 GiB reserved, no spill ([F-31](findings_log.md#f-31)) |
+| Not yet done | 1B budgets + order, S6 control, confirmatory test-split runs, downstream tasks (A4), prefill/decode split (A5) |
 
 ### What works
 
@@ -117,7 +148,7 @@ Fixed:
 
 | # | Decision | Settled as |
 | --- | --- | --- |
-| **D1** | CPU quantisation backend | PyTorch native CPU **INT8**, engine **`onednn`**, is the sole latency backend. W4 keeps quality + size, never appears in a latency table. **RQ4 survives** — the sparsity→latency curve comes free from the pruning-only arm, whose weights stay FP32. |
+| **D1** | CPU quantisation backend | PyTorch native CPU **INT8**, engine **`onednn`**, is the sole latency backend. W4 keeps quality + size, never appears in a latency table. **RQ4 is answerable** from the pruning-only arm, whose weights stay FP32 — but the curve is not free: it needs the arm benchmarked at several sparsities. [F-34](findings_log.md#f-34) measured one (30%) at three scales and found no commensurate speedup, which is a point, not a curve. |
 | **D2** | Reconstruction solver depth | **Damped ALS first**, Hessian sweep as a later drop-in behind the same interface. §3.3 makes second-order optional, not expected. `H = XᵀX` accumulated from the start regardless. Memory is *not* the constraint: the worst-case layer Hessian is 256 MiB. |
 | **D3** | Mask scoring rule | **Activation-weighted magnitude, scored on the quantised weights** in the joint arm — `S_ij = \|Q_b(W_ij)\| · ‖X_j‖₂`. This **overrides** the old Option B recommendation, which would have failed §3.8's definition of joint. |
 
@@ -357,6 +388,65 @@ either retraction.
 
 **Still exploratory.** Barely over the ≥1.0 pp threshold, one calibration draw so no error bar, and the
 validation split is a declared selection surface. The confirmatory answer comes from steps 9–10.
+
+### 🟢 The S6 control discriminates: the mechanism is precision-specific where it exists at all
+
+**[F-33](findings_log.md#f-33).** A1 step 8, 12 cells, ~2 h, CPU-evaluated. Two recipes at matched
+quality — S5 is 30% + W4, S6 is 40% + W8 — differenced **within each paired draw**:
+
+| Model | rep0 | rep1 | rep2 | mean S5 − S6 | positive |
+| --- | --- | --- | --- | --- | --- |
+| **160M** | +1.31 | +1.60 | +2.42 | **+1.78 pp** | **3/3** |
+| 410M | +0.65 | −0.76 | +1.01 | +0.30 pp | 2/3 |
+
+**At 160M the discrimination is clean and unanimous:** matched quality, and only the 4-bit recipe shows
+a gain (+1.69 pp against −0.09 pp). That **supports a precision-specific mechanism over a
+compression-severity effect**, as [F-05](findings_log.md#f-05) predicts from 8.86% mask divergence at
+W4 against 0.46% at W8.
+
+**At 410M the control is uninformative, which is not a failure of the control** — the primary shows no
+reliable effect there, so there is nothing to attribute. So the honest claim is narrower than "the
+mechanism is precision-specific": it is *precision-specific at the one scale where the mechanism is
+measurable at all.*
+
+**The null is stronger than it looks.** A1 §5.4 specifies P→Q only, and at W8 Q→P is slightly ahead —
+so the omitted order makes the baseline weaker and **flatters joint**. The config's pre-committed
+clause (*run Q→P before believing a positive*) does not fire.
+
+Secondary and non-confirmatory by label, three draws, p = 0.25 at best.
+
+### 🟢 Three scale points: the joint gain declines monotonically, and 1B is not practically important
+
+**[F-32](findings_log.md#f-32).** The third scale point, runnable only because of per-block offload
+([F-31](findings_log.md#f-31)). 19 cells, 2.9 h, three paired draws — the same draws as 160M and 410M.
+Dense 17.9432.
+
+| Scale | Joint gain, 30% + W4 | Draws |
+| --- | --- | --- |
+| **160M** | **+1.69 pp** | 3/3 above the ≥1.0 pp bar |
+| **410M** | +0.39 pp | 2/3 positive, sign inconsistent |
+| **1B** | **+0.20 pp** | 3/3 positive, **all below the bar** |
+
+**Monotone across all three points, and predicted before the run.** `screening_1b.yaml` recorded that a
+1B gain at or above 410M's would put F-27's trend in doubt. It came in below. **The study's motivating
+hypothesis was that joint pays off *more* at scale; on three points it pays off less.**
+
+**Both budgets confirmed at 1B** — 96.34% (moderate) and 89.46% (aggressive) retention, so §5.3 now
+holds at all three scales. Note the aggressive budget retains 56.66 / 58.56 / **89.46%** across the
+sweep: bigger models tolerate the same recipe far better.
+
+**The W8 control is cleanly negative** — −0.11 pp, 0/3 — which is the *correct* sign for an inert
+mechanism measured against best-of. Three scales now agree 8 bits produces nothing.
+
+**The 1B sequential orders split by budget:** P→Q at W4 (+2.15 pp, 3/3, as predicted) and **Q→P at W8**
+(+0.10 pp, 3/3). The W8 choice differs from 160M/410M because A1 §3 freezes per cell and 1B is the only
+scale where the sign was consistent — the same rule meeting different evidence, not a different rule.
+All six cells are now frozen; see [protocol_freeze.md](protocol_freeze.md#the-frozen-sequential-order-a1-step-7).
+
+**Still exploratory, and now with one extra caveat:** validation split, three draws (p = 0.25 at best),
+and the 1B cells are **GPU-evaluated** while 160M and 410M are CPU-evaluated. Within a cell every arm
+shares a device so retention and gain are internally consistent, but the cross-scale table mixes them.
+A1 steps 9–10 put all three scales back on CPU.
 
 ### 🟢 Replicated at both scales: the effect is real at 160M and shrinks with scale
 
@@ -673,12 +763,20 @@ it claims to; it says nothing about absolute quality against published work (A1 
 | 4 | Calibration replicate axis, **R=8 / 8 / 5** | ✅ **done** — `05008dc`, 37 tests |
 | 5 | Re-run the 160M validation screening | ✅ **done** — [F-23](findings_log.md#f-23) |
 | 6 | Both sequential orders (P→Q, Q→P) on validation | ✅ **done** — [F-24](findings_log.md#f-24) |
-| 7 | Freeze the winning order per (model, budget) | ✅ **W4 and W8 both frozen at 160M+410M** — [F-28](findings_log.md#f-28); 1B outstanding |
+| 7 | Freeze the winning order per (model, budget) | ✅ **all six cells frozen** — [F-28](findings_log.md#f-28), [F-32](findings_log.md#f-32) |
 | — | Replicate the headline at both scales | ✅ **done** — [F-27](findings_log.md#f-27) |
-| — | Per-block GPU offload, so 1B runs at all | ⬜ ← **next** |
-| 8 | Run the reduced S6 mechanistic control (12 runs) | ⬜ |
-| 9 | Freeze the entire confirmatory configuration | ⬜ |
-| 10 | Run test evaluation **once**, with no further tuning | ⬜ |
+| — | Per-block GPU offload, so 1B runs at all | ✅ **done** — [F-31](findings_log.md#f-31) |
+| — | 1B budgets confirmed, orders frozen, gain measured | ✅ **done** — [F-32](findings_log.md#f-32) |
+| 8 | Run the reduced S6 mechanistic control (12 runs) | ✅ **done** — [F-33](findings_log.md#f-33) |
+| — | **A5 prefill/decode** (§4.7) | ✅ **done** — [F-34](findings_log.md#f-34) |
+| — | **A4 downstream tasks** (§4.3) | ✅ **done** — [F-35](findings_log.md#f-35) |
+| — | Commit recomputable evidence artefacts | ✅ `results/evidence/`, headline verified reproducible |
+| 9 | Freeze the entire confirmatory configuration | 🔒 **DONE 2026-08-04** at `cbe2098` — [the freeze](protocol_freeze.md#-the-confirmatory-freeze--a1-step-9-executed-2026-08-04) |
+| 10 | Run test evaluation **once**, with no further tuning | ⬜ ← **next and final**; ~38 h, one-way |
+
+**A4 and A5 should come before step 9.** Step 10 costs ~38 h and is one-way — no tuning afterwards —
+and both A4 and A5 produce numbers that go in the same paper. Built after the freeze, they either sit
+outside it or force re-freezing.
 
 The screening grid is re-runnable as below, and it still writes to the exploratory (validation)
 configuration. It now costs **~20 minutes** rather than 2 h 08 m ([F-29](findings_log.md#f-29)):
@@ -707,7 +805,8 @@ number has no way to judge how much weight it can carry.
 | **+1.03 pp** | 30% + W4 | **Retracted.** The arms minimised different objectives — sequential targeted its own intermediate, joint targeted dense |
 | **+1.08 pp** | 30% + W4 | Single draw, [F-23](findings_log.md#f-23). First figure from code that passes three independent anchors |
 | **+1.08 pp** | 30% + W4 | **Unchanged** against best-of-sequential, [F-24](findings_log.md#f-24) — P→Q was already the stronger baseline there |
-| **+1.69 pp** | 30% + W4 | **Current**, [F-27](findings_log.md#f-27). Mean of three paired draws, 3/3 positive, all above the ≥1.0 pp bar. +1.08 was the *lowest* of the three |
+| **+1.69 pp** | 30% + W4 | **Current at 160M**, [F-27](findings_log.md#f-27). Mean of three paired draws, 3/3 positive, all above the ≥1.0 pp bar. +1.08 was the *lowest* of the three |
+| **+0.20 pp** | 30% + W4, **1B** | [F-32](findings_log.md#f-32). Three draws, 3/3 positive, **all below the bar**. Completes a monotone decline 1.69 → 0.39 → 0.20 |
 
 **Every fault found so far has flattered the joint arm** — B-14, B-17, B-22, B-23, and now B-30 (running
 only the weaker sequential baseline). Not one ran the other way. That belongs in the paper's limitations
@@ -820,8 +919,10 @@ Reduced to the items that genuinely cannot be settled yet. Tracked in
 
 - **W4 latency via `torchao`** — would lift D1's "no W4 latency row" limitation if one 4-bit CPU path
   can serve both arms. Needs measuring, not assuming.
-- **1.4B go/no-go** — §5.2 needs peak VRAM under ~85% of 6.0 GiB, a **5.1 GiB ceiling**. 1B already
-  peaks at 6.31 GiB with the model resident, so this depends entirely on per-block offload landing.
+- **1.4B go/no-go** — §5.2 needs peak VRAM under ~85% of 6.0 GiB, a **5.1 GiB ceiling**. Offload has
+  landed and 1B now reserves 4.29 GiB ([F-31](findings_log.md#f-31)), so 1.4B is no longer
+  obviously out — but the device-level baseline is ~1.0 GiB on top, so it must be **measured**
+  with `scripts/verify_block_offload.py --peak-only`, not extrapolated.
 - **Downstream tasks (A4)** and the **prefill/decode split (A5)** — required by §4.3 and §4.7,
   neither started.
 
@@ -832,8 +933,9 @@ pre-1B requirement.
 
 Settled since the last revision, no longer open: the backend (**`onednn`** — see below), the
 solver, the mask scoring rule, the Pythia variant (**standard**), lm-eval-harness (**yes, pinned**),
-the practical-importance threshold (**≥ 1.0 pp retention, consistent in sign across all three
-confirmatory seeds, exceeding the seed spread**), Smart App Control, the power profile (**High
+the practical-importance threshold (**≥ 1.0 pp retention, consistent in sign across all paired
+calibration replicates, with R and the exact sign-test p reported per cell** — the seed-spread clause
+is *withdrawn* as vacuous, see [protocol_freeze.md](protocol_freeze.md#the-amended-practical-importance-rule)), Smart App Control, the power profile (**High
 performance**, no downclocking, never sleeps), the benchmark thread count (**4**, inside the P-core
 budget), and all five **model revision SHAs**.
 
@@ -873,30 +975,53 @@ blocked by anything; they have simply been behind the correctness work.
 
 ---
 
-## 🔧 What remains before Pythia-1B will run
+## ✅ Per-block GPU offload — implemented, and the gate caught a real bug first
 
-The capture refactor is **applied and all gates passed** —
-[F-29](findings_log.md#f-29), rationale in
-[capture_refactor_rationale.md](capture_refactor_rationale.md). What it did *not* do is move the model
-off the device.
+**[F-31](findings_log.md#f-31).** `compression.reconstruction.offload_blocks`, defaulting **off**, so
+every existing record and every reproduction gate is untouched. When on, the model stays on the host
+and one block at a time moves to the card.
 
-| | Now | With per-block offload |
+**The first implementation was wrong, and the F-23 reproduction gate is what found it.** It captured
+block-0 inputs on the host, reasoning that only the embedding runs and a lookup is a gather. But
+GPT-NeoX computes the **rotary `cos`/`sin`** in that same forward and passes them into every block,
+and CPU/CUDA trigonometry disagrees in the last bits — which flipped a near-tie in the saliency
+ranking. One mask position moved `attention.dense` in block 0 by **2.25 absolute** and cascaded:
+
+| | Required | First attempt |
 | --- | --- | --- |
-| Block-forwards per 1B cell | **~48** ✅ | ~48 |
-| Model resident on GPU | **3.77 GiB** — whole model | **~0.2 GiB** — one block |
-| Measured 1B GPU peak | **6.31 GiB on a 6.00 GiB card** — spilled to host, 7× slower | ~3.2 GiB |
+| sequential | 65.261 | 65.666 |
+| joint | 64.041 | 63.028 |
+| **joint gain** | **+1.08 pp** | **+2.35 pp** |
 
-`block_size` does **not** help: peak is 6.31/6.37/6.37 GiB at 128/64/32, because the Gram
-factorisation dominates, not the block loop.
+**It flattered joint — the sixth fault in a row to do so** (B-14, B-17, B-22, B-23, B-30, **B-34**).
+Fixed by capturing on the device and pulling the blocks straight back off, which makes the hidden
+states bit-identical to the resident path by construction. The full-model transient that costs is
+affordable only because no Gram factorisation is live during capture.
 
-**The remaining change is small**, because the block loop now owns the forward — move one block to the
-device, compress it, move it back. It gets the same verification treatment: a 160M cell must reproduce
-65.261 / 64.041 and a 410M cell 37.851 / 37.415, exactly.
+| Gate | Result |
+| --- | --- |
+| Weights, offloaded vs resident, 160M, sequential **and** joint | **0 of 148 disagree**, 0.000e+00 |
+| **160M cell** | **65.2614 / 64.0413** — exact |
+| `METHOD_VERSION` | not bumped — nothing moved |
 
-**Correction to an earlier note here:** `scripts/run_sparsegpt_external_anchor.py` does *not* contain a
-working per-block-offload driver, as this file previously claimed. It does block-sequential **replay**
-with the whole model resident — the part already adopted. It is still the right file to read for the
-replay pattern and the `_StopForwardError` catcher, but the offload itself has to be written.
+Also fixed: **B-35**, recorded quantisation grids did not follow their block back to the host, so
+`convert` died with a device mismatch *after* the whole compression was spent.
+
+**Pythia-1B now compresses without spilling** — 3.34 GiB allocated, **4.29 GiB reserved**, in
+**4 m 34 s**, against a resident path that hit 6.31 GiB on a 6.00 GiB card and finished only by
+spilling to host memory at 7× the solve time. `block_size` was never the lever: peak was
+6.31/6.37/6.37 GiB at 128/64/32.
+
+**Read the 5.1 GiB ceiling carefully.** Reserved clears §5.2 with 0.8 GiB to spare, but device-level
+occupancy adds the CUDA context and the desktop — **1.04 GiB** measured with nothing allocated, and a
+spot `nvidia-smi` read 5.05 GiB mid-run. 1B is settled; **1.4B must be measured, not extrapolated**.
+
+**The 52% saving at 160M is not the benefit** and should not be quoted as it — at that size the whole
+model is 0.65 GiB and nothing was at risk of not fitting.
+
+**Note for anyone reading `scripts/run_sparsegpt_external_anchor.py`:** it does block-sequential
+**replay** with the whole model resident, not offload. Useful for the replay pattern and the
+`_StopForwardError` catcher; it was never an offload driver, despite an earlier claim here.
 
 ---
 
@@ -969,9 +1094,10 @@ Full record in [protocol_freeze.md](protocol_freeze.md#environment). Summary:
 - [x] Replicate the headline at both scales → [F-27](findings_log.md#f-27)
 - [x] `python scripts/download_models.py --models pythia-1b` — verified at pinned SHA `f73d7dcc`
 - [x] Block-sequential capture applied, all gates passed → [F-29](findings_log.md#f-29)
-- [~] **Per-block GPU offload** — exact-optimum anchor passed in Colab; the notebook later restored
-      `layerwise.py`, so the clean before/after offload gates remain pending
-- [~] 1B budget confirmation and order selection — provisional GPU validation values exist, but the
-      notebook's focused tests failed after ad-hoc source patches; rerun from a clean committed state
-- [ ] Reduced S6 control (12 runs)
-- [ ] Freeze the confirmatory config, then test evaluation **once** — no tuning after that
+- [x] **Per-block GPU offload** — bit-identical at 160M, 1B reserves 4.29 GiB without spilling
+      → [F-31](findings_log.md#f-31)
+- [x] **1B budget confirmation and order selection** → [F-32](findings_log.md#f-32)
+- [ ] **Reduced S6 control (12 runs)** ← **next**
+- [ ] **A4 downstream tasks** and **A5 prefill/decode** — both §-required, neither started
+- [x] **Freeze the confirmatory config** — 🔒 done at `cbe2098`, 210 cells, all checks passed
+- [ ] **Test evaluation once** — ~38 h, CPU, R=8/8/5. No tuning after that, and no tuning is now permitted

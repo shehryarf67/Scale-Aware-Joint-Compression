@@ -436,6 +436,35 @@ class TestPackedLinear:
         with pytest.raises(QuantisationError, match="rounded a second time"):
             verify_packing(packed, layer.weight.detach())
 
+    def test_a_packed_layer_survives_a_move_to_cuda(self):
+        """Exploratory runs now evaluate on GPU, and compressed arms evaluate a PACKED model.
+
+        Everything a ``PackedLinear`` holds is a buffer -- codes, scales, bias, and the scheme
+        metadata -- so a move that missed one would either raise mid-evaluation or, worse, unpack
+        against a stale scale. Skipped without CUDA; on the benchmark host it is the standing check
+        that the GPU evaluation path is real rather than assumed.
+        """
+        import torch
+        from torch import nn
+
+        if not torch.cuda.is_available():
+            pytest.skip("no CUDA device")
+
+        torch.manual_seed(5)
+        layer = nn.Linear(64, 32)
+        with torch.no_grad():
+            layer.weight.copy_(fake_quantise(layer.weight.detach(), bits=4))
+        packed = pack_linear(layer, bits=4)
+
+        inputs = torch.randn(3, 64)
+        with torch.no_grad():
+            on_cpu = packed(inputs)
+            packed.to("cuda")
+            on_gpu = packed(inputs.to("cuda")).cpu()
+
+        assert all(buffer.is_cuda for _, buffer in packed.named_buffers())
+        torch.testing.assert_close(on_gpu, on_cpu, rtol=1e-5, atol=1e-5)
+
     def test_forward_matches_a_dense_linear_on_the_same_weights(self):
         import torch
         from torch import nn

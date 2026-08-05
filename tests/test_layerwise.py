@@ -975,6 +975,84 @@ class TestEndToEndOnATinyModel:
                 fresh_causal_lm, [], moderate_plan(), arm="joint", calibration_fingerprint="tiny"
             )
 
+    def test_offload_without_a_device_is_refused(self, fresh_causal_lm):
+        """Offloading blocks to the host, from the host, moves nothing.
+
+        Accepting it would produce a run that looks like it used the flag, took the same peak
+        memory, and reported nothing wrong -- so the 1B out-of-memory would come back as a mystery.
+        """
+        with pytest.raises(LayerwiseError, match="non-CPU device"):
+            compress_model_layerwise(
+                fresh_causal_lm,
+                calibration_batches(fresh_causal_lm.config.vocab_size),
+                moderate_plan(),
+                arm="joint",
+                calibration_fingerprint="tiny",
+                offload_blocks=True,
+            )
+
+    def test_offload_is_refused_when_the_device_is_cpu(self, fresh_causal_lm):
+        with pytest.raises(LayerwiseError, match="non-CPU device"):
+            compress_model_layerwise(
+                fresh_causal_lm,
+                calibration_batches(fresh_causal_lm.config.vocab_size),
+                moderate_plan(),
+                arm="joint",
+                calibration_fingerprint="tiny",
+                device="cpu",
+                offload_blocks=True,
+            )
+
+    def test_offload_gives_bit_identical_weights(self, tiny_causal_lm):
+        """The invariant the whole change rests on: residency must not move a number.
+
+        Skipped without CUDA, because offload has nothing to offload to. On the benchmark host
+        this is the cheap standing check; the expensive one is a full 160M cell.
+        """
+        import torch
+
+        if not torch.cuda.is_available():
+            pytest.skip("offload needs a CUDA device")
+
+        resident = copy.deepcopy(tiny_causal_lm).to("cuda")
+        offloaded = copy.deepcopy(tiny_causal_lm)
+        batches = calibration_batches(tiny_causal_lm.config.vocab_size)
+
+        reference = compress_model_layerwise(
+            resident,
+            batches,
+            moderate_plan(),
+            arm="joint",
+            calibration_fingerprint="tiny",
+            device="cuda",
+        )
+        report = compress_model_layerwise(
+            offloaded,
+            batches,
+            moderate_plan(),
+            arm="joint",
+            calibration_fingerprint="tiny",
+            device="cuda",
+            offload_blocks=True,
+        )
+
+        # The model comes back on the host, because that is where all but one block already was.
+        assert next(offloaded.parameters()).device.type == "cpu"
+        for name, parameter in offloaded.named_parameters():
+            expected = resident.get_parameter(name).detach().cpu()
+            assert torch.equal(parameter.detach(), expected), name
+
+        # The recorded grids must travel back with their block. They are captured while it is
+        # resident, so leaving them behind hands `convert` cuda codes for a cpu weight -- which
+        # fails at the artefact stage, after every second of the compression is already spent.
+        assert set(report.grids_by_module) == set(reference.grids_by_module)
+        for name, (codes, scales) in report.grids_by_module.items():
+            assert codes.device.type == "cpu", name
+            assert scales.device.type == "cpu", name
+            expected_codes, expected_scales = reference.grids_by_module[name]
+            assert torch.equal(codes, expected_codes.cpu()), name
+            assert torch.equal(scales, expected_scales.cpu()), name
+
     def test_arms_touch_identical_modules_in_identical_order(self, tiny_causal_lm):
         """The coverage half of §3.11, end to end, on genuinely separate model instances."""
         reports = []

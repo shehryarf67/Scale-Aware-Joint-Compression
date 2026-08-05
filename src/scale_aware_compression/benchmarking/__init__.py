@@ -32,6 +32,13 @@ from scale_aware_compression.benchmarking.memory import (
     peak_process_memory_mb,
     process_memory_mb,
 )
+from scale_aware_compression.benchmarking.phases import (
+    PROMPT_LENGTHS,
+    PhaseBenchmarkError,
+    build_decode_callable,
+    build_prefill_callable,
+    rotate,
+)
 from scale_aware_compression.benchmarking.throughput import (
     ThroughputStatistics,
     samples_per_second,
@@ -48,14 +55,19 @@ __all__ = [
     "LatencyStatistics",
     "MemoryStatistics",
     "MemoryTracker",
+    "PROMPT_LENGTHS",
+    "PhaseBenchmarkError",
     "ThroughputStatistics",
     "benchmark_model",
+    "build_decode_callable",
     "build_forward_callable",
+    "build_prefill_callable",
     "compare_to_baseline",
     "measure_checkpoint",
     "peak_process_memory_mb",
     "percentile",
     "process_memory_mb",
+    "rotate",
     "samples_per_second",
     "summarise_latencies",
     "throughput_from_latency",

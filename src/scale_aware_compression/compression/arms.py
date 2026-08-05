@@ -34,6 +34,7 @@ from scale_aware_compression.constants import (
     SEQUENTIAL_STAGES,
     CompressionMethod,
     CompressionStage,
+    Device,
 )
 from scale_aware_compression.logging_utils import get_logger
 from scale_aware_compression.metrics.compression import measure_sparsity
@@ -183,7 +184,23 @@ class LayerwiseArm(Compressor):
 
         Returns:
             The compressed model, still in fake-quantised FP32 storage.
+
+        Raises:
+            CompressionError: If block offload is requested but no CUDA device is available.
         """
+        offload = self.compression_config.reconstruction.offload_blocks
+        device: str | None = None
+        if offload:
+            from scale_aware_compression.hardware import cuda_available
+
+            if not cuda_available():
+                raise CompressionError(
+                    f"{self.name}: compression.reconstruction.offload_blocks is set but no CUDA "
+                    "device is available. Offloading blocks to the host from the host moves "
+                    "nothing; unset the flag to run on CPU."
+                )
+            device = Device.CUDA.value
+
         self.report = compress_model_layerwise(
             model,
             self.calibration_batches,
@@ -191,6 +208,8 @@ class LayerwiseArm(Compressor):
             arm=self.arm,
             module_names=self.module_names,
             calibration_fingerprint=self.calibration_fingerprint,
+            device=device,
+            offload_blocks=offload,
         )
         return model
 

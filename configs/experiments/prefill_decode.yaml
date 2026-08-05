@@ -1,0 +1,112 @@
+# Prefill vs decode latency, timed separately (plan §4.7, gap A5)
+#
+# A single end-to-end generation latency blends two workloads that scale differently and that
+# compression affects differently:
+#
+#   prefill   one forward over the whole prompt. Compute-bound; grows with prompt length.
+#   decode    one forward per token against a populated cache. Bandwidth-bound; per-token cost is
+#             roughly flat in prompt length, and it dominates a long generation.
+#
+# Weight-only compression helps decode most, because decode moves weights and little else.
+# Reporting one number averages that distinction away, which is why §4.7 asks for them apart.
+#
+# ONLY FP32 ARMS ARE TIMED -- dense and pruning-only. Per decision D1 a packed W4/W8 layer
+# dequantises on every forward, so a timing would measure the unpacking kernel rather than the
+# compression. The script records the exclusion rather than silently omitting it. This is also why
+# RQ4 is answerable from the pruning-only arm at the sparsities benchmarked -- it is the one arm
+# whose timings mean what they appear to mean.
+#
+# CPU-ONLY, ON THE DESIGNATED BENCHMARK HOST. This is a deployment measurement (§4.6), so the
+# machine is part of the result: `benchmark.device` is CPU and one results table never spans two
+# hosts.
+#
+# MODEL-ORDER ROTATION. Benchmarks drift with temperature, and with a fixed order that drift lands
+# on the same arm every time -- a bias rather than noise. Each round rotates the arm order, so over
+# a full cycle every arm leads exactly once. Arms are rebuilt inside each round rather than held
+# resident, which keeps the rotation real and keeps two full-size FP32 models out of RAM at once
+# (7.5 GiB at Pythia-1B, on a 13.7 GiB machine).
+#
+#     python scripts/run_prefill_decode.py --config configs/experiments/prefill_decode.yaml
+#     python scripts/run_prefill_decode.py --config ... --models pythia-160m --rounds 2
+#
+# Prompt lengths 128 and 512 come from `benchmarking.phases.PROMPT_LENGTHS`, not from here: §4.7
+# names them, and a config that could quietly change them would let the prompt-length dependence be
+# reported over a different pair than the plan specifies.
+
+include:
+  - ../models/pythia_160m.yaml
+  - ../compression/pruning.yaml
+  - ../evaluation/quality.yaml
+  - ../evaluation/cpu_benchmark.yaml
+
+experiment:
+  id: prefill_decode
+  name: Prefill and decode latency at two prompt lengths
+  description: >-
+    Separately timed prefill and decode latency for the dense and pruning-only arms across the
+    scale sweep, at prompt lengths 128 and 512, with median and IQR and model-order rotation.
+  tags:
+    - deployment
+    - latency
+    - a5
+
+runtime:
+  seed: 1234
+  deterministic: true
+  output_dir: outputs
+  log_level: INFO
+
+model:
+  device: cpu
+
+data:
+  # The pruning-only arm still needs activations to score its mask, so the calibration draw matters
+  # here even though no quality number is produced. Matched to the screening grid so the pruned
+  # model being timed is the same one the quality tables describe.
+  calibration_samples: 128
+  calibration_split: train
+  sequence_length: 512
+  max_eval_samples: 512
+  batch_size: 4
+
+compression:
+  # 30% is the sparsity both frozen budgets use, so this times the model the study actually reports.
+  pruning:
+    sparsity: 0.3
+  reconstruction:
+    solver: sweep
+    local_steps: 1
+    joint_iterations: 2
+    comparison_group: output
+    scale_search: false
+    keep_benefit_saliency: false
+
+benchmark:
+  # Pinned by §2.7 and unchanged from every other deployment measurement in the study. Four threads
+  # sits inside the 6 P-core budget, so no repetition lands on an E-core or an SMT sibling.
+  num_threads: 4
+  warmup_runs: 5
+  measured_runs: 30
+  batch_size: 1
+  # Unused by this script -- prefill and decode set their own prompt lengths -- but the config
+  # loader requires it and leaving it at the study default avoids implying a different workload.
+  sequence_length: 128
+
+sweep:
+  models:
+    - pythia-160m
+    - pythia-410m
+    - pythia-1b
+  methods:
+    - dense
+    - pruning
+  budgets:
+    - moderate
+  budget_overrides:
+    moderate:
+      compression:
+        budget_label: moderate
+        pruning:
+          sparsity: 0.3
+  skip_existing: false
+  continue_on_error: false

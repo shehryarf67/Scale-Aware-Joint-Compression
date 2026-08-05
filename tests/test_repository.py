@@ -9,8 +9,10 @@ Nothing here downloads a model, imports torch, or needs CUDA.
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -34,6 +36,9 @@ REQUIRED_DOCS = (
     "reproducibility.md",
     "paper_outline.md",
     "STATUS.md",
+    # The audit trail of the external review: what was fixed, what was deviated from, what is
+    # still open. A review answered only in commit messages is a review whose open items vanish.
+    "external_review_response.md",
 )
 
 
@@ -362,10 +367,43 @@ class TestCpuOnlyPolicyAcrossConfigs:
             config = ExperimentConfig.from_mapping(load_document(path))
             assert config.benchmark.device is Device.CPU, f"{path.name} benchmarks off CPU"
 
-    def test_every_experiment_config_evaluates_on_cpu(self, configs_dir: Path):
+    def test_every_confirmatory_config_evaluates_on_cpu(self, configs_dir: Path):
+        """The rule that matters: a REPORTED number comes from CPU.
+
+        This used to assert CPU for every experiment config, which is stricter than the design.
+        ``check_evaluation_device`` warns rather than errors precisely because exploratory
+        evaluation on GPU is legitimate -- and it is 22.5x faster for a relative difference of
+        8.3e-06, the same magnitude as CPU thread-configuration sensitivity (F-29).
+
+        The blanket version also protected nothing the tighter version does not: what must never
+        happen is a *confirmatory* config drifting off CPU, and confirmatory is exactly the
+        configs that evaluate on the held-out test split (Amendment A1 §5.2).
+        """
         for path in sorted((configs_dir / "experiments").glob("*.yaml")):
             config = ExperimentConfig.from_mapping(load_document(path))
-            assert config.evaluation.device is Device.CPU, f"{path.name} evaluates off CPU"
+            if config.data.eval_split != "test":
+                continue
+            assert config.evaluation.device is Device.CPU, (
+                f"{path.name} evaluates the test split off CPU; confirmatory numbers are CPU-only"
+            )
+
+    def test_gpu_evaluation_is_confined_to_declared_exploratory_configs(self, configs_dir: Path):
+        """A GPU-evaluated config must say so in its tags, so a record's provenance is greppable.
+
+        The pairing is the point: GPU evaluation is allowed *because* the run is exploratory, so a
+        config that takes the speedup without declaring the status has taken the licence without
+        the constraint that justifies it.
+        """
+        for path in sorted((configs_dir / "experiments").glob("*.yaml")):
+            config = ExperimentConfig.from_mapping(load_document(path))
+            if config.evaluation.device is Device.CPU:
+                continue
+            tags = set(config.experiment.tags)
+            assert "exploratory" in tags, (
+                f"{path.name} evaluates on {config.evaluation.device.value} without an "
+                "'exploratory' tag"
+            )
+            assert config.data.eval_split != "test", f"{path.name} is confirmatory but not on CPU"
 
     def test_benchmark_config_pins_a_thread_count(self, configs_dir: Path):
         for path in sorted(configs_dir.rglob("*.yaml")):
@@ -620,13 +658,36 @@ class TestResumabilityAndRecordHygiene:
 
 
 class TestNoRunArtefactsCommitted:
-    """Git tracks nothing but `.gitkeep` under `outputs/` and `results/`.
+    """Git tracks nothing but `.gitkeep` and the declared exceptions under `outputs/`/`results/`.
 
     Checked against the index rather than the working tree. On a machine that actually runs the
     experiments these directories are *supposed* to be full of run artefacts, so asserting the
     directory is empty would fail for exactly the machine the rule exists to protect. The invariant
     is that nothing gets committed, not that nothing exists.
+
+    **The exception list is deliberately narrow and enumerated here, not pattern-matched.** Adding a
+    path to it is a decision that should show up in a diff and need a reason:
+
+    * ``results/evidence/`` -- the committed evidence set. `outputs/` being ignored meant the only
+      copy of every number in the findings log lived in an ignored directory, so a fresh clone could
+      not recompute a table. Four plain-text files, ~1.9 MB, regenerable by
+      `scripts/export_evidence.py`.
+    * ``results/summaries/*.md`` -- promoted human-readable summaries, already permitted by
+      `.gitignore`.
+
+    Everything else -- checkpoints, packed artefacts, logs, figures, raw metrics -- stays out.
     """
+
+    ALLOWED_PREFIXES = ("results/evidence/",)
+    ALLOWED_SUFFIXES = (".gitkeep",)
+
+    def _is_permitted(self, path: str) -> bool:
+        """Whether a tracked path under these directories is a declared exception."""
+        if path.endswith(self.ALLOWED_SUFFIXES):
+            return True
+        if path.startswith(self.ALLOWED_PREFIXES):
+            return True
+        return path.startswith("results/summaries/") and path.endswith(".md")
 
     @pytest.mark.parametrize("directory", ["outputs", "results", "data"])
     def test_git_tracks_only_gitkeep(self, project_root: Path, directory: str):
@@ -643,12 +704,31 @@ class TestNoRunArtefactsCommitted:
         unexpected = [
             line
             for line in tracked.stdout.splitlines()
-            if line.strip() and not line.endswith(".gitkeep")
+            if line.strip() and not self._is_permitted(line.strip())
         ]
         assert not unexpected, (
             f"git tracks run artefacts under {directory}/, which must never be committed: "
-            f"{unexpected}"
+            f"{unexpected}. If this is a deliberate new exception, add it to ALLOWED_PREFIXES with "
+            "a reason rather than widening the check."
         )
+
+    def test_no_checkpoint_or_weight_file_is_ever_tracked(self, project_root: Path):
+        """The exception list must not become a hole. Size and extension, independent of directory."""
+        tracked = subprocess.run(
+            ["git", "ls-files", "outputs", "results", "data"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if tracked.returncode != 0:
+            pytest.skip("not a git checkout")
+        forbidden = (".safetensors", ".bin", ".pt", ".pth", ".ckpt", ".gguf", ".onnx")
+        for line in tracked.stdout.splitlines():
+            path = line.strip()
+            if not path:
+                continue
+            assert not path.endswith(forbidden), f"a model artefact is tracked: {path}"
 
     @pytest.mark.parametrize("directory", ["outputs", "results", "data"])
     def test_directory_is_ignored_so_a_stray_artefact_cannot_be_added(
@@ -664,3 +744,311 @@ class TestNoRunArtefactsCommitted:
             check=False,
         )
         assert result.returncode == 0, f"{probe} is not git-ignored"
+
+
+class TestWithdrawnSeedEraRulesCannotCreepBack:
+    """Amendment A1 withdrew the run-seed axis. Its vocabulary must not read as current policy.
+
+    The specific hazard: §6.3's original practical-importance rule gated a joint gain on exceeding
+    the *seed spread*, and the seed spread is exactly zero because the pipeline is deterministic
+    (F-15) -- so the gate excluded nothing while looking strict. The rule survives in the freeze
+    table and in the experiment protocol as a **record**, which is correct for an append-only
+    history, but every occurrence has to be visibly marked as superseded or withdrawn rather than
+    sitting in a checklist someone will follow.
+
+    This is the guard the external review asked for after finding those documents quotable as
+    current policy.
+    """
+
+    MARKERS = ("supersede", "withdraw", "vacuous", "inert", "f-15", "zero")
+
+    @staticmethod
+    def _paragraphs(text: str) -> list[str]:
+        return [block for block in text.split("\n\n") if block.strip()]
+
+    @pytest.mark.parametrize(
+        "document",
+        ["protocol_freeze.md", "experiment_protocol.md", "STATUS.md", "methodology.md"],
+    )
+    def test_seed_spread_is_never_stated_without_being_marked(
+        self, project_root: Path, document: str
+    ):
+        """Each paragraph mentioning the seed spread must also say it is withdrawn or why."""
+        path = project_root / "docs" / document
+        if not path.exists():  # methodology.md is optional in some checkouts
+            pytest.skip(f"{document} not present")
+        for block in self._paragraphs(path.read_text(encoding="utf-8")):
+            lowered = block.lower()
+            if "seed spread" not in lowered and "seed-to-seed spread" not in lowered:
+                continue
+            assert any(marker in lowered for marker in self.MARKERS), (
+                f"{document} states the seed spread rule without marking it superseded:\n\n{block}"
+            )
+
+    def test_no_checklist_item_asks_for_a_seed_spread_comparison(self, project_root: Path):
+        """A checklist is followed, not read. A vacuous gate in one is worse than in prose."""
+        for document in ("experiment_protocol.md", "benchmarking_protocol.md"):
+            path = project_root / "docs" / document
+            if not path.exists():
+                continue
+            for line in path.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if not stripped.startswith("- [ ]") and not stripped.startswith("- [x]"):
+                    continue
+                lowered = stripped.lower()
+                if "seed spread" in lowered:
+                    assert "withdrawn" in lowered or "vacuous" in lowered, (
+                        f"{document} has a checklist item gating on the seed spread: {stripped}"
+                    )
+
+    def test_the_freeze_table_records_the_amended_rule(self, project_root: Path):
+        """The replacement must be stated, not merely the withdrawal."""
+        text = (project_root / "docs" / "protocol_freeze.md").read_text(encoding="utf-8")
+        assert "amended practical-importance rule" in text.lower()
+        # The amendment is a LOOSENING of a pre-registered rule, and A1 requires the paper to say so.
+        assert "reduction in pre-registered strength" in text.lower()
+
+    def test_the_downstream_rule_is_withdrawn_rather_than_amended(self, project_root: Path):
+        """No replacement is claimed for it, and claiming one would be unsupported."""
+        text = (project_root / "docs" / "protocol_freeze.md").read_text(encoding="utf-8")
+        assert "WITHDRAWN, not amended" in text
+
+
+class TestTheDownstreamHarnessPinCannotDrift:
+    """§4.8 requires task versions recorded, which only means something if the harness is pinned.
+
+    The pin lives in two files -- `requirements.txt` for the research environment and the
+    `downstream` extra in `pyproject.toml` -- and a value copied into a second file and then left
+    behind when the first changed has already happened twice in this repository (the budget freeze,
+    and the seed-axis withdrawal). This asserts they agree, and that neither has drifted to a range.
+    """
+
+    PIN = "lm-eval==0.4.12"
+
+    def test_requirements_pins_the_harness_exactly(self, project_root: Path):
+        text = (project_root / "requirements.txt").read_text(encoding="utf-8")
+        assert self.PIN in text, f"requirements.txt does not pin {self.PIN}"
+
+    def test_the_optional_extra_pins_the_same_version(self, pyproject: dict):
+        extras = pyproject["project"]["optional-dependencies"]
+        assert "downstream" in extras, "the downstream extra is missing"
+        assert self.PIN in extras["downstream"]
+
+    def test_the_harness_is_not_a_core_dependency(self, pyproject: dict):
+        """Nothing in the library or the suite imports it, and CI should not install it.
+
+        `evaluation.downstream` imports lm_eval inside the function that calls it and raises a
+        message naming requirements.txt if it is absent, so the offline tests stub the harness output
+        instead.
+        """
+        core = " ".join(pyproject["project"]["dependencies"])
+        assert "lm-eval" not in core and "lm_eval" not in core
+
+    def test_no_floor_pin_anywhere(self, project_root: Path, pyproject: dict):
+        """A range would let a later install score a different task and still call it HellaSwag."""
+        haystacks = [
+            (project_root / "requirements.txt").read_text(encoding="utf-8"),
+            " ".join(pyproject["project"]["optional-dependencies"]["downstream"]),
+        ]
+        for text in haystacks:
+            for line in text.splitlines():
+                if "lm-eval" in line and not line.strip().startswith("#"):
+                    assert "==" in line, f"lm-eval is not pinned exactly: {line.strip()}"
+
+    def test_importing_the_module_does_not_require_the_harness(self):
+        """The property that lets it be optional: the import is inside the calling function."""
+        import scale_aware_compression.evaluation.downstream as module
+
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        for line in source.splitlines():
+            if line.startswith("import lm_eval") or line.startswith("from lm_eval"):
+                raise AssertionError(f"module-level harness import: {line!r}")
+
+
+class TestTheCommittedEvidenceSetIsCurrent:
+    """`outputs/` is ignored, so without a committed export the findings log is unverifiable.
+
+    The external review's point: a reviewer with a fresh clone could not recompute a single table in
+    `docs/findings_log.md`, because the only copy of every number lived in a git-ignored directory.
+    `results/evidence/` closes that -- normalised cells, per-replicate joint gains against
+    best-of-sequential, per-window NLL for the paired bootstrap, and a sha256 per source record.
+
+    These tests are about the set not going **stale**, which is the failure mode a committed
+    derivative has. They skip when the source records are absent, because tier-1 machines legitimately
+    have no `outputs/`.
+    """
+
+    @pytest.fixture(scope="class")
+    def evidence_dir(self, project_root: Path) -> Path:
+        return project_root / "results" / "evidence"
+
+    def test_the_evidence_set_is_committed(self, project_root: Path, evidence_dir: Path):
+        """It must be tracked, not merely present -- `results/**` is ignored by default."""
+        tracked = subprocess.run(
+            ["git", "ls-files", "results/evidence"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        names = {line.split("/")[-1] for line in tracked.stdout.splitlines() if line.strip()}
+        for required in ("cells.csv", "joint_gains.csv", "windows.csv", "MANIFEST.json"):
+            assert required in names, f"results/evidence/{required} is not tracked by git"
+
+    def test_every_cell_row_carries_its_provenance(self, evidence_dir: Path):
+        """A measurement without its commit, revision and draw cannot be reproduced."""
+        import csv
+
+        path = evidence_dir / "cells.csv"
+        if not path.exists():
+            pytest.skip("evidence set not present")
+        with path.open(encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        assert rows, "cells.csv is empty"
+        for column in (
+            "experiment_id",
+            "git_commit",
+            "model_revision",
+            "method_version",
+            "host",
+            "eval_split",
+            "evaluation_device",
+            "dataset_fingerprint",
+            "calibration_replicate",
+        ):
+            assert column in rows[0], f"cells.csv is missing the {column!r} column"
+
+    def test_joint_gains_record_which_baseline_each_gain_used(self, evidence_dir: Path):
+        """§6.1 requires best-of {P→Q, Q→P}. B-30 was measuring against the weaker order.
+
+        Making the chosen order an explicit column is what lets a reader check it rather than
+        assume it.
+        """
+        import csv
+
+        path = evidence_dir / "joint_gains.csv"
+        if not path.exists():
+            pytest.skip("evidence set not present")
+        with path.open(encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        assert rows, "joint_gains.csv is empty"
+        assert "best_of_order" in rows[0]
+        assert "orders_available" in rows[0]
+        for row in rows:
+            assert row["best_of_order"] in {"sequential", "sequential_qp"}
+
+    def test_the_manifest_hashes_every_source_record(self, evidence_dir: Path):
+        """The substitute for committing excluded artefacts: they stay identifiable."""
+        path = evidence_dir / "MANIFEST.json"
+        if not path.exists():
+            pytest.skip("evidence set not present")
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        assert manifest["source_records"] == len(manifest["record_sha256"])
+        assert manifest["source_records"] > 0
+        for digest in manifest["record_sha256"].values():
+            assert len(digest) == 64, "not a sha256"
+        assert "excluded_and_why" in manifest, "exclusions must be stated, not implied"
+
+    @pytest.mark.slow
+    def test_the_committed_set_matches_the_records_on_disk(self, project_root: Path):
+        """Guards the staleness failure mode. Skipped where there are no records to compare."""
+        metrics = project_root / "outputs" / "metrics"
+        if not metrics.is_dir() or not any(metrics.glob("*.json")):
+            pytest.skip("no run records on this machine")
+        completed = subprocess.run(
+            [sys.executable, "scripts/export_evidence.py", "--check"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode == 0, (
+            "results/evidence/ is stale against outputs/metrics/. Re-run "
+            f"scripts/export_evidence.py.\n{completed.stderr}"
+        )
+
+
+class TestTheConfirmatoryManifest:
+    """A1 step 9. Step 10 runs once, costs ~38 h, and forbids tuning afterwards.
+
+    The manifest is the artefact that makes "frozen" checkable instead of asserted: every commit,
+    revision, cell, replicate, order, device and exclusion rule resolved in one place, with the
+    checks that had to pass recorded alongside.
+    """
+
+    @pytest.fixture(scope="class")
+    def manifest(self, project_root: Path) -> dict | None:
+        path = project_root / "results" / "evidence" / "confirmatory_manifest.json"
+        if not path.exists():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def test_the_builder_refuses_a_dirty_tree(self, project_root: Path):
+        """A freeze recorded at a -dirty commit cannot be reproduced.
+
+        This project's one unusable result set came from a `-dirty` tree 22 commits behind main, so
+        the builder refuses rather than warns. Asserted by reading the source, because the test
+        cannot make the working tree dirty on demand without side effects.
+        """
+        source = (project_root / "scripts" / "build_confirmatory_manifest.py").read_text(
+            encoding="utf-8"
+        )
+        assert "working tree is dirty" in source
+        assert "valid_for_freeze" in source
+
+    def test_the_manifest_records_whether_it_is_valid_for_freeze(self, manifest):
+        if manifest is None:
+            pytest.skip("manifest not generated on this machine")
+        assert "valid_for_freeze" in manifest
+        assert isinstance(manifest["valid_for_freeze"], bool)
+
+    def test_a_frozen_manifest_has_no_failed_checks_and_a_clean_tree(self, manifest):
+        """The two conditions that make the artefact mean anything."""
+        if manifest is None:
+            pytest.skip("manifest not generated on this machine")
+        if not manifest["valid_for_freeze"]:
+            pytest.skip("manifest is marked inspection-only")
+        assert manifest["checks_failed"] == []
+        assert manifest["tree_clean"] is True
+        assert not str(manifest["git_commit"]).endswith("-dirty")
+
+    def test_it_pins_the_confirmatory_conditions(self, manifest):
+        if manifest is None:
+            pytest.skip("manifest not generated on this machine")
+        assert manifest["evaluation"]["split"] == "test", "confirmation must use the held-out split"
+        assert manifest["evaluation"]["device"] == "cpu", "reported quality must come from CPU"
+        assert manifest["benchmark"]["device"] == "cpu", "§4.6 deployment measurements are CPU-only"
+
+    def test_every_model_revision_is_a_full_sha(self, manifest):
+        """§2.7. B-13 was a sweep inheriting one model's revision for every cell."""
+        if manifest is None:
+            pytest.skip("manifest not generated on this machine")
+        for model, revision in manifest["model_revisions"].items():
+            assert re.fullmatch(r"[0-9a-f]{40}", str(revision)), f"{model}: {revision!r}"
+
+    def test_the_frozen_order_includes_the_one_reversed_cell(self, manifest):
+        """If pythia-1b/moderate is not Q→P in the manifest, the resolution did not happen."""
+        if manifest is None:
+            pytest.skip("manifest not generated on this machine")
+        assert manifest["frozen_sequential_order"]["pythia-1b/moderate"] == "sequential_qp"
+
+    def test_it_states_where_significance_is_unreachable(self, manifest):
+        """R=5 at 1B cannot reach p < 0.05 at any effect size, and that must be on the record."""
+        if manifest is None:
+            pytest.skip("manifest not generated on this machine")
+        assert manifest["replicates"]["pythia-1b"]["significance_reachable"] is False
+        assert manifest["replicates"]["pythia-160m"]["significance_reachable"] is True
+
+    def test_it_records_the_withdrawn_clause_and_the_loosening(self, manifest):
+        """A1 requires the write-up to admit the amended rule is weaker, not neutral."""
+        if manifest is None:
+            pytest.skip("manifest not generated on this machine")
+        rule = manifest["practical_importance_rule"]
+        assert "withdrawn_clause" in rule
+        assert "REDUCTION" in rule["withdrawn_clause"]
+
+    def test_it_states_the_exclusions_rather_than_leaving_gaps(self, manifest):
+        if manifest is None:
+            pytest.skip("manifest not generated on this machine")
+        for key in ("latency", "downstream", "1b_significance", "extended_models"):
+            assert key in manifest["exclusion_rules"], f"exclusion {key!r} is not stated"

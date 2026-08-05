@@ -230,6 +230,92 @@ class TestPairingIsWithinADraw:
         assert _pair_key(sequential) == _pair_key(joint)
 
 
+class TestPlanCellPairingCountsEveryReplicate:
+    """B-38. `find_comparison_pairs` pairs plan *cells*; `_pair_key` pairs finished *records*.
+
+    The record path already keyed on the replicate. The cell path did not, and since A1 gives every
+    replicate the same run seed, all R replicates collided on one key and the dict kept only the
+    last -- so a 3-replicate grid with 6 sequential and 6 joint cells reported **2** pairs. The
+    symmetric-difference warning could not catch it either, because the dropped cells were never
+    distinct keys.
+
+    Nothing computed a joint gain through this path, so no published number moved. What it did was
+    under-report how many comparisons a grid would yield, on the line a person reads before
+    committing hours of compute.
+    """
+
+    @staticmethod
+    def _plan(replicates: int, budgets: tuple[str, ...] = ("aggressive",)):
+        from scale_aware_compression.config import ExperimentConfig
+        from scale_aware_compression.experiments.scale_sweep import build_sweep_plan
+
+        config = ExperimentConfig.from_mapping(
+            {
+                "model": {"name": "pythia-160m"},
+                "sweep": {
+                    "models": ["pythia-160m"],
+                    "methods": ["sequential", "joint"],
+                    "budgets": list(budgets),
+                    "replicates": replicates,
+                    "budget_overrides": {
+                        budget: {"compression": {"budget_label": budget}} for budget in budgets
+                    },
+                },
+            }
+        )
+        return build_sweep_plan(config)
+
+    @pytest.mark.parametrize("replicates", [1, 3, 8])
+    def test_one_pair_per_replicate(self, replicates: int):
+        from scale_aware_compression.experiments.scale_sweep import find_comparison_pairs
+
+        assert len(find_comparison_pairs(self._plan(replicates))) == replicates
+
+    def test_pairs_multiply_across_budgets_and_replicates(self):
+        from scale_aware_compression.experiments.scale_sweep import find_comparison_pairs
+
+        plan = self._plan(3, budgets=("moderate", "aggressive"))
+        assert len(find_comparison_pairs(plan)) == 6
+
+    def test_both_halves_of_a_pair_share_a_draw(self):
+        """The invariant the key exists to protect, not just the count."""
+        from scale_aware_compression.experiments.scale_sweep import find_comparison_pairs
+
+        for sequential, joint in find_comparison_pairs(self._plan(3)):
+            assert sequential.replicate == joint.replicate
+            assert sequential.budget_label == joint.budget_label
+            assert sequential.model_name == joint.model_name
+
+    def test_every_replicate_appears_exactly_once(self):
+        from scale_aware_compression.experiments.scale_sweep import find_comparison_pairs
+
+        pairs = find_comparison_pairs(self._plan(3))
+        assert sorted(sequential.replicate for sequential, _ in pairs) == [0, 1, 2]
+
+    def test_a_grid_with_no_replicate_axis_still_pairs(self):
+        """Pre-amendment grids carry `replicate=None`, which must not break ordering."""
+        from scale_aware_compression.config import ExperimentConfig
+        from scale_aware_compression.experiments.scale_sweep import (
+            build_sweep_plan,
+            find_comparison_pairs,
+        )
+
+        config = ExperimentConfig.from_mapping(
+            {
+                "model": {"name": "pythia-160m"},
+                "sweep": {
+                    "models": ["pythia-160m"],
+                    "methods": ["sequential", "joint"],
+                    "budgets": ["aggressive"],
+                    "budget_overrides": {
+                        "aggressive": {"compression": {"budget_label": "aggressive"}}
+                    },
+                },
+            }
+        )
+        assert len(find_comparison_pairs(build_sweep_plan(config))) == 1
+
+
 class TestTheSweepExpandsOverReplicates:
     @staticmethod
     def _config(**sweep_overrides):

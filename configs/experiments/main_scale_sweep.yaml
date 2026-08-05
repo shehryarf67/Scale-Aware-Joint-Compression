@@ -218,6 +218,15 @@ sweep:
     # and adding a third live budget would silently grow the sweep by half.
     # ---------------------------------------------------------------------------------------------
 
+  # HONOUR THE FROZEN SEQUENTIAL ORDER. §6.1 measures joint gain against best-of {P->Q, Q->P}, and
+  # the frozen table has one cell where the winner is Q->P: pythia-1b at the moderate budget
+  # (F-32, +0.10 pp, 3/3 draws). Without this flag a `sequential` cell means P->Q everywhere, so this
+  # sweep would run the WEAKER baseline at 1B/moderate and inflate the joint gain there -- B-30's
+  # fault, in the one run that cannot be redone. Resolution comes from
+  # scale_aware_compression.protocol, which is the single machine-readable source; a test asserts
+  # every test-split config sets this.
+  use_frozen_order: true
+
   # Resumable: an interrupted sweep re-runs only the cells with no record yet.
   skip_existing: true
   # Fail fast while the pipeline is new. Flip to true for long unattended runs, but then check

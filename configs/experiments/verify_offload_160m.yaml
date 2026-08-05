@@ -1,0 +1,99 @@
+# Does per-block GPU offload change any number? (verification, not a result)
+#
+# Offload holds ONE decoder block on the card at a time instead of the whole model. It is the
+# change that makes Pythia-1B runnable at all: with the model resident, 1B peaks at 6.31 GiB on a
+# 6.00 GiB card and completes only by spilling to host memory at 7x the solve time
+# ([F-29](../docs/findings_log.md#f-29)).
+#
+# Residency must not move a number. Nothing about *where a tensor lives* should reach the Gram, the
+# mask, the scales or the solve -- but "should" is what every retraction in this project was built
+# on, so it gets measured.
+#
+# ACCEPTANCE, fixed before the run:
+#
+#     sequential  65.261        joint  64.041        joint gain  +1.08 pp
+#
+# Those are F-23's S5 cell, reproduced exactly by F-24 under a different config file and again by
+# F-29 after the capture refactor. Anything else means offload is not neutral, and then either the
+# cause is found or `METHOD_VERSION` is bumped and the ~50 existing records are recomputed. Do not
+# widen the tolerance: the same cell has landed on the same three decimals four times, so a
+# difference here is signal, not noise.
+#
+# THIS IS HOST-SPECIFIC. Those values came from the benchmark host. On another GPU the cuBLAS
+# kernels differ, the Gram differs in its last bits, and a near-tie in the saliency ranking can flip
+# -- F-19 found 4 positions in 85 million flipping between float32 and float64 norms alone. Verify
+# elsewhere with a host-local before/after baseline instead; see docs/partner_handoff.md.
+#
+# `skip_existing: false` on purpose. `exists_valid` does not compare `offload_blocks`, deliberately
+# -- it is a residency knob in the same class as `block_size`, and comparing it would invalidate
+# records for a setting that is not allowed to matter. The consequence is that a verification run
+# would otherwise skip the very cells it exists to produce.
+
+include:
+  - ../models/pythia_160m.yaml
+  - ../compression/sequential.yaml
+  - ../evaluation/quality.yaml
+  - ../evaluation/cpu_benchmark.yaml
+
+experiment:
+  id: verify_offload_160m
+  name: Per-block offload equivalence on Pythia-160M
+  description: >-
+    One aggressive 160M cell, sequential and joint, with compression.reconstruction.offload_blocks
+    enabled. Must reproduce 65.261 / 64.041 exactly.
+  tags:
+    - verification
+    - not-a-result
+
+runtime:
+  seed: 1234
+  deterministic: true
+  output_dir: outputs
+  log_level: INFO
+
+model:
+  # Load on the host. Offload moves the model here itself if it has to, but a caller that has
+  # already put it on the card has paid a full-model transient -- 3.77 GiB at 1B, which is most of
+  # what offload exists to avoid.
+  device: cpu
+
+data:
+  # Matched to screening.yaml exactly, so this reproduces F-23's S5 cell rather than something
+  # adjacent to it.
+  calibration_samples: 128
+  calibration_split: train
+  sequence_length: 512
+  max_eval_samples: 512
+  batch_size: 4
+
+compression:
+  reconstruction:
+    solver: sweep
+    local_steps: 1
+    joint_iterations: 2
+    comparison_group: output
+    scale_search: false
+    keep_benefit_saliency: false
+    offload_blocks: true
+
+sweep:
+  models:
+    - pythia-160m
+  methods:
+    - sequential
+    - joint
+  budgets:
+    - aggressive
+  replicates: 1
+
+  budget_overrides:
+    aggressive:
+      compression:
+        budget_label: aggressive
+        pruning:
+          sparsity: 0.3
+        quantisation:
+          bits: 4
+
+  skip_existing: false
+  continue_on_error: false

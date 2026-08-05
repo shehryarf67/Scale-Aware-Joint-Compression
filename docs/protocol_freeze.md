@@ -49,7 +49,15 @@ The plan already separates these concerns and does not require a W4 latency numb
 **Research question 4 survives this intact.** RQ4 asks whether theoretical sparsity produces real
 CPU latency gains. That is answerable from the **pruning-only arm**, which §5.4 already mandates
 at two budgets per model: pruning-only weights stay FP32, so they benchmark natively at every
-screened sparsity with no 4-bit kernel involved. The sparsity→latency curve comes free.
+screened sparsity with no 4-bit kernel involved, so the sparsity→latency curve is *obtainable*
+without a 4-bit kernel.
+
+⚠️ **"Comes free" was too strong, and this said so before A5 ran.** It comes free only if the
+pruning-only arm is actually benchmarked at *several* sparsities. [F-34](findings_log.md#f-34)
+measured one (30%, the frozen budgets' value) at three scales and found no commensurate speedup.
+That is one point against dense, not a curve. Reporting a curve needs additional sparsities, and
+choosing them *after* seeing the null would need declaring as a follow-up rather than presented as
+part of the original design.
 
 W4 still needs real int4 packing — quality and size claims require a genuinely converted
 artefact, not a fake-quantised FP32 one. Phase 5 already requires a bit-exact pack/unpack
@@ -224,8 +232,32 @@ otherwise read as an excellent result.
 | Decision | Frozen value | Reasoning |
 | --- | --- | --- |
 | Downstream tasks | `lm-evaluation-harness`, **pinned version**, task versions recorded | §4.3 requires HellaSwag, PIQA, ARC-Easy and §4.8 requires logging task versions. Reimplementing three tasks in-repo risks silent scoring differences from published numbers, which is a worse failure than one heavy dependency. |
-| Practical-importance rule | joint gain counts as practically important only when perplexity retention improves by **≥ 1.0 percentage point**, consistently in sign across **all three** confirmatory seeds, **and** the mean improvement exceeds the seed spread (max − min) at that cell | §6.3 requires this predefined. Stated before any compressed result exists. The seed-spread clause is what stops a gain smaller than noise being reported as a finding. |
-| Downstream importance rule | ≥ 1.0 percentage point accuracy gain on at least 2 of the 3 tasks, same sign across seeds | Same reasoning; §4.3 tasks are secondary evidence. |
+| Practical-importance rule | ⚠️ **SUPERSEDED — see [the amended rule](#the-amended-practical-importance-rule) below.** As originally frozen: joint gain counts as practically important only when perplexity retention improves by **≥ 1.0 percentage point**, consistently in sign across **all three** confirmatory seeds, **and** the mean improvement exceeds the seed spread (max − min) at that cell | §6.3 required this predefined, and it was stated before any compressed result existed. Its binding clause then turned out to be **vacuous**: run seeds are inert under this method ([F-15](findings_log.md#f-15)), so the seed spread is exactly zero and any nonzero gain passed. Amendment A1 §5.1 replaced the seed axis with paired calibration draws. |
+| Downstream importance rule | ⚠️ **WITHDRAWN, not amended.** As frozen: ≥ 1.0 pp accuracy gain on at least 2 of the 3 tasks, same sign across seeds | Same seed-era defect as above, and no replacement is claimed. The downstream run uses **one** calibration draw, so there is no sign to be consistent across. Downstream results are **descriptive secondary endpoints** and no formal joint-superiority claim is made from them; the policy is declared in `configs/experiments/downstream.yaml`. Invoking this rule in the write-up would be invoking a rule the design cannot satisfy. |
+
+### The amended practical-importance rule
+
+**Current governing form**, per Amendment A1 §5.1 and §6.3. This is the rule the write-up uses; the
+row above records what it replaced.
+
+A joint gain counts as practically important when, at a cell:
+
+1. perplexity retention improves by **≥ 1.0 percentage point**; **and**
+2. the sign is **consistent across every paired calibration replicate** at that cell -- ties are
+   excluded and counted, not treated as negatives (B-40); **and**
+3. **R is reported**, together with whether significance was reachable at that R. At R=5 the best
+   possible outcome is p = 0.0625, so 1B can carry effect-size evidence and never significance.
+
+**What was lost and what was gained, stated plainly because §6.3 requires it.** The original rule was
+stricter *on its face* -- it had a third clause -- and unmeasurable *in fact*, because that clause
+evaluated to zero for every cell. Replacing an unmeasurable criterion with a weaker measurable one is
+both a correction and **a reduction in pre-registered strength**. The paper must say so rather than
+present the amended rule as the one that was pre-registered.
+
+The seed-spread clause has no replacement. Paired-draw variance is reported as a standard deviation,
+a per-replicate list and an exact sign test instead of being folded into a pass/fail threshold --
+because F-26 showed the paired difference is *noisier* than either arm alone, so a spread-based gate
+would have been calibrated on the wrong quantity.
 
 ---
 
@@ -435,7 +467,23 @@ split — validation picks the method, test estimates its performance. Evidence:
 | pythia-410m | aggressive 30% + W4 | **P→Q** | +6.82 pp, one draw | ✅ **frozen on evidence** |
 | pythia-160m | moderate 30% + W8 | **P→Q** | indistinguishable over 5 draws | ✅ **frozen by pre-declared fallback** |
 | pythia-410m | moderate 30% + W8 | **P→Q** | +0.04 pp, i.e. indistinguishable | ✅ **frozen by the same fallback** |
-| pythia-1b | both | — | — | ⬜ not yet selected (model now downloaded) |
+| **pythia-1b** | **aggressive 30% + W4** | **P→Q** | **+2.15 pp, 3/3 draws** | ✅ **frozen on evidence** |
+| **pythia-1b** | **moderate 30% + W8** | **Q→P** | **+0.10 pp, 3/3 draws** | ✅ **frozen on evidence** |
+
+**All six cells are now frozen.** Evidence for the 1B pair: [findings_log.md F-32](findings_log.md#f-32).
+
+### ⚠️ The W8 order is not the same at every scale, and that is by design
+
+1B freezes **Q→P** at the moderate budget while 160M and 410M freeze **P→Q**. A1 §3 freezes the order
+**per (model, budget)** precisely so this is permitted: the two smaller scales had an inconsistent sign
+and took the pre-declared *fallback*, whereas 1B had a consistent sign across three draws and so took
+the *measured* branch of the same rule. Nothing was decided differently; the same rule met different
+evidence.
+
+Read the 1B W8 freeze with its two caveats attached. The margin is **0.10 pp**, and three unanimous
+draws reach only p = 0.25 on an exact sign test — consistent in sign, not significant. It is also on
+the **control** budget, where 96.3% retention leaves almost no headroom and F-05 predicts the mechanism
+is inert. Nothing in the headline depends on it.
 
 ### W4 — frozen, decisively, at both scales
 
@@ -483,6 +531,90 @@ there is little damage for a draw to modulate — each arm's sd is only 0.13 pp.
 two orderings is also tiny, because with an almost-lossless quantiser it barely matters which runs first.
 Small signal, small noise. Resolving a +0.18 pp margin at sd 0.19 would need R ≈ 12, spent on the
 *control* budget to settle a question that does not affect the headline.
+
+---
+
+## 🔒 THE CONFIRMATORY FREEZE — A1 step 9, executed 2026-08-04
+
+**Frozen at code commit `cbe2098945dcf9851223e7fb55e25ba60a4af73a`, clean tree.**
+Machine-readable record: [`results/evidence/confirmatory_manifest.json`](../results/evidence/confirmatory_manifest.json),
+generated by `scripts/build_confirmatory_manifest.py`, `valid_for_freeze: true`, `checks_failed: []`.
+
+**What this means, in one sentence:** from here nothing methodological may be changed. Step 10 runs
+once against exactly this configuration, and if something turns out to be wrong with it the answer is
+to report a limitation, not to adjust and re-run.
+
+### The frozen configuration
+
+| | |
+| --- | --- |
+| Config | `configs/experiments/main_scale_sweep.yaml`, sha256 `cab8ddf070d73ca3…` |
+| `METHOD_VERSION` | 4 |
+| Cells | **210** |
+| Evaluation split | **test** — held out; validation was the selection surface |
+| Evaluation device | **CPU** |
+| Benchmark device | **CPU**, 4 threads, 5 warm-up + 30 measured |
+| Replicates | **R=8** at 160M and 410M, **R=5** at 1B |
+| Budgets | moderate 30% + W8 · aggressive 30% + W4 |
+
+**Model revisions**, each a 40-character SHA (§2.7):
+
+| Model | Revision |
+| --- | --- |
+| pythia-160m | `50f5173d932e8e61f858120bcb800b97af589f46` |
+| pythia-410m | `9879c9b5f8bea9051dcb0e68dff21493d67e9d4f` |
+| pythia-1b | `f73d7dcc545c8bd326d8559c8ef84ffe92fea6b2` |
+
+**Frozen sequential order**, resolved per cell rather than assumed:
+
+| Cell | Order |
+| --- | --- |
+| pythia-160m / moderate | P→Q |
+| pythia-160m / aggressive | P→Q |
+| pythia-410m / moderate | P→Q |
+| pythia-410m / aggressive | P→Q |
+| pythia-1b / aggressive | P→Q |
+| **pythia-1b / moderate** | **Q→P** |
+
+That last row is why the order is resolved in code (`scale_aware_compression.protocol`) rather than
+read from prose. Before **B-42** was fixed this config would have run P→Q there — the *weaker*
+baseline, inflating the joint gain in the one run that cannot be redone.
+
+### The one warning carried into the freeze
+
+**Pythia-1B runs R=5, and no significance claim is reachable at that R for any effect size** — the
+best possible outcome is p = 0.0625. This is deliberate (A1 §6: a 1B replicate costs roughly four
+times a 160M one) and it is carried as a recorded warning rather than silently accepted. **1B carries
+effect-size and sign-consistency evidence only.**
+
+### What is excluded, stated rather than left as a gap
+
+* **Latency** — only FP32 runtime representations are timed (dense, pruning-only). A packed W4/W8
+  layer dequantises on every forward, so a timing would measure the unpacking kernel (**D1**). The
+  absence is recorded per record.
+* **Downstream tasks** — a descriptive secondary endpoint on one calibration draw. No formal
+  joint-superiority claim, and the seed-era downstream importance rule is **withdrawn, not amended**.
+* **pythia-1.4b and qwen2.5-0.5b** — outside this manifest and outside the scale trend. Neither has a
+  frozen sequential order, and §8.2 forbids them consuming the primary sweep's time.
+
+### What may still happen after this point
+
+Only these, and none of them touches the method:
+
+* running step 10;
+* fixing a crash that stops a cell completing at all — reported as a deviation if it happens;
+* analysis, plots and prose written **from** the results;
+* the deferred models, as separately declared additions excluded from the trend.
+
+**What may not:** changing a budget, a threshold, an order, a device, a replicate count, the split,
+the coverage, or the practical-importance rule. If the result is disappointing, that is the result.
+
+### Audit note on the two commits
+
+The manifest records commit `cbe2098` — the state of the *code* it validated. The manifest file is
+then committed on top, so the freeze commit's own SHA differs from the one inside the file. That is
+inherent to recording a state and then storing the record, and it is written down here so nobody
+later reads it as an inconsistency.
 
 ## Still open
 

@@ -54,6 +54,26 @@ class ExperimentError(RuntimeError):
     """Raised when an experiment cannot be run or recorded."""
 
 
+def _release_device_cache(device: str) -> None:
+    """Return the caching allocator's free blocks to the driver.
+
+    A no-op away from CUDA, and cheap on it. Called at the boundaries between the compression and
+    evaluation stages, which are the two large consumers: without it the allocator holds one
+    stage's peak while the next stage asks for its own, and on Windows the driver satisfies the
+    shortfall from shared system memory instead of raising -- so the symptom is a run that is
+    several times slower with nothing in the log, not an error.
+
+    Args:
+        device: The device the next stage will use.
+    """
+    if not str(device).startswith("cuda"):
+        return
+    import torch
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 def utc_timestamp() -> str:
     """Current UTC time as an ISO-8601 string with second precision."""
     return datetime.now(UTC).replace(microsecond=0).isoformat()
@@ -751,9 +771,27 @@ class ExperimentRunner:
             with log_stage(LOGGER, "measure checkpoint"):
                 self._measure_artefact(record, compressor, model, loaded)
 
-            # 6. Quality, on CPU.
-            with log_stage(LOGGER, "evaluate quality (CPU)"):
-                model.to("cpu")
+            # 6. Quality, on `evaluation.device`.
+            #
+            # CPU is the default and is what every reported number must come from -- but this stage
+            # is 86% of an exploratory cell and GPU runs it 22.5x faster for a relative difference of
+            # 8.3e-06, the same magnitude as CPU thread-configuration sensitivity (F-29). The field
+            # has always existed and `check_evaluation_device` warns rather than errors, precisely so
+            # exploratory work can use it; nothing was reading it.
+            #
+            # Safe because `exists_valid` compares the recorded evaluation device (B-32), so a grid
+            # cannot silently reuse CPU records while writing GPU ones. Retention and joint gain stay
+            # internally consistent either way: both arms of a cell, and its dense reference, are
+            # evaluated the same way.
+            evaluation_device = config.evaluation.device.value
+            with log_stage(LOGGER, f"evaluate quality ({evaluation_device})"):
+                # Release the compression stage's cached blocks first. The caching allocator holds
+                # freed memory, so at 1B the Gram temporaries stay reserved while the model is moved
+                # on for evaluation -- and on Windows the driver answers the shortfall by falling
+                # back to shared system memory rather than raising, which is the silent 7x
+                # slowdown F-29 first measured. Costs a few milliseconds and a re-warm.
+                _release_device_cache(evaluation_device)
+                model.to(evaluation_device)
                 report = evaluate_model(
                     model,
                     loaded.tokenizer,
@@ -762,7 +800,11 @@ class ExperimentRunner:
                 )
                 record.add_quality(report)
 
-            # 7. Deployment measurements, on CPU.
+            # 7. Deployment measurements, on CPU -- always, whatever the evaluation device was.
+            model.to("cpu")
+            # Same reasoning in the other direction: the next cell's compression starts with the
+            # card still holding this cell's evaluation, and it is the compression that then spills.
+            _release_device_cache(evaluation_device)
             runtime = self._runtime_representation()
             record.runtime_representation = runtime
             if self._latency_is_meaningful(runtime):
@@ -1001,6 +1043,16 @@ class ExperimentRunner:
             and int(actual_count) > int(expected_count)
         ):
             return f"num_sequences {actual_count} exceeds the cap {expected_count}"
+
+        # The DEVICE, because retention is a ratio and both halves of a ratio must come from the
+        # same one. This became live the moment GPU evaluation was wired in: a GPU-evaluated
+        # compressed run normalised against a CPU-evaluated dense record would put the ~1e-5
+        # device drift *inside* the retention figure rather than across tables, where it is at
+        # least declarable. Cheaper to re-run the dense cell on the new device than to explain it.
+        expected_device = str(self.config.evaluation.device.value).split(":")[0]
+        actual_device = payload.get("evaluation_device")
+        if actual_device is not None and str(actual_device).split(":")[0] != expected_device:
+            return f"evaluated on {actual_device} but this run evaluates on {expected_device}"
         return None
 
     def _load_dense_reference(self) -> Any:

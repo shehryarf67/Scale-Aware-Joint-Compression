@@ -403,9 +403,12 @@ class ReconstructionConfig:
     damping: float = 1e-2
     """Ridge coefficient, relative to the mean Gram diagonal so one value works at every width."""
     block_size: int = 128
-    """Column block width for the sweep solver. Throughput knob; does not change the result."""
-    offload_blocks: bool = False
-    """Stage one decoder block at a time on the compression device."""
+    """Column block width for the sweep solver.
+
+    A throughput knob that does not *meaningfully* change the result -- not one that leaves it
+    bit-identical. Three block sizes gave three distinct losses differing at ~5e-7 relative
+    (findings_log.md F-29), smaller than the CPU thread-configuration sensitivity in F-23, so it is
+    negligible in effect. The earlier wording promised exactly no change, which was false."""
     activation_order: bool = True
     """Visit high-energy columns first in the sweep. Ignored for per-group quantisation."""
     comparison_group: MaskComparisonGroup = MaskComparisonGroup.OUTPUT
@@ -428,6 +431,16 @@ class ReconstructionConfig:
     """
     calibration_dtype: str = "float32"
     """Accumulation dtype for ``H = XᵀX``. fp32 keeps the largest layer Hessian at 256 MiB."""
+    offload_blocks: bool = False
+    """Hold one decoder block on the GPU at a time instead of the whole model.
+
+    Off by default because it changes nothing at 160M or 410M, where the model fits. It is what
+    makes Pythia-1B runnable: with the model resident, 1B peaks at 6.31 GiB on a 6.00 GiB card and
+    completes only by spilling to host memory at 7x the solve time. Block-sequential capture
+    already made the block loop own the forward, so this only changes *residency* -- see
+    docs/capture_refactor_rationale.md.
+
+    Requires CUDA; offloading to CPU would be a silent no-op, so the config rejects it."""
 
     def __post_init__(self) -> None:
         """Validate the optimisation budget."""
@@ -518,6 +531,26 @@ class EvaluationConfig:
     """Prompts used for dense-vs-compressed top-1 agreement."""
     generation_prompts: int = 16
     generation_max_new_tokens: int = 64
+    downstream_tasks: list[str] = field(default_factory=list)
+    """Downstream tasks to score (§4.3). Empty means skip them.
+
+    Empty by default because they are ~32x the cost of a perplexity evaluation -- one forward per
+    candidate continuation, not per sequence -- so they belong on the runs that report them rather
+    than on every exploratory cell."""
+    downstream_device: Device | None = None
+    """Device for downstream tasks. ``None`` follows ``device``.
+
+    Separable from perplexity's device on purpose: at ~53,000 forwards per model the CPU path is
+    ~150 h across the sweep against ~15-20 h on GPU. §4.6 restricts *deployment* measurements to
+    CPU, and a multiple-choice accuracy is a quality metric, not a latency claim -- it is
+    device-invariant far below the ~1 pp differences being reported. Whichever is chosen is
+    recorded in the run record."""
+    downstream_batch_size: int = 4
+    downstream_limit: int | None = None
+    """Samples per task. ``None`` runs the full task.
+
+    A subsampled score is **not** comparable with a published number, which is why it is recorded
+    alongside the accuracy rather than only living in the config."""
 
     def __post_init__(self) -> None:
         """Validate evaluation sizes."""
@@ -529,6 +562,26 @@ class EvaluationConfig:
             _require_positive("evaluation.max_samples", self.max_samples)
         if not self.metrics:
             raise ConfigError("evaluation.metrics must list at least one metric")
+        _require_positive("evaluation.downstream_batch_size", self.downstream_batch_size)
+        if self.downstream_limit is not None:
+            _require_positive("evaluation.downstream_limit", self.downstream_limit)
+        if isinstance(self.downstream_device, str):
+            self.downstream_device = Device(self.downstream_device)
+        from scale_aware_compression.evaluation.downstream import DOWNSTREAM_TASKS
+
+        unknown = [task for task in self.downstream_tasks if task not in DOWNSTREAM_TASKS]
+        if unknown:
+            # §4.3 names three tasks. A typo would otherwise surface as a harness error after the
+            # model is loaded, or worse, score a real but unplanned task and record it as evidence.
+            raise ConfigError(
+                f"evaluation.downstream_tasks contains {unknown}, which §4.3 does not name. "
+                f"Permitted: {sorted(DOWNSTREAM_TASKS)}"
+            )
+
+    @property
+    def effective_downstream_device(self) -> Device:
+        """The device downstream tasks actually run on."""
+        return self.downstream_device or self.device
 
 
 @dataclass(slots=True)
@@ -608,6 +661,21 @@ class SweepConfig:
     ``{"aggressive": {"compression": {"pruning": {"sparsity": 0.7}}}}``."""
     skip_existing: bool = True
     continue_on_error: bool = False
+    use_frozen_order: bool = False
+    """Resolve a ``sequential`` cell to the **frozen** order for its (model, budget).
+
+    Off by default, and that default is deliberate. Exploratory configs ran ``sequential`` meaning
+    P→Q specifically -- often alongside ``sequential_qp`` as the other half of the order comparison --
+    so making resolution automatic would silently change what ~50 existing records mean and break
+    every reproduction gate.
+
+    **On for anything confirmatory.** §6.1 requires joint gain against best-of {P→Q, Q→P}, and the
+    frozen table has one cell where the winner is Q→P (pythia-1b/moderate). Without this flag the
+    confirmatory sweep would run P→Q there -- the weaker baseline, which inflates the joint gain --
+    which is exactly the fault B-30 recorded. A test asserts every test-split config sets it.
+
+    See :mod:`scale_aware_compression.protocol` for the table and the evidence per cell.
+    """
 
     def __post_init__(self) -> None:
         """Validate the grid."""

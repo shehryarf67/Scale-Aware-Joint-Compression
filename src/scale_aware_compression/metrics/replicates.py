@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import math
 import statistics
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -60,6 +61,33 @@ class ReplicateError(ValueError):
     """Raised when replicate aggregation is given inconsistent or insufficient input."""
 
 
+def split_signs(gains: Sequence[float]) -> tuple[int, int, int]:
+    """Count positive, negative and tied gains.
+
+    **Ties are counted, not silently absorbed.** The sign test is a statement about the *direction*
+    of a difference, and a difference of exactly zero has no direction -- so the conventional test
+    discards ties and reduces n accordingly. Counting a tie as a negative, which is what a bare
+    ``sum(g > 0)`` against the full replicate count does, biases the p-value in whichever direction
+    happens to be inconvenient and does so invisibly.
+
+    **A tie means exactly 0.0, with no tolerance.** A tolerance would be a threshold on the effect
+    being measured, and every candidate value for it is now visible in the recorded results -- so
+    choosing one would be selecting an analysis parameter after seeing the data, which §6.3 forbids.
+    Exact equality is the only threshold that was not chosen with knowledge of the outcome. On real
+    records this has never fired: the smallest recorded 1B gain is +0.0044 pp, which *rounds* to
+    +0.00 in a two-decimal table but is genuinely positive.
+
+    Args:
+        gains: One gain per replicate.
+
+    Returns:
+        ``(positive, negative, ties)``, summing to ``len(gains)``.
+    """
+    positive = sum(1 for value in gains if value > 0.0)
+    negative = sum(1 for value in gains if value < 0.0)
+    return positive, negative, len(gains) - positive - negative
+
+
 def sign_test_p_value(positive: int, total: int) -> float:
     """Exact two-sided sign-test probability under a fair-sign null.
 
@@ -68,7 +96,8 @@ def sign_test_p_value(positive: int, total: int) -> float:
 
     Args:
         positive: Number of replicates whose gain was positive.
-        total: Number of replicates.
+        total: Number of **non-tied** replicates. Pass the count excluding ties; see
+            :func:`split_signs` for why.
 
     Returns:
         The two-sided probability, capped at 1.0.
@@ -100,7 +129,17 @@ class ReplicateSummary:
     minimum: float
     maximum: float
     positive_count: int
-    sign_test_p: float
+    negative_count: int = 0
+    tie_count: int = 0
+    """Replicates whose gain was exactly zero. Excluded from the sign test, reported anyway.
+
+    A tie is not evidence either way, but it is also not nothing: a cell producing ties says the
+    two arms are landing on identical numbers, which is worth seeing rather than folding into a
+    negative count."""
+    sign_test_p: float = 1.0
+    sign_test_n: int = 0
+    """Non-tied replicates the sign test was computed over. Reported because a p-value from n=6 with
+    two ties is a different claim from one over n=8, and §5.1 requires R reported per cell."""
 
     @property
     def standard_error(self) -> float:
@@ -111,17 +150,29 @@ class ReplicateSummary:
 
     @property
     def consistent_in_sign(self) -> bool:
-        """True when every replicate agreed on the direction."""
-        return self.positive_count in {0, self.replicates}
+        """True when every replicate that had a direction agreed on it.
+
+        Ties are excluded rather than counted against consistency, matching the sign test. A cell of
+        all ties returns ``False``: there is no direction to be consistent about, and returning
+        ``True`` would let a set of identical results satisfy §6.3's consistency clause.
+        """
+        if self.sign_test_n == 0:
+            return False
+        return self.positive_count == self.sign_test_n or self.negative_count == self.sign_test_n
 
     @property
     def significance_was_reachable(self) -> bool:
-        """Whether *any* outcome at this R could have reached p < 0.05.
+        """Whether *any* outcome at this effective n could have reached p < 0.05.
 
         False means a null result says nothing about nature -- only about the replicate count. This is
         the flag that keeps an underpowered design from being written up as evidence of absence.
+
+        Judged on :attr:`sign_test_n`, not the raw replicate count: ties do not contribute to the
+        test, so R=8 with three ties has the power of n=5 and cannot reach 0.05 however the rest
+        fall. Using the raw count here would overstate the power of exactly the cells most likely to
+        tie -- the near-lossless W8 control.
         """
-        return self.replicates >= MIN_R_FOR_SIGNIFICANCE
+        return self.sign_test_n >= MIN_R_FOR_SIGNIFICANCE
 
     @property
     def mean_over_sd(self) -> float:
@@ -144,6 +195,9 @@ class ReplicateSummary:
             "minimum": self.minimum,
             "maximum": self.maximum,
             "positive_count": self.positive_count,
+            "negative_count": self.negative_count,
+            "tie_count": self.tie_count,
+            "sign_test_n": self.sign_test_n,
             "consistent_in_sign": self.consistent_in_sign,
             "sign_test_p": self.sign_test_p,
             "significance_was_reachable": self.significance_was_reachable,
@@ -180,17 +234,34 @@ def summarise_replicates(
         )
 
     count = len(gains)
-    positive = sum(1 for value in gains if value > 0.0)
+    positive, negative, ties = split_signs(gains)
+    effective = positive + negative
     deviation = statistics.stdev(gains) if count >= 2 else 0.0
 
-    if count < MIN_R_FOR_SIGNIFICANCE:
-        LOGGER.info(
-            "R=%d for %s/%s: no significance claim is reachable at this replicate count "
-            "(best possible two-sided p is %.4f). Report effect size and sign consistency.",
-            count,
+    # The sign test runs over non-tied replicates only. With every replicate tied there is no
+    # direction to test, so p = 1.0 is the honest answer rather than an error: the cell ran, it just
+    # carries no directional evidence.
+    probability = sign_test_p_value(positive, effective) if effective else 1.0
+
+    if ties:
+        LOGGER.warning(
+            "%s/%s: %d of %d replicates gave a gain of exactly zero. Ties carry no direction, so "
+            "the sign test is over n=%d, not n=%d. Report both counts.",
             model_name,
             budget_label,
-            sign_test_p_value(count, count),
+            ties,
+            count,
+            effective,
+            count,
+        )
+    if effective and effective < MIN_R_FOR_SIGNIFICANCE:
+        LOGGER.info(
+            "Effective n=%d for %s/%s: no significance claim is reachable at this count "
+            "(best possible two-sided p is %.4f). Report effect size and sign consistency.",
+            effective,
+            model_name,
+            budget_label,
+            sign_test_p_value(effective, effective),
         )
 
     return ReplicateSummary(
@@ -204,7 +275,10 @@ def summarise_replicates(
         minimum=min(gains),
         maximum=max(gains),
         positive_count=positive,
-        sign_test_p=sign_test_p_value(positive, count),
+        negative_count=negative,
+        tie_count=ties,
+        sign_test_p=probability,
+        sign_test_n=effective,
     )
 
 
@@ -344,12 +418,41 @@ class ScaleComparison:
     @property
     def positive_count(self) -> int:
         """Replicates where the smaller model showed the larger gain."""
-        return sum(1 for value in self.differences if value > 0.0)
+        return split_signs(self.differences)[0]
+
+    @property
+    def negative_count(self) -> int:
+        """Replicates where the larger model showed the larger gain."""
+        return split_signs(self.differences)[1]
+
+    @property
+    def tie_count(self) -> int:
+        """Replicates where both scales gained exactly the same. See :func:`split_signs`."""
+        return split_signs(self.differences)[2]
+
+    @property
+    def sign_test_n(self) -> int:
+        """Non-tied replicates the sign test is computed over."""
+        return self.positive_count + self.negative_count
 
     @property
     def consistent_in_sign(self) -> bool:
-        """True when every replicate agreed on which scale had the larger gain."""
-        return bool(self.differences) and self.positive_count in {0, len(self.differences)}
+        """True when every replicate that had a direction agreed on which scale gained more.
+
+        Ties are excluded rather than counted against consistency, matching the sign test and
+        :attr:`ReplicateSummary.consistent_in_sign`. All-ties returns ``False``: identical gains at
+        two scales are not evidence of a scale effect in either direction.
+        """
+        if self.sign_test_n == 0:
+            return False
+        return self.positive_count == self.sign_test_n or self.negative_count == self.sign_test_n
+
+    @property
+    def sign_test_p(self) -> float:
+        """Exact two-sided sign-test probability over the non-tied replicates."""
+        if self.sign_test_n == 0:
+            return float("nan")
+        return sign_test_p_value(self.positive_count, self.sign_test_n)
 
     def to_dict(self) -> dict[str, Any]:
         """Return a flat, serialisable mapping."""
@@ -361,10 +464,11 @@ class ScaleComparison:
             "replicates": len(self.differences),
             "mean_difference": self.mean_difference,
             "positive_count": self.positive_count,
+            "negative_count": self.negative_count,
+            "tie_count": self.tie_count,
+            "sign_test_n": self.sign_test_n,
             "consistent_in_sign": self.consistent_in_sign,
-            "sign_test_p": sign_test_p_value(self.positive_count, len(self.differences))
-            if self.differences
-            else float("nan"),
+            "sign_test_p": self.sign_test_p,
         }
 
 

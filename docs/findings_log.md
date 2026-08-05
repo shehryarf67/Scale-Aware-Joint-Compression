@@ -759,6 +759,532 @@ to zero. **The pruning budget must be verified against `mask_sparsity`.**
 
 ---
 
+### F-35 - Downstream tasks: the harness anchors to published values, and no arm difference is resolvable {#f-35}
+
+*2026-08-04 - Pythia-160M `50f5173d`, 410M `dd47b0e`, 1B `f73d7dcc` - HellaSwag / PIQA / ARC-Easy,
+**full tasks**, no subsampling - lm-eval **0.4.12**, task versions all 1.0 - **GPU** evaluation
+(declared; see below) - aggressive budget 30% + W4 - one calibration draw - 9 evaluations, ~2 h 15 m -
+`configs/experiments/downstream.yaml` - gap A4 / §4.3*
+
+Closes the second of the two §-required gaps. 27 rows, `complete: true`.
+
+#### The anchor: dense scores reproduce published Pythia values
+
+This is the check that the harness is measuring what it claims, and it is the reason to trust
+anything below.
+
+| Model | Task | Ours (dense) | Published | Diff |
+| --- | --- | --- | --- | --- |
+| 160M | hellaswag | 0.2838 | ~0.285 | −0.12 pp |
+| 160M | piqa | 0.6230 | ~0.620 | +0.30 pp |
+| 160M | arc_easy | 0.4364 | ~0.435 | +0.14 pp |
+| 410M | hellaswag | 0.3372 | ~0.337 | +0.02 pp |
+| 410M | piqa | 0.6670 | ~0.668 | −0.10 pp |
+| 410M | arc_easy | 0.5189 | ~0.517 | +0.19 pp |
+| 1B | hellaswag | 0.3778 | ~0.377 | +0.08 pp |
+| 1B | piqa | 0.7073 | ~0.707 | +0.03 pp |
+| 1B | arc_easy | 0.5699 | ~0.569 | +0.09 pp |
+
+**Worst deviation 0.30 pp across nine cells.** Comparability with published work is the entire reason
+the harness was pinned rather than reimplemented (§2.7 freeze table), and this is that decision paying
+off.
+
+**It also resolves the smoke-run anomaly.** The 200-sample prefill run gave HellaSwag 0.3900 against a
+published ~0.29, which was flagged as too high to shrug at. The full-task value is **0.2838**. Cause:
+`--limit` takes the **first N examples, not a random sample**, so a 200-example prefix is biased. Not a
+scoring defect, and worth remembering before anyone quotes a `--limit` number.
+
+#### Compression costs real downstream accuracy, and it is measurable
+
+Accuracy retention against each model's own dense score:
+
+| Model | hellaswag | piqa | arc_easy |
+| --- | --- | --- | --- |
+| 160M | 0.993 / 0.992 | 0.988 / 0.978 | 0.966 / 0.934 |
+| 410M | 0.940 / 0.944 | 0.970 / 0.975 | 0.900 / 0.897 |
+| 1B | 0.965 / 0.962 | 0.964 / 0.970 | 0.935 / 0.934 |
+
+*sequential / joint.* **ARC-Easy is the most sensitive task** -- down to 0.897 at 410M -- and HellaSwag
+the least. Every arm at every scale is **demonstrably above chance** (interval clears the floor), so no
+compressed model is broken; the budget degrades them measurably and non-catastrophically, consistent
+with §5.3.
+
+#### No joint-versus-sequential difference is resolvable, at any scale
+
+| Model | hellaswag | piqa | arc_easy |
+| --- | --- | --- | --- |
+| 160M | −0.01 pp (0.02σ) | −0.60 pp (0.37σ) | −1.39 pp (**0.97σ**) |
+| 410M | +0.14 pp (0.21σ) | +0.33 pp (0.21σ) | −0.17 pp (0.12σ) |
+| 1B | −0.12 pp (0.18σ) | +0.44 pp (0.28σ) | −0.08 pp (0.06σ) |
+
+σ is of the *difference*, from the two arms' own standard errors. **Not one of nine cells reaches 1σ**,
+let alone 2. The honest statement: **these tasks at these sample sizes cannot distinguish the arms.**
+
+That is a *bounded* null, not evidence of no effect. ARC-Easy at 160M would need roughly 4x the items
+to resolve a 1.39 pp difference, and the tasks are fixed-size.
+
+#### The endpoints disagree at 160M, and that belongs in the paper
+
+At 160M aggressive, perplexity says **joint wins by +1.69 pp** ([F-27](#f-27)); downstream says joint is
+*behind* on all three tasks (−0.01, −0.60, −1.39 pp).
+
+Both can be true. Perplexity is average log-likelihood over natural text; multiple-choice accuracy is
+an **argmax over candidate continuations**. A method can lower average NLL while degrading the
+*ranking* between a correct completion and a plausible distractor -- those are different functionals of
+the same distribution.
+
+**What may not be done with this:** the downstream sign must not be used to argue against the
+perplexity result, nor the reverse. Every downstream difference here is under 1σ on one draw, so it is
+not evidence of anything directional. What is reportable is that **the perplexity advantage did not
+transfer to a measurable downstream advantage**, which is a weaker and more defensible claim than
+either endpoint alone.
+
+#### Two limitations that are properties of the design, not of the run
+
+* **160M HellaSwag has almost no headroom.** Dense scores 0.2838 against a 0.25 floor -- 3.4 pp of
+  range. A task cannot show compression damage it has no room to show, and retention of 0.993 there
+  reflects the ceiling rather than robustness.
+* **One calibration draw**, per the policy declared in `downstream.yaml` before the run. Downstream
+  results are **descriptive secondary endpoints**; no formal joint-superiority claim is made from them,
+  and the seed-era downstream importance rule is withdrawn rather than amended
+  ([protocol_freeze.md](protocol_freeze.md)). The harness standard error quantifies **task-item
+  sampling only** -- it says nothing about calibration-draw variance, which [F-26](#f-26) measured at a
+  1.47 pp swing on perplexity.
+
+#### Conditions worth keeping
+
+**GPU-evaluated, declared not assumed.** ~53,000 forward passes per model makes CPU ~150 h against
+~2 h 15 m here. §4.6 binds *deployment* measurements to CPU because those are properties of the
+machine; a multiple-choice accuracy is a property of the weights and the data. `benchmark.device`
+is untouched, and the rationale is written into the record itself.
+
+**Every row carries its provenance** -- commit, model revision, `METHOD_VERSION`, budget, sparsity,
+bits, resolved sequential order, calibration draw and fingerprint, targeted parameter count, task
+version, task split, timestamp, status.
+
+**The sequential arm resolved its frozen order** rather than assuming P→Q ([B-42](#f-35)). At the
+aggressive budget it is P→Q at all three scales, so the resolution changed nothing here -- but it
+logged its evidence per cell, which is what makes that checkable.
+
+**Timing, after the B-41 fix:** 160M 3:48-4:33, 410M 9:05-9:16, 1B 22:59-24:26 per evaluation.
+Compressed cells now run at dense speed; 410M/joint was **3 h 37 m** before the fix.
+
+---
+
+### F-34 - Prefill and decode separated, and 30% unstructured sparsity buys no CPU latency {#f-34}
+
+*2026-08-01/04 - Pythia-160M `50f5173d`, 410M `dd47b0e`, 1B `f73d7dcc` - **CPU**, 4 threads, batch 1
+- 5 warm-up + 30 measured runs per cell x 2 rotation rounds = **60 samples per cell** - benchmark
+host (i7-13620H) - gap A5 / §4.7 - `configs/experiments/prefill_decode.yaml`*
+
+All three scales. Compression ran on GPU with block offload; every **measurement** is CPU.
+
+| Model | Arm | Prefill @128 | @512 | Decode @128 | @512 |
+| --- | --- | --- | --- | --- | --- |
+| 160M | dense | 156.45 (5.2) | 593.23 (23.4) | 21.78 (1.9) | 29.68 (4.6) |
+| 160M | pruning 30% | 155.43 (6.3) | 600.04 (19.7) | 23.58 (3.3) | 26.28 (1.6) |
+| 410M | dense | 452.96 (51.3) | 1811.84 (125.7) | 58.61 (5.6) | 70.82 (16.2) |
+| 410M | pruning 30% | 445.01 (63.3) | 1764.69 (41.5) | 54.21 (2.1) | 73.46 (9.7) |
+| 1B | dense | 1061.36 (88.6) | 4223.90 (329.8) | 102.72 (9.8) | 125.36 (7.4) |
+| 1B | pruning 30% | 1053.59 (36.8) | 4098.86 (46.1) | 99.85 (2.0) | 120.40 (1.8) |
+
+Medians in ms, IQR in parentheses.
+
+#### The split behaves as the plan says it should, at every scale
+
+Prompt-length scaling, dense, for a **4x** longer prompt:
+
+| Model | Prefill | Decode |
+| --- | --- | --- |
+| 160M | **3.79x** | 1.36x |
+| 410M | **4.00x** | 1.21x |
+| 1B | **3.98x** | 1.22x |
+
+**Prefill scales linearly with prompt length; decode is nearly flat.** That is exactly the
+compute-bound versus bandwidth-bound distinction §4.7 asks to be made visible, it holds at all three
+scales, and a single blended generation latency would have hidden it. Decode is also **8-34x cheaper
+per token than a prefill**, which is why a long generation is dominated by it.
+
+It also **validates the implementation**. Had the decode callable silently re-run the prompt -- the
+failure the module exists to prevent -- decode would have tracked prefill's 4x. It does not, at any
+scale, so the cache is genuinely primed and the timed region is genuinely one token.
+
+#### 30% unstructured sparsity does not deliver the speedup its compression ratio suggests
+
+The honest reading needs the right comparison. Against **zero** the sign leans towards pruning:
+9 of 12 cells are faster, by 1-3%. But 9/12 reaches only **p = 0.15** on an exact sign test, every
+gap is **inside the IQR** -- 1B prefill @512 differs by 125 ms against a dense IQR of 330 ms -- and
+at 160M the direction is 2/4, i.e. absent where the noise is lowest.
+
+Against **what the compression would predict** the answer is unambiguous. Removing 30% of the
+targeted weights predicts roughly a 30% reduction if those weights were being skipped. The measured
+effect is 1-3%, an order of magnitude short.
+
+**An unstructured mask stores zeros, and a dense BLAS kernel multiplies by them anyway.** Skipping
+them needs a sparse kernel or a structured pattern (2:4 / 4:8) the hardware can exploit. So:
+
+* the **compression-ratio** and **checkpoint-size** results stand;
+* the **latency** result is a null **at the one sparsity measured**. RQ4 asks for a
+  sparsity-versus-latency *curve*; this is a single point (30%) against dense, at three scales.
+  Calling it a flat curve would claim more than one point can support -- what is established is
+  that 30% unstructured pruning did not produce a commensurate CPU speedup.
+
+**Do not report the compression ratio as though it implied a speedup.** The mask primitives already
+support 2:4 and 4:8 (`compression/masks.py`), so a structured variant is the obvious follow-up if a
+latency claim is wanted -- but it is a different experiment, and choosing it *after* seeing this null
+would need declaring as such.
+
+#### One measurement-quality note worth carrying
+
+The **pruned arm's IQR is consistently tighter** than the dense arm's -- 46 ms against 330 ms at 1B
+prefill @512, 41 against 126 at 410M. Both arms ran the same protocol under rotation, so this is
+not an artefact of ordering. Most likely the dense arm simply drew more of the machine's background
+noise across these particular rounds. It is a reason to prefer the **median and IQR over the mean
+and std** for anything reported here, not evidence about the arms: a mean would have been dragged
+around by whatever produced those tails.
+
+#### Conditions that make these numbers comparable
+
+* **CPU-only, on the benchmark host.** A deployment measurement (§4.6), and one results table never
+  spans two machines.
+* **FP32 arms only.** Per decision D1 a packed W4/W8 layer dequantises on every forward, so timing
+  it would measure the unpacking kernel. The record carries the exclusion as a field rather than
+  omitting it silently.
+* **Model-order rotation**, arms rebuilt inside each round, so thermal drift is spread across arms
+  rather than loaded onto whichever ran first.
+* **Median and IQR**, not mean and std: latency is bounded below with a long right tail, and one
+  scheduler preemption moves the mean while leaving the median alone.
+
+#### Conditions and limits
+
+* **CPU-only, on the benchmark host.** A deployment measurement (§4.6); one results table never
+  spans two machines.
+* **FP32 arms only.** Per decision D1 a packed W4/W8 layer dequantises on every forward, so timing
+  it would measure the unpacking kernel. The record carries the exclusion as a field.
+* **Model-order rotation**, arms rebuilt inside each round, so thermal drift is spread rather than
+  loaded onto whichever ran first.
+* **Two rotation rounds**, 60 samples per cell. Enough for the prefill/decode structure, which is a
+  4x effect. **Not** enough to resolve the 1-3% dense-versus-pruned question, and that is stated as
+  a bound rather than a null: what is established is that the effect is far smaller than the
+  compression ratio predicts, not that it is exactly zero.
+* Only **one sparsity** (30%, the frozen budgets' value). A real sparsity-versus-latency *curve*
+  would need several, and on this evidence it would be flat.
+
+---
+
+### F-33 - The S6 control: the mechanism is precision-specific where there is a mechanism at all {#f-33}
+
+*2026-08-01 - Pythia-160M `50f5173d` and Pythia-410M `dd47b0e` - 493 x 512 **validation** window -
+**CPU evaluation** - `METHOD_VERSION = 4` - 3 paired calibration draws (replicates 0-2, the same draws
+as [F-27](#f-27)) - 12 cells, ~2 h - `configs/experiments/s6_control.yaml`*
+
+**Label, to be used verbatim in the write-up:** *secondary, validation-selected, quality-matched
+mechanistic control.* Never confirmatory (Amendment A1 §5.4).
+
+#### The question
+
+Is the joint effect caused by low-bit **quantisation**, or merely by severe **quality degradation**?
+Two recipes at nearly the same quality answer it:
+
+| | Sparsity | Precision | 160M retention | 410M retention |
+| --- | --- | --- | --- | --- |
+| **S5** aggressive primary | 30% | **W4** | 56.7% | 58.6% |
+| **S6** control | 40% | **W8** | 54.2% | 56.8% |
+
+#### The S6 gain is nothing, at both scales
+
+| Model | rep0 | rep1 | rep2 | mean | sd | positive |
+| --- | --- | --- | --- | --- | --- | --- |
+| 160M | −0.23 | +0.05 | −0.08 | **−0.09 pp** | 0.14 | 1/3 |
+| 410M | +0.03 | +0.26 | −0.04 | **+0.09 pp** | 0.16 | 2/3 |
+
+#### The comparison the control exists to make, draw by draw
+
+Because the draws are paired, S5 and S6 can be differenced *within* a draw rather than compared as
+two means:
+
+| Model | rep0 | rep1 | rep2 | mean difference | positive |
+| --- | --- | --- | --- | --- | --- |
+| **160M** | +1.31 | +1.60 | +2.42 | **+1.78 pp** | **3/3** |
+| 410M | +0.65 | −0.76 | +1.01 | +0.30 pp | 2/3 |
+
+**At 160M the discrimination is clean and unanimous.** Matched quality, two recipes, and the W4 one
+shows a joint gain of +1.69 pp while the W8 one shows −0.09 pp. Every draw agrees. That is what A1
+§5.4 commissioned this control for, and it **supports a precision-specific mechanism over a
+compression-severity effect** — exactly what [F-05](#f-05) predicts from 8.86% mask divergence at W4
+against 0.46% at W8.
+
+**At 410M the control is uninformative, and that is not a failure of the control.** The primary itself
+shows no reliable effect at 410M (+0.39 pp, 2/3, sign inconsistent — [F-27](#f-27)), so there is
+nothing there to attribute to a cause. A control can only discriminate where an effect exists. Read the
+410M row as "no effect to explain", not as "the explanation failed".
+
+**So the honest statement is narrower than "the mechanism is precision-specific":** it is
+*precision-specific at the one scale where the mechanism is measurable at all.*
+
+#### The baseline here flatters joint, which makes the null stronger
+
+§6.1 requires joint gain against best-of {P→Q, Q→P}, and this control ran **P→Q only**, as A1 §5.4
+specifies. That is the [B-30](#f-24) fault by construction — but the direction is what matters: at W8
+the orders are indistinguishable and Q→P is slightly *ahead* on the mean ([F-28](#f-28)), so omitting
+it makes the sequential competitor **weaker** and flatters joint.
+
+The result is a null measured against a flattering baseline, which is a stronger null than the
+arithmetic alone. The pre-committed clause in the config — *if this control shows a positive gain, run
+Q→P before believing it* — does not fire.
+
+#### A cross-check that came free
+
+The first analysis pass accidentally included F-23's original S6 cells, which use the superseded
+`_seed1234` naming. Their retention is **54.43 / 54.20%**, identical to this run's replicate 0 to two
+decimals. Replicate 0 uses `DEFAULT_SEED`, so that cell *should* reproduce — and it does, across the
+seed→replicate rename, the solver rewrite, the capture refactor and the offload work.
+
+#### Limits
+
+* Three draws reach p = 0.25 at best on an exact sign test. **No significance claim.**
+* Validation split, and secondary by label. This may never be used to modify the primary budgets.
+* CPU evaluation throughout, deliberately: the dense records it normalises against are CPU-evaluated,
+  and retention is a ratio whose halves must share a device (B-37).
+* **Pythia-1B was not run**, per A1 §5.4 — the full 1B S6 comparison is conditional on this control
+  producing a useful distinction. It did at 160M, so a 1B S6 is now defensible if wanted; it was not
+  run here because A1 scopes 1B to cheap layer-level diagnostics only.
+
+---
+
+### F-32 - Pythia-1B: both budgets hold, the orders split, and the joint gain keeps shrinking {#f-32}
+
+*2026-08-01 - Pythia-1B `f73d7dcc` - 493 x 512 **validation** window - **GPU evaluation** (`cuda:0`) -
+`METHOD_VERSION = 4` - `offload_blocks: true` - 3 paired calibration draws (replicates 0-2, the same
+draws used at 160M and 410M in [F-27](#f-27)) - 19 cells, **2.9 h** - `configs/experiments/screening_1b.yaml`*
+
+The third scale point, and the first that could be run at all -- see [F-31](#f-31). Dense perplexity
+**17.9432**.
+
+#### Budget confirmation (§5.3): both hold
+
+| Budget | Retention, best-of sequential | Verdict |
+| --- | --- | --- |
+| moderate 30% + W8 | **96.34%** | eligible, but *barely* degraded |
+| aggressive 30% + W4 | **89.46%** | **eligible** -- measurably, non-catastrophically |
+
+**This satisfies §5.3 at all three scales**, which was the pre-1B requirement. Across the sweep the
+aggressive budget retains 56.66% / 58.56% / **89.46%** at 160M / 410M / 1B: larger models tolerate the
+same recipe far better, and the third point is a long way above the other two.
+
+**The moderate budget is now nearly inert at 1B.** 96.3% retention leaves almost no headroom for any
+arm to differ in. That is acceptable *because it is the control* -- F-05 predicts the joint mechanism
+is inert at 8 bits and a null is the expected reading -- but a reader should not mistake the tiny W8
+numbers below for a measurement of anything other than "nothing happens here".
+
+#### Sequential order selection, and the orders split by budget
+
+| Budget | rep0 | rep1 | rep2 | mean margin | Frozen |
+| --- | --- | --- | --- | --- | --- |
+| moderate, Q->P − P->Q | +0.12 | +0.05 | +0.13 | **+0.10 pp**, 3/3 | **Q->P** |
+| aggressive, Q->P − P->Q | −2.32 | −2.24 | −1.88 | **−2.15 pp**, 3/3 | **P->Q** |
+
+**W4 goes to P->Q, consistent in sign, as predicted before the run** -- it won by 4.26 pp at 160M and
+6.82 pp at 410M. The margin narrows with scale (6.82 -> 2.15 at 410M -> 1B) but the direction is
+stable across three scales and nine draws.
+
+**W8 goes to Q->P, and this differs from the smaller scales.** At 160M and 410M the sign varied and
+[F-28](#f-28) froze P->Q as the *pre-declared arbitrary fallback*. Here the sign is consistent, so the
+rule fixed in the config before the run -- consistent sign, freeze that order -- selects **Q->P**. A1
+§3 freezes the order per (model, budget), so a different order at a different scale is the design
+working rather than a contradiction.
+
+**Two caveats on the W8 freeze, both material:** the margin is **0.10 pp**, and three unanimous draws
+reach only p = 0.25 on an exact sign test. This is consistent-in-sign, not significant, and it is on
+the control budget where nothing is expected to happen anyway.
+
+#### The joint gain, against best-of sequential (§6.1)
+
+| Budget | rep0 | rep1 | rep2 | mean | sd | positive |
+| --- | --- | --- | --- | --- | --- | --- |
+| moderate 30% + W8 | −0.11 | −0.06 | −0.16 | **−0.11 pp** | 0.05 | **0/3** |
+| aggressive 30% + W4 | +0.00 | +0.15 | +0.45 | **+0.20 pp** | 0.23 | 3/3 |
+
+**The W8 control is cleanly negative at every draw**, which is the *correct* sign for an inert
+mechanism measured against best-of: Q->P beats joint, so joint loses. Three scales now agree that
+8 bits produces nothing.
+
+**The W4 gain is +0.20 pp -- far below the pre-registered ≥1.0 pp practical-importance bar** (§6.3),
+and one of the three draws is +0.00 to two decimals.
+
+#### The scale trend, now on three points
+
+| Scale | Joint gain, 30% + W4 | Draws |
+| --- | --- | --- |
+| **160M** | **+1.69 pp** | 3/3 above the ≥1.0 pp bar |
+| **410M** | +0.39 pp | 2/3 positive, sign inconsistent |
+| **1B** | **+0.20 pp** | 3/3 positive, all below the bar |
+
+**Monotone decline across all three scale points.** [F-27](#f-27) drew that conclusion from two points;
+the third agrees, and it was predicted in `screening_1b.yaml` **before the run** that a 1B gain at or
+above 410M's would put the trend in doubt. It came in below.
+
+**This runs against the study's motivating hypothesis.** The question was whether joint pays off *more*
+as models grow. On three scale points it pays off **less**, and by 1B it is not practically important
+at any draw.
+
+#### A mechanism observation worth carrying
+
+At the aggressive budget the two arms are *converging* as scale grows. At rep0 the joint and P->Q
+perplexities are **20.0301 and 20.0311** -- a difference of 0.001, which is why that draw's gain reads
++0.00. The joint arm is also markedly more stable across draws (20.0301 / 20.0304 / 19.9807) than the
+sequential arm (20.0311 / 20.0640 / 20.0802).
+
+That is consistent with F-05's account: the joint mechanism acts through *mask divergence under
+quantisation*, and a larger model with more redundancy has fewer weights whose keep/prune decision the
+quantisation grid can flip. Speculative, and stated as such -- it would need the mask-divergence
+measurement of F-05 repeated at 1B to be more than a story.
+
+#### What this is not
+
+* **Not confirmatory.** Validation split, which A1 §5.2 declares a selection surface, and this run
+  *is* the selection.
+* **Not significant.** Three draws reach p = 0.25 at best.
+* **GPU-evaluated**, unlike the CPU-evaluated 160M and 410M records. Within a cell every arm and the
+  dense reference share a device, so retention and joint gain are internally consistent; the drift is
+  8.3e-06 relative ([F-29](#f-29)) against margins of 0.1-2 pp. **But the cross-scale table above does
+  mix devices**, and that is declared here rather than left to be discovered. A1 steps 9-10 put all
+  three scales back on CPU.
+
+---
+
+### F-31 - Per-block GPU offload, and the mask flip that made the first attempt wrong {#f-31}
+
+*2026-08-01 - Pythia-160M `50f5173d` - 493 x 512 validation window - `METHOD_VERSION = 4`, **not
+bumped** - suite 977 passing*
+
+Offload holds **one decoder block** on the card at a time instead of the whole model. It is the
+change [F-29](#f-29) left outstanding, and the one that decides whether Pythia-1B is runnable at
+all: with the model resident, 1B peaks at **6.31 GiB on a 6.00 GiB card** and completes only by
+spilling to host memory at 7x the solve time.
+
+#### The first implementation was wrong, and the reproduction gate is what caught it
+
+Captured on the host, on the reasoning that aborting at block 0 means only the embedding runs, and
+an embedding lookup is a gather -- no arithmetic, so bit-identical on either device.
+
+**That reasoning was incomplete.** GPT-NeoX also computes the **rotary `cos`/`sin`** during that
+forward and passes them into every block as replay context. CPU and CUDA trigonometry disagree in
+the last bits.
+
+| | Required | First attempt | Difference |
+| --- | --- | --- | --- |
+| sequential | 65.261 | **65.666** | +0.405 |
+| joint | 64.041 | **63.028** | −1.013 |
+| joint gain | +1.08 pp | **+2.35 pp** | more than double |
+
+`scripts/verify_block_offload.py` localised it exactly. In block 0, `query_key_value` and both MLP
+projections matched **bit-for-bit**; only **`attention.dense`** differed, by **2.25 absolute** --
+and then every later block with it.
+
+That pattern names the cause. `attention.dense` is the only module in the block whose input is the
+attention output, so it is the only one that sees the perturbed rotary embeddings. **A mask is a
+discrete function of saliency**, so last-bit noise flipped a near-tie, and a flipped mask position
+is not a small numerical difference -- it is a kept weight becoming a pruned one.
+
+This is [F-19](#f-19)'s observation biting for real. There, 4 positions in 85 million flipped
+between float32 and float64 norms and it was harmless. Here one flip in an early block propagated
+through every block downstream.
+
+**The direction is worth recording: it flattered the joint arm**, more than doubling the gain. That
+is now B-14, B-17, B-22, B-23, B-30 and B-34 -- six faults, six in the same direction, none the
+other way.
+
+#### The fix took two attempts, and the second one is the interesting failure
+
+**Attempt one: move the whole model to the device for the capture, then pull the blocks straight
+back off.** Correct -- 0 of 148 parameters disagreed at 160M -- and reasoned as affordable because
+no Gram factorisation is live during capture, so the 6.31 GiB peak that made 1B unrunnable was the
+model and those temporaries *coexisting*, not the model alone.
+
+**It died at 1B with `CUDA error: out of memory`** -- at the exact step offload exists to make
+possible. 3.77 GiB of weights, ~0.5 GiB of cached hidden states and the forward's own activations
+do not fit in the ~4.95 GiB actually free on a 6.00 GiB card. The reasoning about Gram temporaries
+was right and still insufficient: it accounted for what was *absent* and not for what was present.
+
+**Attempt two: move only the modules outside the decoder blocks** -- the embedding and the rotary
+tables are what the capture needs; 3.77 GiB of decoder weights is what it must not drag along.
+`_move_outside_blocks` walks the model with `recurse=False` per module, because moving a parent
+would take its block children with it.
+
+The second attempt is also what makes the 160M saving real rather than cosmetic:
+
+| Capture strategy | 160M offloaded peak | Equivalent? | 1B |
+| --- | --- | --- | --- |
+| whole model to device | 0.89 GiB | ✅ bit-identical | **out of memory** |
+| **pre-block modules only** | **0.60 GiB** | ✅ bit-identical | see below |
+
+#### Verification
+
+Weight-level equivalence, real Pythia-160M, same calibration draw, offloaded against resident:
+
+| Arm | Parameters | Disagreeing | Worst difference | Resident peak | Offloaded peak |
+| --- | --- | --- | --- | --- | --- |
+| sequential | 148 | **0** | **0.000e+00** | 1.25 GiB | **0.60 GiB** |
+| joint | 148 | **0** | **0.000e+00** | 1.25 GiB | **0.60 GiB** |
+
+Compared with `torch.equal`, not `allclose`. A tolerance would hide exactly the failure above: a
+flipped mask position is a large difference in one weight, not a small one everywhere.
+
+Full-cell gate, the authoritative one:
+
+| Arm | Required ([F-23](#f-23)) | Measured | |
+| --- | --- | --- | --- |
+| sequential | 65.261 | **65.2614** | retention 56.66% |
+| joint | 64.041 | **64.0413** | retention 57.73% |
+
+**Exact to four decimals.** `METHOD_VERSION` not bumped, so the existing records stay valid.
+
+#### Pythia-1B now fits, and by a wide margin
+
+**This is the measurement the change exists for.** Compression only, aggressive budget, same
+calibration draw as a real cell:
+
+| | Resident ([F-29](#f-29)) | **Offloaded** |
+| --- | --- | --- |
+| Peak, tensors allocated | — | **3.34 GiB** |
+| Peak, allocator reserved | — | **4.29 GiB** |
+| Peak, device level | **6.31 GiB on a 6.00 GiB card** | ~5.0 GiB observed, not instrumented |
+| Outcome | completed only by spilling to host, **7x** the solve time | **no spill, 4 m 34 s** |
+
+**Report both torch numbers and do not mix them.** `max_memory_allocated` is what the tensors need;
+`max_memory_reserved` is what the caching allocator holds on the device. F-29's 6.31 GiB was a
+*device-level* figure, so **reserved** is what it compares against -- quoting the 3.34 GiB against
+it would overstate the headroom by a gigabyte.
+
+**Against §5.2's 5.1 GiB ceiling (85% of 6.0), be careful.** Reserved at 4.29 GiB clears it with
+0.8 GiB to spare. Device-level occupancy is reserved *plus* the CUDA context and whatever else
+holds VRAM, which on this machine measured **1.04 GiB** with nothing allocated -- a laptop with a
+display attached, so it is desktop plus context rather than a clean constant. A single `nvidia-smi`
+sample mid-run read **5.05 GiB** total. So:
+
+* **1B runs, comfortably, and that is settled** -- no spill, and 4 m 34 s against a resident path
+  that took 7x longer on the widest layer alone.
+* **The margin for 1.4B is thinner than 4.29 against 5.1 makes it look**, because the baseline is
+  not free. The §5.2 go/no-go must be *measured* on 1.4B, not extrapolated from this.
+
+A device-level peak was not instrumented; the 5.05 GiB is a spot reading, not a maximum, and is
+recorded as such.
+
+**52% at 160M is not the benefit and should not be quoted as it.** At that size the whole model is
+0.65 GiB, so nothing was ever at risk of not fitting.
+
+#### Also fixed on the way (B-35)
+
+The first real run died at `convert` with *"found at least two devices, cuda:0 and cpu"* -- **after
+every second of the compression was spent**. `LayerwiseReport.grids_by_module` holds the codes and
+scales captured while a block is resident, so under offload they came back as CUDA tensors
+describing weights that were now on the host. Invisible while everything lived on one device. The
+grids now travel back with their block, and the unit test asserts device as well as value -- the
+first version compared only parameters and sailed straight past it.
+
+---
+
 ### F-30 - The machine policy was stricter than the protocol, and nothing in the code enforced it {#f-30}
 
 *2026-08-01 - no measurement; an audit and a policy amendment - suite 974 passing*
@@ -2052,7 +2578,17 @@ recording.
 | B-31 | A single-draw joint gain was reported as a point estimate, and a scale trend built on two of them ([F-26](#f-26)) | The 410M cell swings from −0.50 to +0.98 pp across calibration draws, so +0.68 pp was luck. The paired difference is *noisier* than either arm, contradicting the stated expectation that pairing would cancel draw noise |
 | B-32 | `exists_valid` did not compare the evaluation device ([F-29](#f-29)) | Switching exploratory runs to GPU evaluation would have let `skip_existing` reuse CPU-evaluated records inside a GPU grid, mixing devices within one comparison at ~1e-5 -- too small to change a conclusion, invisible without the check |
 | B-33 | `exists_valid` did not compare the **machine** ([F-30](#f-30)) | Same class as B-32, and it went live the moment the machine policy allowed a second host to run compression: two hosts writing into one `outputs/metrics/` would have let `skip_existing` pull the other machine's record into a comparison. `host_key` is built from fields every record already carried, so the guard added no recompute |
-| B-34 | The Colab Task 2 notebook restored the Task 1 layerwise implementation and then patched source files in place before running the 1B sweep | The resulting values are useful provisional diagnostics, but the order-selection result cannot be trusted until the sweep is rerun from a clean committed state whose tests and offload gates pass |
+| B-34 | Block-offload captured block-0 inputs on the **host** ([F-31](#f-31)) | GPT-NeoX computes the rotary `cos`/`sin` in that forward and passes them into every block; CPU and CUDA trigonometry disagree in the last bits, which flipped a near-tie in the saliency ranking. One mask position in block 0 moved `attention.dense` by **2.25 absolute** and cascaded through every later block, for a **1.6% perplexity change that more than doubled the joint gain** (+2.35 pp against +1.08). Caught by the F-23 reproduction gate; would have been invisible to any tolerance-based check |
+| B-34b | The first fix moved the **whole model** to the device for the capture ([F-31](#f-31)) | Numerically correct, and it fitted at 160M and 410M. It then hit `CUDA error: out of memory` at 1B -- the one model offload exists for. Reasoning that no Gram factorisation is live during capture accounted for what was absent and not for what was present: 3.77 GiB of weights, ~0.5 GiB of cached hidden states, and the forward's own activations |
+| B-35 | Recorded quantisation grids did not follow their block back to the host ([F-31](#f-31)) | `grids_by_module` is captured while a block is resident, so under offload it held CUDA codes describing host weights. `convert` then died with a device mismatch **after the whole compression was spent** -- an artefact-stage failure caused by a compression-stage bug |
+| B-43 | "Above chance" was a bare arithmetic comparison ([F-35](#f-35)) | 0.2501 on a four-choice task counted as above chance while being statistically indistinguishable from it, so a report could have said "the model still performs the task" on the strength of a meaningless margin. Replaced by a three-way verdict over a +/- 2 stderr interval, plus `unknown` when the harness reports no stderr. Descriptive only -- the primary downstream comparison is retention against dense, so no claim depends on the threshold |
+| B-42 | The **confirmatory** sweep did not resolve the frozen sequential order ([F-35](#f-35)) | `main_scale_sweep.yaml` listed `sequential` for every cell and encoded no order at all, and `run_downstream.py` mapped every sequential arm to P→Q. At pythia-1b/moderate the frozen order is **Q→P** ([F-32](#f-32)), so both would have used the *weaker* baseline and inflated the joint gain -- [B-30](#f-24) recurring, in the one run that cannot be redone. Fixed with a machine-readable table in `scale_aware_compression.protocol`; an unfrozen cell **raises** rather than defaulting, because defaulting to the §3.6 primary is what makes the fault look safe |
+| B-41 | The allocator cache was not released between compression and **downstream** evaluation ([F-35](#f-35)) | Third appearance of one mechanism, and the largest: F-29 measured it at 7x, B-36 at 4x, this at **24x**. 410M/joint took 3 h 37 m against 10 m 44 s for 410M/dense, at the *same* instantaneous rate (151-159 against 181-186 it/s) -- so it was stalling, not running slowly, and Windows was serving the shortfall from shared system memory. I had fixed the runner for this and not this script. Accuracies unaffected: memory placement is not arithmetic, and the re-run reproduced 160M/joint's values exactly. Also fixed: the script wrote only at the END, so the 3 h 37 m stall would have discarded five completed evaluations |
+| B-40 | The exact sign test counted **ties as negatives** ([F-35](#f-35)) | `positive_count` counted `gain > 0` while the denominator stayed the full replicate count, so an exact zero biased the p-value. Verified **latent** before fixing -- no gain in any committed record is exactly zero, and the smallest recorded 1B gain is +0.0044 pp, which *rounds* to +0.00 in a two-decimal table but is genuinely positive -- so no published figure moved. Size of the error pinned as a test: three positives and one tie gave p = 0.625 and now gives p = 0.25. Ties use **exact equality, no tolerance**, because every candidate tolerance is now visible in the results and choosing one would be selecting an analysis parameter after seeing the data (§6.3) |
+| B-39 | `summarise_screening.py` reported the **first** matching cell per (budget, arm) | With replicates in `outputs/metrics/` it silently picked one arbitrary draw and printed it as the number for that budget -- the automated form of the fault [B-31](#f-26) retracted a headline for, and worse because no human chose it. Its own output even asserted "one calibration draw". It now **refuses**, the same way it already refused on mixed evaluation windows, and points at `metrics.replicates.summarise_replicates`, which reports mean, sd and n. Verified: it refuses on the current record set (5 draws at moderate, 3 at aggressive and S6) and still summarises the genuinely single-draw F-23 budgets |
+| B-38 | `find_comparison_pairs` keyed on (model, budget, seed) and **not the replicate** | A1 gives every replicate the same run seed, so all R replicates collided on one key and the dict kept only the last. A 3-replicate grid with 6 sequential and 6 joint cells reported **2** pairs; `main_scale_sweep` reported 6 against 42. The symmetric-difference warning could not catch it, because the dropped cells were never distinct keys. **No published number moved** -- the record-level `_pair_key` already included the replicate, and the findings were computed through that path -- but it under-reported how many comparisons a grid would yield, on the line a person reads before committing 38 hours. There were no tests for this function at all; there are six now |
+| B-37 | The dense reference was matched on window and corpus but not on **device** ([F-33](#f-33)) | Retention is a ratio, so both halves must come from one device. Harmless until GPU evaluation was wired in; after that a GPU-evaluated compressed run could normalise against a CPU-evaluated dense record, putting the ~1e-5 device drift *inside* the retention figure where it cannot even be declared, rather than across tables where it can |
+| B-36 | The allocator's cache was not released between the compression and evaluation stages ([F-32](#f-32)) | Introduced by wiring GPU evaluation. PyTorch's caching allocator holds freed memory, so one stage's peak stayed reserved while the next asked for its own -- and **on Windows the driver satisfies the shortfall from shared system memory instead of raising**. No error, no warning, a plausible perplexity, and a 1B cell at **32 min instead of 8m46s**: compression 21 min against a 4m34s standalone measurement, evaluation 11 min. This is the same silent-spill mechanism [F-29](#f-29) measured at 7x on the widest layer, and it is the clearest argument on record for why deployment measurements are CPU-only -- a latency taken under these conditions would have looked entirely normal |
 | B-13 | Sweep cells inherited the base config's model revision | Every cell pinned to the *first* model's SHA — fails to load, or silently loads the wrong weights if the SHA exists in both repos |
 
 Two of these were **masked by tests that should have caught them**: B-07 (the test disabled
