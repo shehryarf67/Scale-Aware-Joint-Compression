@@ -30,6 +30,11 @@ runtime:
 data:
   eval_split: validation
 
+compression:
+  reconstruction:
+    # Match Amendment A3 and the verified 1B path from F-31.
+    offload_blocks: true
+
 sweep:
   models:
     - pythia-1b

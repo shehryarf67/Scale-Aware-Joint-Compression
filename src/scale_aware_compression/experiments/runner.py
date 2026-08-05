@@ -557,6 +557,7 @@ class ExperimentTracker:
             ("comparison_group", reconstruction.comparison_group.value),
             ("scale_search", reconstruction.scale_search),
             ("keep_benefit_saliency", reconstruction.keep_benefit_saliency),
+            ("offload_blocks", reconstruction.offload_blocks),
         ):
             if recorded_reconstruction.get(key) != expected:
                 reasons.append(

@@ -1056,6 +1056,18 @@ class TestTheConfirmatoryManifest:
         assert config.sweep.models == ["pythia-1b"]
         assert [method.value for method in config.sweep.methods] == ["dense", "joint"]
         assert config.sweep.budgets == ["aggressive"]
+        assert config.compression.reconstruction.offload_blocks is True
+
+    def test_a3_freezes_the_verified_offload_path(self, project_root: Path):
+        from scale_aware_compression.config import load_config
+
+        config = load_config(project_root / "configs/experiments/main_scale_sweep.yaml")
+        assert config.compression.reconstruction.offload_blocks is True
+        builder = (project_root / "scripts/build_confirmatory_manifest.py").read_text(
+            encoding="utf-8"
+        )
+        assert "Amendment A3 requires" in builder
+        assert '"residency_policy"' in builder
 
     def test_every_model_revision_is_a_full_sha(self, manifest):
         """§2.7. B-13 was a sweep inheriting one model's revision for every cell."""

@@ -113,6 +113,10 @@ def audit(config_path: Path, manifest_path: Path, metrics_path: Path) -> list[st
         problems.append("quality evaluation and deployment benchmark must both use CPU")
     if not config.sweep.continue_on_error:
         problems.append("continue_on_error is false, contrary to Amendment A2")
+    if not config.compression.reconstruction.offload_blocks:
+        problems.append("offload_blocks is false, contrary to Amendment A3")
+    if (manifest.get("residency_policy") or {}).get("offload_blocks") is not True:
+        problems.append("manifest does not freeze per-block offload")
 
     expected_manifest_cells = [_manifest_entry(cell) for cell in cells]
     if manifest.get("cells") != expected_manifest_cells:

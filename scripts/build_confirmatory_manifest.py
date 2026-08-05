@@ -151,6 +151,12 @@ def main(argv: list[str] | None = None) -> int:
             "sweep.continue_on_error is false. Amendment A2 requires a multi-day run to continue "
             "after a failed cell and rely on the strict final audit"
         )
+    if not config.compression.reconstruction.offload_blocks:
+        failures.append(
+            "compression.reconstruction.offload_blocks is false. Amendment A3 requires the "
+            "bit-identical per-block residency path verified by F-31; B-44 measured the false "
+            "default at 14.3x the offloaded compression time"
+        )
 
     for label, expected in FROZEN_BUDGETS.items():
         override = (config.sweep.budget_overrides.get(label) or {}).get("compression") or {}
@@ -244,6 +250,10 @@ def main(argv: list[str] | None = None) -> int:
             "num_threads": config.benchmark.num_threads,
             "warmup_runs": config.benchmark.warmup_runs,
             "measured_runs": config.benchmark.measured_runs,
+        },
+        "residency_policy": {
+            "offload_blocks": config.compression.reconstruction.offload_blocks,
+            "evidence": "F-31 bit-identical verification; Amendment A3; B-44/F-36 prelaunch timing",
         },
         "models": plan.models,
         "model_revisions": revisions,
