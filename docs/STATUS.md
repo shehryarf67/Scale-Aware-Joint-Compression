@@ -825,6 +825,34 @@ until you do — that is it working), and check `find_comparison_pairs` against 
 incomplete pairs, because `continue_on_error` is on and one failed cell silently removes a whole
 comparison rather than stopping the run.
 
+#### Paused 2026-08-05 23:50, at cell 55 of 171
+
+Relaunched at `f27ac2e` 21:35, ran 2 h 14 m, stopped deliberately. **54 test-split records, 0
+failures** — the three pre-fix failure records left at `b19b98a` were re-run and succeeded, so no
+stale failure remains on disk.
+
+| Arm | Records | | Complete pairs |
+| --- | --- | --- | --- |
+| dense | 3 (all scales) | | **3 of 42** |
+| pruning | 16 | | 160m/moderate rep0–rep2 |
+| quantisation | 16 | | |
+| sequential | 16 | | |
+| joint | 3 | | |
+
+Only the in-flight cell was lost. Resume with the same command — `skip_existing` keeps every record
+above and re-runs nothing:
+
+```bash
+.venv/Scripts/python.exe -u scripts/run_scale_sweep.py --config configs/experiments/main_scale_sweep.yaml
+```
+
+**Pairs are back-loaded and that matters for reading progress.** The grid runs arm by arm — dense,
+pruning, quantisation, sequential, then joint — so the pair count sat at 0 through cell 54 while
+nothing was wrong. It only becomes a useful progress signal once the joint arm is under way, which
+it now is. Until then the count to watch is records-by-arm, not pairs.
+
+160M cells are running ~7 min each. The intermittent stall did not recur in this stretch.
+
 The screening grid is re-runnable as below, and it still writes to the exploratory (validation)
 configuration. It now costs **~20 minutes** rather than 2 h 08 m ([F-29](findings_log.md#f-29)):
 
