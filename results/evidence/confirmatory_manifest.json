@@ -15,7 +15,7 @@
       "sparsity": 0.3
     }
   },
-  "cell_count": 210,
+  "cell_count": 171,
   "cells": [
     {
       "bits": 32,
@@ -29,136 +29,19 @@
     {
       "bits": 32,
       "budget": "moderate",
-      "experiment_id": "pythia-160m_dense_moderate_s00_b32_rep1",
+      "experiment_id": "pythia-410m_dense_moderate_s00_b32_rep0",
       "method": "dense",
-      "model": "pythia-160m",
-      "replicate": 1,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "moderate",
-      "experiment_id": "pythia-160m_dense_moderate_s00_b32_rep2",
-      "method": "dense",
-      "model": "pythia-160m",
-      "replicate": 2,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "moderate",
-      "experiment_id": "pythia-160m_dense_moderate_s00_b32_rep3",
-      "method": "dense",
-      "model": "pythia-160m",
-      "replicate": 3,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "moderate",
-      "experiment_id": "pythia-160m_dense_moderate_s00_b32_rep4",
-      "method": "dense",
-      "model": "pythia-160m",
-      "replicate": 4,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "moderate",
-      "experiment_id": "pythia-160m_dense_moderate_s00_b32_rep5",
-      "method": "dense",
-      "model": "pythia-160m",
-      "replicate": 5,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "moderate",
-      "experiment_id": "pythia-160m_dense_moderate_s00_b32_rep6",
-      "method": "dense",
-      "model": "pythia-160m",
-      "replicate": 6,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "moderate",
-      "experiment_id": "pythia-160m_dense_moderate_s00_b32_rep7",
-      "method": "dense",
-      "model": "pythia-160m",
-      "replicate": 7,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "aggressive",
-      "experiment_id": "pythia-160m_dense_aggressive_s00_b32_rep0",
-      "method": "dense",
-      "model": "pythia-160m",
+      "model": "pythia-410m",
       "replicate": 0,
       "sparsity": 0.0
     },
     {
       "bits": 32,
-      "budget": "aggressive",
-      "experiment_id": "pythia-160m_dense_aggressive_s00_b32_rep1",
+      "budget": "moderate",
+      "experiment_id": "pythia-1b_dense_moderate_s00_b32_rep0",
       "method": "dense",
-      "model": "pythia-160m",
-      "replicate": 1,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "aggressive",
-      "experiment_id": "pythia-160m_dense_aggressive_s00_b32_rep2",
-      "method": "dense",
-      "model": "pythia-160m",
-      "replicate": 2,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "aggressive",
-      "experiment_id": "pythia-160m_dense_aggressive_s00_b32_rep3",
-      "method": "dense",
-      "model": "pythia-160m",
-      "replicate": 3,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "aggressive",
-      "experiment_id": "pythia-160m_dense_aggressive_s00_b32_rep4",
-      "method": "dense",
-      "model": "pythia-160m",
-      "replicate": 4,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "aggressive",
-      "experiment_id": "pythia-160m_dense_aggressive_s00_b32_rep5",
-      "method": "dense",
-      "model": "pythia-160m",
-      "replicate": 5,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "aggressive",
-      "experiment_id": "pythia-160m_dense_aggressive_s00_b32_rep6",
-      "method": "dense",
-      "model": "pythia-160m",
-      "replicate": 6,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "aggressive",
-      "experiment_id": "pythia-160m_dense_aggressive_s00_b32_rep7",
-      "method": "dense",
-      "model": "pythia-160m",
-      "replicate": 7,
+      "model": "pythia-1b",
+      "replicate": 0,
       "sparsity": 0.0
     },
     {
@@ -756,150 +639,6 @@
     {
       "bits": 32,
       "budget": "moderate",
-      "experiment_id": "pythia-410m_dense_moderate_s00_b32_rep0",
-      "method": "dense",
-      "model": "pythia-410m",
-      "replicate": 0,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "moderate",
-      "experiment_id": "pythia-410m_dense_moderate_s00_b32_rep1",
-      "method": "dense",
-      "model": "pythia-410m",
-      "replicate": 1,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "moderate",
-      "experiment_id": "pythia-410m_dense_moderate_s00_b32_rep2",
-      "method": "dense",
-      "model": "pythia-410m",
-      "replicate": 2,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "moderate",
-      "experiment_id": "pythia-410m_dense_moderate_s00_b32_rep3",
-      "method": "dense",
-      "model": "pythia-410m",
-      "replicate": 3,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "moderate",
-      "experiment_id": "pythia-410m_dense_moderate_s00_b32_rep4",
-      "method": "dense",
-      "model": "pythia-410m",
-      "replicate": 4,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "moderate",
-      "experiment_id": "pythia-410m_dense_moderate_s00_b32_rep5",
-      "method": "dense",
-      "model": "pythia-410m",
-      "replicate": 5,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "moderate",
-      "experiment_id": "pythia-410m_dense_moderate_s00_b32_rep6",
-      "method": "dense",
-      "model": "pythia-410m",
-      "replicate": 6,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "moderate",
-      "experiment_id": "pythia-410m_dense_moderate_s00_b32_rep7",
-      "method": "dense",
-      "model": "pythia-410m",
-      "replicate": 7,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "aggressive",
-      "experiment_id": "pythia-410m_dense_aggressive_s00_b32_rep0",
-      "method": "dense",
-      "model": "pythia-410m",
-      "replicate": 0,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "aggressive",
-      "experiment_id": "pythia-410m_dense_aggressive_s00_b32_rep1",
-      "method": "dense",
-      "model": "pythia-410m",
-      "replicate": 1,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "aggressive",
-      "experiment_id": "pythia-410m_dense_aggressive_s00_b32_rep2",
-      "method": "dense",
-      "model": "pythia-410m",
-      "replicate": 2,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "aggressive",
-      "experiment_id": "pythia-410m_dense_aggressive_s00_b32_rep3",
-      "method": "dense",
-      "model": "pythia-410m",
-      "replicate": 3,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "aggressive",
-      "experiment_id": "pythia-410m_dense_aggressive_s00_b32_rep4",
-      "method": "dense",
-      "model": "pythia-410m",
-      "replicate": 4,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "aggressive",
-      "experiment_id": "pythia-410m_dense_aggressive_s00_b32_rep5",
-      "method": "dense",
-      "model": "pythia-410m",
-      "replicate": 5,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "aggressive",
-      "experiment_id": "pythia-410m_dense_aggressive_s00_b32_rep6",
-      "method": "dense",
-      "model": "pythia-410m",
-      "replicate": 6,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "aggressive",
-      "experiment_id": "pythia-410m_dense_aggressive_s00_b32_rep7",
-      "method": "dense",
-      "model": "pythia-410m",
-      "replicate": 7,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "moderate",
       "experiment_id": "pythia-410m_pruning_moderate_s30_b32_rep0",
       "method": "pruning",
       "model": "pythia-410m",
@@ -1492,96 +1231,6 @@
     {
       "bits": 32,
       "budget": "moderate",
-      "experiment_id": "pythia-1b_dense_moderate_s00_b32_rep0",
-      "method": "dense",
-      "model": "pythia-1b",
-      "replicate": 0,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "moderate",
-      "experiment_id": "pythia-1b_dense_moderate_s00_b32_rep1",
-      "method": "dense",
-      "model": "pythia-1b",
-      "replicate": 1,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "moderate",
-      "experiment_id": "pythia-1b_dense_moderate_s00_b32_rep2",
-      "method": "dense",
-      "model": "pythia-1b",
-      "replicate": 2,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "moderate",
-      "experiment_id": "pythia-1b_dense_moderate_s00_b32_rep3",
-      "method": "dense",
-      "model": "pythia-1b",
-      "replicate": 3,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "moderate",
-      "experiment_id": "pythia-1b_dense_moderate_s00_b32_rep4",
-      "method": "dense",
-      "model": "pythia-1b",
-      "replicate": 4,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "aggressive",
-      "experiment_id": "pythia-1b_dense_aggressive_s00_b32_rep0",
-      "method": "dense",
-      "model": "pythia-1b",
-      "replicate": 0,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "aggressive",
-      "experiment_id": "pythia-1b_dense_aggressive_s00_b32_rep1",
-      "method": "dense",
-      "model": "pythia-1b",
-      "replicate": 1,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "aggressive",
-      "experiment_id": "pythia-1b_dense_aggressive_s00_b32_rep2",
-      "method": "dense",
-      "model": "pythia-1b",
-      "replicate": 2,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "aggressive",
-      "experiment_id": "pythia-1b_dense_aggressive_s00_b32_rep3",
-      "method": "dense",
-      "model": "pythia-1b",
-      "replicate": 3,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "aggressive",
-      "experiment_id": "pythia-1b_dense_aggressive_s00_b32_rep4",
-      "method": "dense",
-      "model": "pythia-1b",
-      "replicate": 4,
-      "sparsity": 0.0
-    },
-    {
-      "bits": 32,
-      "budget": "moderate",
       "experiment_id": "pythia-1b_pruning_moderate_s30_b32_rep0",
       "method": "pruning",
       "model": "pythia-1b",
@@ -1952,10 +1601,12 @@
   ],
   "checks_failed": [],
   "config_path": "configs/experiments/main_scale_sweep.yaml",
-  "config_sha256": "cab8ddf070d73ca35b3c474d0565ae9a825da9e00b8c7edde54d20b08eac2bfb",
+  "config_sha256": "95e52064d9b1a79f90ab492959b744cbcd8960229f7bdb67a3b76e3953d5e3eb",
+  "deduplicated_dense_slots": 39,
+  "dense_policy": "one dense evaluation per model; dense is independent of budget and calibration draw",
   "environment": {
     "hardware": {
-      "available_memory_gb": 5.26,
+      "available_memory_gb": 2.898,
       "cpu_count_logical": 16,
       "cpu_count_physical": 10,
       "cpu_max_frequency_mhz": 2400.0,
@@ -2010,6 +1661,7 @@
     "extended_models": "pythia-1.4b and qwen2.5-0.5b are excluded from this manifest and from the scale trend. Neither has a frozen sequential order, and \u00a78.2 forbids them consuming the primary sweep's time.",
     "latency": "only FP32 runtime representations are timed -- dense and pruning-only. A packed W4/W8 layer dequantises on every forward, so a timing would measure the unpacking kernel (decision D1). The absence is recorded per record, not omitted."
   },
+  "executable_cell_count": 171,
   "frozen_sequential_order": {
     "pythia-160m/aggressive": "sequential",
     "pythia-160m/moderate": "sequential",
@@ -2018,7 +1670,8 @@
     "pythia-410m/aggressive": "sequential",
     "pythia-410m/moderate": "sequential"
   },
-  "git_commit": "cbe2098945dcf9851223e7fb55e25ba60a4af73a",
+  "git_commit": "3f87b544d5eff518af7a2e2d3dc03383610a618f",
+  "logical_grid_cell_count": 210,
   "method_version": "4",
   "model_revisions": {
     "pythia-160m": "50f5173d932e8e61f858120bcb800b97af589f46",
@@ -2039,7 +1692,7 @@
     "form": "amended (A1 \u00a75.1, \u00a76.3)",
     "withdrawn_clause": "the original 'mean exceeds the seed spread' clause is withdrawn: run seeds are inert (F-15) so the spread is exactly zero and the gate excluded nothing. Replacing an unmeasurable criterion with a weaker measurable one is a REDUCTION in pre-registered strength and the write-up must say so."
   },
-  "purpose": "The fully resolved confirmatory configuration for A1 step 10. Step 10 runs once, costs ~38 h, and forbids methodological tuning afterwards, so everything it depends on is pinned and checked here rather than reassembled later.",
+  "purpose": "The fully resolved confirmatory configuration for A1 step 10, as operationally amended by A2. Step 10 runs once and forbids methodological tuning afterwards, so everything it depends on is pinned and checked here rather than reassembled later.",
   "replicates": {
     "pythia-160m": {
       "R": 8,
@@ -2082,7 +1735,7 @@
     }
   },
   "result_schema_version": "2",
-  "schema": "confirmatory_manifest/1",
+  "schema": "confirmatory_manifest/2",
   "tree_clean": true,
   "valid_for_freeze": true,
   "warnings": [
