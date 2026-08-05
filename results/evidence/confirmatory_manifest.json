@@ -1601,12 +1601,12 @@
   ],
   "checks_failed": [],
   "config_path": "configs/experiments/main_scale_sweep.yaml",
-  "config_sha256": "95e52064d9b1a79f90ab492959b744cbcd8960229f7bdb67a3b76e3953d5e3eb",
+  "config_sha256": "e350b096e7fbeb36d3a0b9267fad32b7e1c4df86ccbeef13222227d60da5ed2a",
   "deduplicated_dense_slots": 39,
   "dense_policy": "one dense evaluation per model; dense is independent of budget and calibration draw",
   "environment": {
     "hardware": {
-      "available_memory_gb": 2.898,
+      "available_memory_gb": 4.971,
       "cpu_count_logical": 16,
       "cpu_count_physical": 10,
       "cpu_max_frequency_mhz": 2400.0,
@@ -1670,7 +1670,7 @@
     "pythia-410m/aggressive": "sequential",
     "pythia-410m/moderate": "sequential"
   },
-  "git_commit": "3f87b544d5eff518af7a2e2d3dc03383610a618f",
+  "git_commit": "cdfaa5a2666a3bce418172b88ebab5849e37a58f",
   "logical_grid_cell_count": 210,
   "method_version": "4",
   "model_revisions": {
@@ -1733,6 +1733,10 @@
       ],
       "significance_reachable": true
     }
+  },
+  "residency_policy": {
+    "evidence": "F-31 bit-identical verification; Amendment A3; B-44/F-36 prelaunch timing",
+    "offload_blocks": true
   },
   "result_schema_version": "2",
   "schema": "confirmatory_manifest/2",
