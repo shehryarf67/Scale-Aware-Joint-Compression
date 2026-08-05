@@ -101,6 +101,47 @@ which is what the arm comparison needs.
 
 ## 2. Findings
 
+### F-36 — The CPU timing pilot caught an unfrozen 1B offload setting before confirmation {#f-36}
+
+**Date:** 2026-08-05
+
+**Commit:** `0f05b9e` (`confirmatory-freeze-v2`)
+
+**Config:** `configs/experiments/confirmatory_timing_pilot.yaml`
+
+**Surface:** validation only, 493 × 512; quality values deliberately not used or reported
+
+**Machine:** HP Omen, CPU evaluation and benchmark; RTX 4050 compression
+
+The two-cell prelaunch timing pilot completed successfully:
+
+| Cell | Total | Relevant decomposition |
+| --- | ---: | --- |
+| Pythia-1B dense | **25.12 min** | CPU quality 23.98 min; CPU benchmark 0.62 min |
+| Pythia-1B joint, 30% + W4, replicate 0 | **121.40 min** | compression **65.67 min**; checkpoint save/reload/hash 0.42 min; CPU quality 55.13 min |
+
+The compressed checkpoint independently reloaded with **0.0 maximum logit difference**, occupied
+**1.145 GiB**, and recorded SHA-256
+`6ea850eac1d66caf7c127b9c95577a331eb8cdac8b2166f2eff79bdf5d9ee665`.
+
+The 121-minute figure is **not** the cost to extrapolate across the confirmatory grid. The record
+resolved `compression.reconstruction.offload_blocks: false`. The 1B screening config explicitly
+sets it true, and F-31 measured that path at 4 min 34 s without spilling. The main confirmatory
+config never carried the setting, so its manifest froze the default false path. In this pilot the
+joint apply stage alone took 65 min 24 s: **14.3× the verified offloaded compression time**.
+
+This is B-44. It was caught before any test-split result existed. Confirmation remains blocked until
+the main config explicitly freezes `offload_blocks: true`, the manifest checks it, and a new freeze
+is recorded. Because F-31 proved the resident and offloaded paths bit-identical, this is an
+operational correction rather than a scientific-condition change. The validation quality numbers
+from this pilot remain excluded from evidence and from budget/order decisions.
+
+**Runtime consequence.** The dense CPU measurement replaces the old extrapolation with 25.12 min.
+The compressed measurement separates two real costs — roughly 55 min for the packed W4 CPU quality
+path and an accidental 65.67 min for non-offloaded compression — but does not yet support a new
+whole-grid total. Re-run only the joint timing cell after freezing offload; do not multiply 121.40
+minutes by every compressed arm.
+
 ### F-01 — Smart App Control silently broke the environment 30 minutes after install {#f-01}
 
 *2026-07-28 · environment*
@@ -2521,6 +2562,7 @@ recording.
 
 | # | Bug | What it would have done |
 | --- | --- | --- |
+| B-44 | The confirmatory config never enabled the verified 1B per-block offload path ([F-36](#f-36)) | `offload_blocks` defaults false. The prelaunch pilot therefore spent 65.67 min in joint compression instead of F-31's 4 min 34 s offloaded measurement, a 14.3× regression that would add many hours and risk shared-memory spill across the 1B grid. The paths are bit-identical, so quality is not changed; feasibility and the frozen runtime are. Caught before test evaluation. |
 | B-01 | `method_definition.md` specified full-model QAT while the plan specifies layerwise PTQ | The normative document described a method nobody was building; decision D3 was a direct casualty |
 | B-02 | D3 recommended ranking masks on FP32 shadow weights | Would have failed §3.8's definition of joint — the joint arm would not have been joint |
 | B-03 | `backend: x86` in shipped configs | Conversion fails *after* the compression compute is spent ([F-02](#f-02)) |
