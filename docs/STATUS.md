@@ -832,6 +832,33 @@ until you do — that is it working), and check `find_comparison_pairs` against 
 incomplete pairs, because `continue_on_error` is on and one failed cell silently removes a whole
 comparison rather than stopping the run.
 
+#### Paused 2026-08-06 22:02, at cell 97 of 171
+
+Resumed 11:00 at `f27ac2e`, ran 11 h, stopped deliberately. **96 test-split records, 0 failures.**
+
+| Model | Records | Pairs |
+| --- | --- | --- |
+| **pythia-160m** | dense 1, pruning 16, quantisation 16, sequential 16, **joint 16** | **16 of 16 — complete at R=8** |
+| pythia-410m | dense 1, pruning 16, quantisation 13 | — |
+| pythia-1b | dense 1 | — |
+| | | **16 of 42 overall** |
+
+**160M is finished** — both budgets, all five arms, all eight replicates, on the test split. That is
+the scale point carrying the strongest exploratory effect.
+
+Measured pace: 160M **7.8 min/cell**, 410M **17.1 min** median (the quantisation arm is uniformly
+22.2 min, a repeatable per-arm cost rather than an anomaly). Remaining ~74 cells put completion
+around **Sat 8 Aug** if 1B behaves like its dense cell (~34 min).
+
+Resume with the same command; `skip_existing` keeps all 96 records:
+
+```bash
+.venv/Scripts/python.exe -u scripts/run_scale_sweep.py --config configs/experiments/main_scale_sweep.yaml
+```
+
+**Start [scripts/keep_host_awake.py](../scripts/keep_host_awake.py) beside it.** Power policy alone
+did not hold — see [B-47](findings_log.md#4-bugs-found-that-would-have-invalidated-results).
+
 #### Paused 2026-08-05 23:50, at cell 55 of 171
 
 Relaunched at `f27ac2e` 21:35, ran 2 h 14 m, stopped deliberately. **54 test-split records, 0
