@@ -803,14 +803,15 @@ error-prone as producing one, and neither reading was checked before it was repo
 **15.3 min**, 1B **33.6 min** — the 1B figure against an assumed ~50 min. On measured per-cell
 times the grid is **~50–55 h**, not the ~38 h the freeze recorded.
 
-**The "intermittent stall" is solved, and it was not the allocator.** Two cells ran long (43.6 and
-52.5 min against 6.2 and 7.8 min norms) and I filed it as
-[B-36](findings_log.md#f-33)/[B-41](findings_log.md#f-35) territory. It was **Modern Standby**: each
-slow window contains a standby period exactly, and subtracting it returns 6.0 and 7.8 min — the
-normal times, to the minute. That attribution is withdrawn; see
+**The "intermittent stall" is still unexplained — and I briefly claimed otherwise.** Two cells ran
+long (43.6 and 52.5 min against 6.2 and 7.8 min norms), each containing a Modern Standby window
+whose arithmetic closed to the minute, so on 2026-08-06 I recorded standby as the cause and
+withdrew the [B-36](findings_log.md#f-33)/[B-41](findings_log.md#f-35) attribution. **That did not
+replicate:** later the same day an 83-minute standby window contained four 410M cells that ran at
+completely normal speed. A Win32 process is not frozen by Modern Standby as a rule. The cause is
+open again and both attributions are provisional — see
 [B-47](findings_log.md#4-bugs-found-that-would-have-invalidated-results). The per-cell estimates
-above are the clean times, so the ~50–55 h figure stands **provided the host is stopped from
-sleeping**.
+above are measured clean times, so the ~50–55 h figure holds only if the stall stays rare.
 
 **Dense test-split baselines, now measured** (these supersede nothing — they are the first
 test-split numbers this project has):
