@@ -46,6 +46,42 @@ exploratory cell now costs ~1.3 min rather than ~9.3 min ([F-29](findings_log.md
 
 ---
 
+## ✅ Session 2026-08-06: pipeline confirmed portable off the Omen (Google Colab, T4)
+
+Ran the full five-arm pilot (`configs/experiments/pilot.yaml`, pythia-160m) from a fresh clone of
+`main` (`0f5500b`) on a Colab T4 GPU — a machine other than the Omen, per the Tier 2 portability
+rule in the Machine policy below (compression and quality evaluation are portable; only Tier 3
+deployment measurement is not). Notebook: `notebooks/06_colab_pilot_validation.ipynb`.
+
+All five arms (dense, pruning, quantisation, sequential, joint) completed and wrote records to
+`outputs/metrics/`. Quality and retention were read directly from those records — no checkpoint
+reload needed, since `ExperimentRunner.run()` already computes them in-process:
+
+| arm | perplexity | retention |
+| --- | --- | --- |
+| dense | 34.769 | 100.00% |
+| quantisation | 34.858 | 99.75% |
+| pruning | 132.237 | 26.29% |
+| sequential | 132.686 | 26.20% |
+| joint | 130.056 | 26.73% |
+
+Joint beat sequential by **+0.53% retention**, and the budget match was verified rather than
+assumed: `config.compression.joint.match_sequential_budget = True`, and both arms measured at
+`compression.statistics.total_local_steps = 96`. Direction agrees with the existing 160M
+screening result.
+
+**Not a finding — deliberately not added to `findings_log.md`.** This is `pilot.yaml`: 1 seed, 64
+eval samples, a 60-step budget. That config's own header says pipeline-validation only, and
+that stands regardless of which arm wins. What this session actually confirms is narrower and
+still useful: the five-arm pipeline, evaluation, and retention computation run correctly,
+unattended, from a clean `main` checkout, on hardware other than the Omen.
+
+One correction to earlier debugging in this session: `scripts/run_evaluation.py`'s
+`--checkpoint`/`--dense-record` reload path was suspected broken and was never fixed or used —
+it's unnecessary. Retention comes for free from each arm's own record.
+
+---
+
 ## ✅ Resolved: the Smart App Control blocker
 
 Smart App Control was enforcing user-mode code integrity and blocking the unsigned native
