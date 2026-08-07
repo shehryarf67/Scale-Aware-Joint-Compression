@@ -832,6 +832,34 @@ until you do — that is it working), and check `find_comparison_pairs` against 
 incomplete pairs, because `continue_on_error` is on and one failed cell silently removes a whole
 comparison rather than stopping the run.
 
+#### Paused 2026-08-07 12:43, at cell 125 of 171
+
+Resumed 05:39, ran 7 h, stopped deliberately. **124 test-split records, 0 failures.**
+
+| Model | Records | Pairs |
+| --- | --- | --- |
+| **pythia-160m** | all five arms at R=8 | **16 of 16 — complete** |
+| **pythia-410m** | dense 1, pruning 16, quantisation 16, sequential 16, **joint 9** | **9 of 16** |
+| pythia-1b | dense 1 | — |
+| | | **25 of 42 overall** |
+
+**410M moderate is complete at R=8**; the aggressive budget is 1 of 8 through its joint arm. Only
+the 1B leg (41 cells) and 7 more 410M joint cells remain — **46 cells**.
+
+410M timings are very stable: sequential median **15.0 min** (n=16, range 14.4–15.5), quantisation
+uniformly 22.2 min. At ~15 min for the remaining 410M joint cells and ~34 min for 1B, that is
+roughly **25 h** left.
+
+Resume with the same command; `skip_existing` keeps all 124 records:
+
+```bash
+.venv/Scripts/python.exe -u scripts/run_scale_sweep.py --config configs/experiments/main_scale_sweep.yaml
+```
+
+**Do not spend time on host sleep.** Modern Standby cannot be prevented and does not affect the
+run — settled in [B-47](findings_log.md#4-bugs-found-that-would-have-invalidated-results) after
+three failed attempts.
+
 #### Paused 2026-08-06 22:02, at cell 97 of 171
 
 Resumed 11:00 at `f27ac2e`, ran 11 h, stopped deliberately. **96 test-split records, 0 failures.**
