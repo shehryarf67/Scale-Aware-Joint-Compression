@@ -832,6 +832,42 @@ until you do — that is it working), and check `find_comparison_pairs` against 
 incomplete pairs, because `continue_on_error` is on and one failed cell silently removes a whole
 comparison rather than stopping the run.
 
+#### Paused 2026-08-07 20:44, at cell 142 of 171
+
+Resumed 13:56, ran 7 h, stopped deliberately. **141 test-split records, 0 failures.**
+
+| Model | Records | Pairs |
+| --- | --- | --- |
+| **pythia-160m** | all five arms at R=8 | **16 of 16 ✅** |
+| **pythia-410m** | all five arms at R=8 | **16 of 16 ✅** |
+| pythia-1b | dense 1, **pruning 10** | 0 of 10 |
+| | | **32 of 42 overall** |
+
+**Both 160M and 410M are complete** — every arm, both budgets, all eight replicates, on the test
+split. That is the whole confirmatory comparison at the two scales the scale-trend evidence rests
+on. **Only the 1B leg remains: 29 cells** — quantisation, sequential and joint at R=5.
+
+1B pace is **29.3 min/cell** median (n=10, range 27.3–35.2), so roughly **14 h** left. Pruning is
+the *cheapest* 1B arm, though; the three remaining arms add compression work.
+
+⚠️ **Watch memory on the 1B leg.** At the pause: 0.29 GiB physical free of 13.7, **2.7 GiB commit
+free of 40.8**, sweep process at 20.6 GiB private. Nothing has failed and cell times are stable, so
+it is not thrashing — but `_verify_saved_artefact` loads a *second* full model to reload the
+checkpoint, and the remaining arms all pack. `continue_on_error` is on, so a `MemoryError` would
+drop a cell and silently remove a whole comparison. **Check pairs against the records, not the
+record count.**
+
+Resume with the same command; `skip_existing` keeps all 141 records:
+
+```bash
+.venv/Scripts/python.exe -u scripts/run_scale_sweep.py --config configs/experiments/main_scale_sweep.yaml
+```
+
+**This run cannot move to another machine.** `exists_valid` gates on a host key built from system,
+processor, core count and GPU name, so on a different host all 141 records are re-run rather than
+skipped (B-33) — and the grid carries CPU deployment measurements, which are Tier 3 and bound to
+this host regardless.
+
 #### Paused 2026-08-07 12:43, at cell 125 of 171
 
 Resumed 05:39, ran 7 h, stopped deliberately. **124 test-split records, 0 failures.**
