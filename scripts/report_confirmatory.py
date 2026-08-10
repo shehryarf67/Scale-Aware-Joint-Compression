@@ -208,6 +208,33 @@ def report(records: list[dict[str, Any]], stream: TextIO) -> None:
 
     say("")
     say("=" * 79)
+    say("MULTIPLE COMPARISONS -- Holm-Bonferroni over every cell examined")
+    say("=" * 79)
+    say("")
+    say("  validity_threats.md warned before any result existed that examining several joint-gain")
+    say("  values and reporting the largest inflates the false-positive rate. It applies: the")
+    say("  headline significance comes from one cell out of the number below.")
+    say("")
+    ordered = sorted(summaries.items(), key=lambda item: item[1].sign_test_p)
+    total, running = len(ordered), 0.0
+    say(f"  {'cell':<26} {'raw p':>9} {'adjusted':>10}")
+    for rank, ((model, budget), summary) in enumerate(ordered):
+        adjusted = min(1.0, max(running, (total - rank) * summary.sign_test_p))
+        running = adjusted
+        mark = "  <- significant" if adjusted < 0.05 else ""
+        say(f"  {model + '/' + budget:<26} {summary.sign_test_p:>9.4f} {adjusted:>10.4f}{mark}")
+    survivors = sum(
+        1
+        for rank, (_, summary) in enumerate(ordered)
+        if min(1.0, (total - rank) * summary.sign_test_p) < 0.05
+    )
+    say("")
+    say(f"  {survivors} of {total} cells significant after correction.")
+    say("  Report the ADJUSTED value. Quoting the raw p while reporting the largest of several")
+    say("  cells is the inflation this correction exists to remove.")
+
+    say("")
+    say("=" * 79)
     say("DENSE BASELINES (test split)")
     say("=" * 79)
     for record in sorted(records, key=lambda r: r["model_name"]):

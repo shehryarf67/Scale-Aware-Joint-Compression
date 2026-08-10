@@ -1,7 +1,28 @@
 # Partner handoff — read this before writing any code
 
-**Date:** 2026-07-31 · **Repo state:** `main` at the commit that added this file ·
-**Audience:** the second author, and whatever LLM assistant they are using
+> # ⛔ THE MEASUREMENT PHASE IS OVER. DO NOT RUN ANY EXPERIMENT.
+>
+> **Updated 2026-08-10.** A1 step 10 — the confirmatory run — **has been executed**: 171/171 cells,
+> 42/42 pairs, 0 failures, on the held-out test split, audit passed. **[F-37](findings_log.md#f-37)**
+> is the result and it is final. Step 10 runs **once**; the protocol forbids tuning, re-running or
+> re-selecting anything afterwards.
+>
+> **The headline: no cell meets the pre-registered §6.3 practical-importance bar.** Joint gives
+> +1.01 pp at 160M (7/8) and +0.93 pp at 410M (8/8, p = 0.0078 — the only significant cell) at 4
+> bits, +0.13 pp at 1B, and **nothing at 8 bits**. The motivating hypothesis — that joint pays off
+> *more* at scale — is **refuted**.
+>
+> **Task 5 below is DONE.** Tasks 1–4 are done. What remains is analysis and writing; see
+> [STATUS.md](STATUS.md) for the ordered next steps. If you are picking this up cold, read
+> [F-37](findings_log.md#f-37) and §6 of the findings log **before** anything else in this file —
+> Part 2's trust levels below were written when every number was exploratory, and the confirmatory
+> numbers supersede them.
+>
+> **Neither exploratory point estimate replicated.** 160M fell +1.69 → +1.01; 410M rose +0.39 →
+> +0.93. Any conclusion in Part 2 resting on those figures is superseded by F-37.
+
+**Date:** 2026-07-31, **superseded in part 2026-08-10** · **Audience:** the second author, and
+whatever LLM assistant they are using
 
 This document exists so you can pick the project up without reverse-engineering it from the commit
 history. It has three parts:
@@ -611,7 +632,32 @@ measured 30% at three scales and found no commensurate speedup; that is one poin
 
 ---
 
-### Task 5 — Freeze the confirmatory configuration, then run it **once**
+### Task 5 — Freeze the confirmatory configuration, then run it **once** — ✅ **DONE 2026-08-10**
+
+> **COMPLETE. Do not run this.** The freeze executed at `cbe2098` (re-frozen `e0c06ac` for the 1B
+> offload pin, [B-44](findings_log.md#4-bugs-found-that-would-have-invalidated-results)) and the
+> grid ran once: **171/171 cells, 42/42 pairs, 0 failures**, `AUDIT PASSED`. The result is
+> **[F-37](findings_log.md#f-37)**.
+>
+> **What it cost, against what this section estimated:** ~60 h of compute over six days, not the
+> ~38 h below. Measured per-cell: 160M 7.8 min, 410M 17.1, 1B 29.3 rising to ~47–54 for the arms
+> that pack.
+>
+> **Three faults surfaced during execution, none numerical** —
+> [B-45](findings_log.md#4-bugs-found-that-would-have-invalidated-results) (dense reference chosen
+> across splits), [B-46](findings_log.md#4-bugs-found-that-would-have-invalidated-results) (reload
+> guard demanded an unreachable sparsity, killing every `sequential` and `joint` cell while leaving
+> controls green), and [B-48](findings_log.md#4-bugs-found-that-would-have-invalidated-results) (the
+> runner never releases memory between cells; ~4 GiB of commit per 1B cell). **Fix B-48 before any
+> future long grid** — with `continue_on_error` on, the `MemoryError` it causes drops cells silently
+> rather than stopping.
+>
+> **The one operational lesson worth carrying:** B-46 removed both arms of every comparison while
+> leaving every control green, so 36 records looked healthy and **zero comparisons existed**. A
+> record count is not a progress measure. `audit_confirmatory_run.py` now fails closed on exactly
+> that.
+
+**The original instructions, kept because they document what was frozen and why:**
 
 **This is last, and it is one-way.** Do not start it until tasks 1–3 are done and every selection
 is frozen.

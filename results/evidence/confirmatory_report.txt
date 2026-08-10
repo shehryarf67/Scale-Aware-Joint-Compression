@@ -118,6 +118,26 @@ SCALE TREND -- mean joint gain by scale
     pythia-1b     +0.1316 pp   R=5   4/5 positive   p=0.3750
 
 ===============================================================================
+MULTIPLE COMPARISONS -- Holm-Bonferroni over every cell examined
+===============================================================================
+
+  validity_threats.md warned before any result existed that examining several joint-gain
+  values and reporting the largest inflates the false-positive rate. It applies: the
+  headline significance comes from one cell out of the number below.
+
+  cell                           raw p   adjusted
+  pythia-410m/aggressive        0.0078     0.0469  <- significant
+  pythia-1b/moderate            0.0625     0.3125
+  pythia-160m/aggressive        0.0703     0.3125
+  pythia-1b/aggressive          0.3750     1.0000
+  pythia-160m/moderate          0.7266     1.0000
+  pythia-410m/moderate          0.7266     1.0000
+
+  1 of 6 cells significant after correction.
+  Report the ADJUSTED value. Quoting the raw p while reporting the largest of several
+  cells is the inflation this correction exists to remove.
+
+===============================================================================
 DENSE BASELINES (test split)
 ===============================================================================
   pythia-160m   35.8575

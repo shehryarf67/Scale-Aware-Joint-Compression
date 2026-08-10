@@ -21,6 +21,12 @@
 > 410M is unanimous and the only significant cell in the study, yet lands **0.065 pp short**.
 > **The bar is pre-registered and is not being moved.**
 >
+> ⚠️ **Correct the significance for multiple comparisons.** Six cells were examined. 410M's raw
+> p = 0.0078 becomes **0.0469 under Holm–Bonferroni** — still below 0.05, by 0.0031. No other cell
+> survives correction (next best 0.3125). **Quote 0.0469, never 0.0078.** The same cell is both
+> marginally significant *and* 0.065 pp short of the practical bar, so the effect is **real but
+> small and fragile**, not established.
+>
 > **The motivating hypothesis is refuted:** joint does not pay off *more* at scale. It is flat
 > 160M→410M and falls at 1B. **Neither exploratory estimate replicated** — 160M fell from +1.69 to
 > +1.01, 410M rose from +0.39 to +0.93 — so the exploratory narrative is superseded.
