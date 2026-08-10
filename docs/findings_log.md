@@ -101,6 +101,192 @@ which is what the arm comparison needs.
 
 ## 2. Findings
 
+### F-37 — THE CONFIRMATORY RESULT: no cell meets the pre-registered practical-importance bar {#f-37}
+
+**Date:** 2026-08-10 · **A1 step 10, run once on the held-out test split, no tuning afterwards**
+
+This is the result the study exists to produce. Everything above it is exploratory by A1's own
+declaration; this is the only entry on the **test** split.
+
+#### Conditions
+
+| | |
+| --- | --- |
+| Split | **test** (all 171 records; the validation split is a declared selection surface and appears nowhere here) |
+| Replicates | **R = 8** at 160M and 410M, **R = 5** at 1B, as frozen |
+| Evaluation | **CPU**, 512 sequences × 512 tokens |
+| Deployment benchmark | **CPU**, this host only |
+| Machine | HP Omen, single host — verified identical `host_key` across all 171 records |
+| `method_version` | **4**, uniform |
+| Commits | the run spanned `b19b98a` … `ecaf8c7`; all intervening commits are documentation, scripts, or the two numerically inert guard fixes ([B-45](#4-bugs-found-that-would-have-invalidated-results), [B-46](#4-bugs-found-that-would-have-invalidated-results)). `METHOD_VERSION` never moved, which is the guard that compression behaviour did not change |
+| Gate | `scripts/audit_confirmatory_run.py` — **171/171 cells valid, 42/42 pairs complete, 0 failures, 0 stale, 0 missing** |
+| Baseline | the **frozen** sequential order per cell, not best-of-both — A1 §3 froze it on validation before test, so only that order was run. Q→P at 1B/moderate, P→Q everywhere else |
+| Full report | [`results/evidence/confirmatory_report.txt`](../results/evidence/confirmatory_report.txt), regenerable with `python scripts/report_confirmatory.py` |
+
+#### The headline
+
+**No cell is practically important under §6.3**, which requires mean gain **≥ 1.0 pp *and* a
+consistent sign across every paired replicate.**
+
+| Scale | Budget | R | Mean gain | sd | Positive | Sign-test p | ≥1.0 pp | Sign-consistent | **§6.3** |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 160M | 30% + W4 | 8 | **+1.0120 pp** | 0.781 | 7/8 | 0.0703 | ✅ | ❌ | **NO** |
+| 410M | 30% + W4 | 8 | **+0.9348 pp** | 0.623 | **8/8** | **0.0078** | ❌ | ✅ | **NO** |
+| 1B | 30% + W4 | 5 | +0.1316 pp | 0.186 | 4/5 | 0.3750 | ❌ | ❌ | **NO** |
+| 160M | 30% + W8 | 8 | +0.0381 pp | 0.085 | 5/8 | 0.7266 | ❌ | ❌ | NO |
+| 410M | 30% + W8 | 8 | +0.0289 pp | 0.052 | 5/8 | 0.7266 | ❌ | ❌ | NO |
+| 1B | 30% + W8 | 5 | **−0.1794 pp** | 0.073 | **0/5** | 0.0625 | ❌ | ❌ | NO |
+
+**The two W4 cells fail on opposite criteria, and both by a hair.** 160M clears the effect-size bar
+and has one negative replicate. 410M is unanimous — the only cell in the study reaching
+significance, p = 0.0078 — and lands **0.065 pp short** of the threshold. Recorded explicitly
+because that is exactly the configuration in which a threshold gets quietly renegotiated, and §6.3
+was pre-registered to prevent it. **The bar is not moved.**
+
+#### Every replicate, individually (A1 §5.1)
+
+Retention is `100 × dense_ppl / compressed_ppl`. The CI is a paired block bootstrap over whole
+evaluation windows, 10 000 resamples, one index draw applied to both arms, on per-token NLL
+advantage.
+
+**pythia-160m / aggressive (30% + W4), order P→Q**
+
+| rep | sequential % | joint % | gain pp | 95% CI (nats/token) |
+| --- | --- | --- | --- | --- |
+| 0 | 56.4467 | 57.4827 | +1.0359 | [+0.01267, +0.02376] excludes 0 |
+| 1 | 55.9025 | 56.3163 | +0.4138 | [+0.00169, +0.01295] excludes 0 |
+| 2 | 55.1392 | 57.2509 | +2.1117 | [+0.03222, +0.04315] excludes 0 |
+| 3 | 56.7151 | 56.4003 | **−0.3148** | [−0.01107, +0.00012] includes 0 |
+| 4 | 55.8483 | 56.6375 | +0.7893 | [+0.00745, +0.02037] excludes 0 |
+| 5 | 56.2995 | 57.7733 | +1.4739 | [+0.02025, +0.03154] excludes 0 |
+| 6 | 54.6818 | 56.4863 | +1.8046 | [+0.02672, +0.03838] excludes 0 |
+| 7 | 55.4459 | 56.2275 | +0.7816 | [+0.00833, +0.01955] excludes 0 |
+
+**pythia-410m / aggressive (30% + W4), order P→Q** — the strongest cell in the study
+
+| rep | sequential % | joint % | gain pp | 95% CI (nats/token) |
+| --- | --- | --- | --- | --- |
+| 0 | 57.6153 | 59.0904 | +1.4751 | [+0.02016, +0.03071] excludes 0 |
+| 1 | 57.6845 | 58.2020 | +0.5174 | [+0.00351, +0.01434] excludes 0 |
+| 2 | 57.5442 | 58.8484 | +1.3042 | [+0.01676, +0.02813] excludes 0 |
+| 3 | 57.3335 | 58.4299 | +1.0964 | [+0.01351, +0.02442] excludes 0 |
+| 4 | 57.0057 | 58.9802 | +1.9745 | [+0.02869, +0.03938] excludes 0 |
+| 5 | 58.0092 | 58.4586 | +0.4495 | [+0.00170, +0.01377] excludes 0 |
+| 6 | 57.2530 | 57.7330 | +0.4800 | [+0.00286, +0.01383] excludes 0 |
+| 7 | 58.0401 | 58.2216 | +0.1814 | [−0.00226, +0.00843] includes 0 |
+
+**pythia-1b / aggressive (30% + W4), order P→Q**
+
+| rep | sequential % | joint % | gain pp | 95% CI (nats/token) |
+| --- | --- | --- | --- | --- |
+| 0 | 89.7111 | 90.0441 | +0.3330 | [+0.00183, +0.00553] excludes 0 |
+| 1 | 89.6524 | 89.7436 | +0.0913 | [−0.00063, +0.00266] includes 0 |
+| 2 | 89.4832 | 89.7806 | +0.2974 | [+0.00163, +0.00497] excludes 0 |
+| 3 | 89.7740 | 89.6558 | −0.1182 | [−0.00332, +0.00053] includes 0 |
+| 4 | 89.6521 | 89.7064 | +0.0543 | [−0.00106, +0.00223] includes 0 |
+
+**pythia-1b / moderate (30% + W8), order Q→P** — joint is reliably *worse*
+
+| rep | sequential % | joint % | gain pp | 95% CI (nats/token) |
+| --- | --- | --- | --- | --- |
+| 0 | 96.5362 | 96.3887 | −0.1475 | [−0.00187, −0.00120] excludes 0 |
+| 1 | 96.4681 | 96.3535 | −0.1146 | [−0.00156, −0.00083] excludes 0 |
+| 2 | 96.4702 | 96.2333 | −0.2369 | [−0.00283, −0.00209] excludes 0 |
+| 3 | 96.5359 | 96.4137 | −0.1222 | [−0.00161, −0.00092] excludes 0 |
+| 4 | 96.5866 | 96.3105 | −0.2761 | [−0.00323, −0.00250] excludes 0 |
+
+All five intervals exclude zero on the negative side. This is a **small, reliable disadvantage**,
+not noise.
+
+The two W8 control cells at 160M and 410M are in
+[`results/evidence/confirmatory_report.txt`](../results/evidence/confirmatory_report.txt) in the
+same form; both straddle zero (5/8 positive, p = 0.7266).
+
+#### Neither exploratory point estimate replicated
+
+| Cell | Exploratory (validation, R=3) | Confirmatory (test, R=8) | Movement |
+| --- | --- | --- | --- |
+| 160M / W4 | +1.69 pp, 3/3, "robust" ([F-27](#f-27)) | **+1.0120 pp, 7/8** | **down 0.68 pp**, lost unanimity |
+| 410M / W4 | +0.39 pp, 2/3, "indistinguishable from zero" ([F-27](#f-27)) | **+0.9348 pp, 8/8, p = 0.0078** | **up 0.54 pp**, gained unanimity |
+| 1B / W4 | +0.20 pp, 3/3 ([F-32](#f-32)) | +0.1316 pp, 4/5 | roughly held |
+
+**The 410M reversal is the most consequential.** The scale point the exploratory work wrote off as
+null is the one cell that reaches significance. The two larger estimates moved *toward each other*,
+which is the signature of regression from a selection surface — and it substantially weakens the
+160M→410M half of the "shrinks with scale" story.
+
+#### The scale trend, restated honestly
+
+| Budget | 160M | 410M | 1B |
+| --- | --- | --- | --- |
+| 30% + W4 | +1.0120 | +0.9348 | +0.1316 |
+| 30% + W8 | +0.0381 | +0.0289 | −0.1794 |
+
+**The motivating hypothesis is refuted.** The study asked whether joint pays off *more* at scale.
+It pays off **less**, on the test split, at both budgets. But the shape is not the smooth monotone
+decline [F-32](#f-32) reported: 160M and 410M are now within 0.08 pp of each other, and effectively
+all of the decline sits between 410M and 1B. Two points at the same level and one below them is a
+weaker basis for a trend claim than three descending points, and the plan already says three points
+cannot fit a scaling law.
+
+**The W4/W8 split survives confirmation.** Every W8 cell is at or below zero; every W4 cell is above
+it. That is consistent with [F-05](#f-05)'s mechanism prediction (8.86% mask divergence at W4
+against 0.46% at W8) and with the [F-33](#f-33) control, and it is the one structural claim that
+looks the same before and after the freeze.
+
+#### What the paper may claim, and may not
+
+**May claim:**
+
+- On the test split, at 30% sparsity and 4-bit, joint compression gives a **small positive gain over
+  the frozen sequential baseline at 160M and 410M** — +1.01 pp and +0.93 pp — with the 410M cell
+  **unanimous across 8 paired calibration replicates (exact two-sided sign test p = 0.0078)**.
+- **No cell meets the pre-registered practical-importance threshold** of ≥1.0 pp with a consistent
+  sign, so the study reports **no practically important joint gain**.
+- At 8 bits the mechanism produces **nothing** at 160M and 410M and a **small reliable
+  disadvantage** at 1B.
+- The joint advantage **does not grow with scale**; it is flat from 160M to 410M and falls at 1B.
+
+**May not claim:**
+
+- That joint compression is practically important at any scale. The bar was pre-registered and is
+  not met anywhere.
+- A scaling law, or a monotone decline, from three points — and less so now that two of them
+  coincide.
+- That the 1B cells carry a significance claim in either direction: at R = 5 the best attainable
+  two-sided p is 0.0625, so 1B/moderate's unanimous 0/5 is the **strongest possible** outcome at
+  that R and still does not reach 0.05. That is a design limit, not a finding.
+
+#### Limitations specific to this run
+
+- **R = 5 at 1B cannot reach significance at any effect size.** Accepted at freeze time to fit the
+  schedule; it means the 1B leg contributes effect sizes and sign consistency only.
+- **Only the frozen sequential order was run**, so the confirmatory gain is measured against that
+  order rather than best-of-both. Where the frozen choice was recorded as arbitrary — the W8 cells,
+  per [F-28](#f-28) — the baseline could differ by up to the order margin measured there (~0.18 pp
+  at 160M/W8), which is larger than the W8 gains themselves. **The W8 cells therefore carry an
+  uncertainty comparable to their effect**, and no W8 conclusion should rest on the sign alone.
+- **Two of 171 records carry a null `git_commit`** — `pythia-410m_pruning_aggressive_s30_b32_rep0`
+  and `pythia-1b_joint_aggressive_s30_b4_rep3`. Their configs match their siblings field for field
+  (modulo the intended `calibration_replicate`) and both carry `method_version 4`, and their
+  timestamps fall between documentation-only commits, so the code that produced them is bounded.
+  Provenance is nonetheless weaker for those two than for the other 169, and one of them is a joint
+  cell inside a reported pair.
+- **The 1B leg required the sweep process to be recycled** roughly every three cells: it accumulates
+  ~4 GiB of commit per 1B compression cell and never releases it (commit free fell 20.24 → 1.03 GiB
+  over five cells). Recycling is numerically inert — `skip_existing` re-runs nothing and each record
+  is written whole — but it is the reason the run spans many process lifetimes rather than one.
+
+#### Reproduction
+
+```bash
+python scripts/audit_confirmatory_run.py     # gate: must print AUDIT PASSED
+python scripts/report_confirmatory.py        # every number above
+python scripts/export_evidence.py --check    # the committed evidence set is current
+```
+
+---
+
 ### F-36 — The CPU timing pilot caught an unfrozen 1B offload setting before confirmation {#f-36}
 
 **Date:** 2026-08-05
@@ -2551,6 +2737,12 @@ the arm comparison.
 
 ## 3. All end-to-end perplexities in one table
 
+> **The confirmatory numbers are NOT in this table.** They are on the **test** split at a different
+> evaluation window (512 × 512) and live in [F-37](#f-37) and
+> [`results/evidence/confirmatory_report.txt`](../results/evidence/confirmatory_report.txt). Do not
+> read them beside the pilot rows below. The test-split dense baselines, for reference:
+> **pythia-160m 35.8575 · pythia-410m 21.3231 · pythia-1b 17.2564.**
+
 **Pilot window only.** Pythia-160M at `50f5173d`, `Salesforce/wikitext` validation, **64 sequences ×
 256 tokens (16,320 tokens)**, seed 1234, calibration `20bf57e6b08ed60d`, CPU evaluation, one seed each.
 The Phase 7 screening numbers are in [F-10](#f-10) and belong to a different window — do not read the
@@ -2658,30 +2850,81 @@ Full reasoning in [protocol_freeze.md](protocol_freeze.md). Summarised here with
 
 ## 6. What the paper may and may not claim from this log
 
-**May claim, with the conditions attached:**
+> **Rewritten 2026-08-10, after [F-37](#f-37).** The previous version of this section was written
+> when the log held one model and no confirmatory comparison; it said "anything about scale" and
+> "that joint beats sequential, or does not" were both off-limits. The confirmatory run has since
+> been executed and both are now answerable. The old text is superseded rather than deleted — it is
+> in the git history at `ecaf8c7` — because it governed nothing that was published.
+
+**The primary claim, from [F-37](#f-37) — the only test-split evidence:**
+
+- **No cell meets the pre-registered §6.3 practical-importance bar** (≥ 1.0 pp mean gain *and* a
+  consistent sign across every paired replicate). The study's answer to its own primary question is
+  therefore **negative on practical importance**.
+- Joint compression gives a **small positive gain at 4 bits** over the frozen sequential baseline:
+  **+1.01 pp at 160M** (7/8 replicates positive, p = 0.0703) and **+0.93 pp at 410M** (**8/8**,
+  **p = 0.0078**). The 410M cell is the only statistically significant result in the study.
+- At **8 bits** the mechanism yields nothing at 160M and 410M (+0.04, +0.03 pp, sign inconsistent)
+  and a **small reliable disadvantage at 1B** (−0.18 pp, 0/5, every bootstrap interval excluding
+  zero on the negative side).
+- **The joint advantage does not grow with scale.** It is flat from 160M to 410M (+1.01, +0.93) and
+  falls at 1B (+0.13). This **refutes the study's motivating hypothesis**, which was that joint
+  compression would pay off more as models grow.
+
+**May also claim, with the conditions attached:**
 
 - The pipeline hits its budgets exactly and the precision is real, verified on a converted, reloaded
   artefact ([F-09](#f-09)).
 - Reconstruction improves the layer objective on every layer measured, and improves end-to-end
   perplexity by 41% over mask-only ([F-07](#f-07)).
+- The mask is **bit-identical** to an independent Wanda implementation over 84,934,656 weights
+  ([F-19](#f-19)); the reconstruction sweep never falls below the provable optimum of its own
+  objective ([F-20](#f-20)); and absolute retention is credible against unmodified SparseGPT once
+  the comparison group is matched ([F-22](#f-22)).
 - Weight-only INT8 quantisation is essentially free at this scale (99.8% retention).
 - The comparison group is a first-order design choice for activation-weighted pruning, worth 6.7×
-  perplexity at 50% sparsity on a 160M model.
+  perplexity at 50% sparsity on a 160M model ([F-07](#f-07)).
 - Two quantisation-aware refinements — clipping scale search and keep-benefit scoring — measurably
-  *hurt* under error-compensating reconstruction, with a mechanism for why.
+  *hurt* under error-compensating reconstruction, with a mechanism for why ([F-06](#f-06)).
+- 30% unstructured sparsity buys **no** CPU latency at any of the three scales ([F-34](#f-34)), and
+  no downstream-task difference between arms is resolvable at this evaluation size
+  ([F-35](#f-35)).
 
 **May not claim:**
 
-- Anything about absolute quality relative to published results. The evaluation window is 64
-  sequences at 256 tokens, not a full test set at 2048 ([§1](#1-environment-of-record)).
-- Anything about scale. Every number here is Pythia-160M. One model is not a trend.
-- Anything with uncertainty. **Every end-to-end number in §3 is a single seed.** §5.5 requires three
-  confirmatory seeds for the central comparison, and none of these are confirmatory runs.
-- That joint beats sequential, or does not. No matched joint-vs-sequential comparison at a frozen
-  budget has been run yet — that is Phase 7 onward. The +1.12% in [F-06](#f-06) is a *layer*
-  objective on six layers, not a model-level result.
-- Any latency claim. No benchmark in this log was collected under the §4.7 protocol (20–30
-  repetitions, prefill/decode split, model-order rotation).
+- **That joint compression is practically important at any scale.** The threshold was pre-registered
+  and is not met anywhere. In particular the 410M cell's +0.9348 pp must not be rounded, restated
+  as "≈1 pp", or compared against a relaxed bar: it fails §6.3 by 0.065 pp and the paper must say so.
+- **A scaling law, or a monotone decline.** Three points cannot fit one, and two of the three now
+  coincide within 0.08 pp. [F-32](#f-32)'s "monotone decline" reading was exploratory and does not
+  survive the test split.
+- **Any significance claim at 1B.** At R = 5 the best attainable two-sided sign-test p is 0.0625, so
+  even a unanimous 1B cell cannot reach 0.05. This is a design limit accepted at freeze time.
+- **That the exploratory point estimates were reliable.** Neither replicated: 160M fell from +1.69
+  to +1.01 and 410M rose from +0.39 to +0.93 ([F-27](#f-27) vs [F-37](#f-37)). Any narrative built
+  on the exploratory numbers is superseded.
+- **Anything about absolute quality against published results at the exploratory evaluation window.**
+  The screening numbers used 64 sequences at 256 tokens; the confirmatory run used 512 × 512, and
+  only the latter is comparable across cells here.
+- **Anything with uncertainty from the §3 pilot table.** Every end-to-end number in
+  [§3](#3-all-end-to-end-perplexities-in-one-table) is a **single seed** at a single model and a
+  single window, and none of those rows is a confirmatory run. Uncertainty exists only for the
+  test-split cells in [F-37](#f-37), where it comes from R paired calibration replicates plus a
+  paired block bootstrap over evaluation windows — never from the pilot rows.
+- **Any latency claim beyond [F-34](#f-34)**, which measured one sparsity (30%) at three scales
+  under the §4.7 protocol. RQ4's *curve* needs several sparsities and was not run.
+
+**Must disclose:**
+
+- **Every implementation fault found in this project flattered the joint arm** — B-14, B-17, B-22,
+  B-23, B-30, B-34, six in a row, none in the other direction. The final effect is small and was
+  reached by removing biases that all pointed the same way; that belongs in Limitations regardless
+  of where the number landed.
+- **§6.3 was amended by A1 before the confirmatory run**, and the amendment *loosened* a
+  pre-registered rule whose original binding clause was unmeasurable. The paper must state that the
+  bar it failed is already the weaker of the two.
+- The two records with null `git_commit`, and the R = 5 / frozen-order limitations, per
+  [F-37](#f-37).
 
 ---
 

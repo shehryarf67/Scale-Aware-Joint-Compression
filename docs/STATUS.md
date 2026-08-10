@@ -1,18 +1,36 @@
 # Project status
 
-> **2026-08-05 prelaunch timing complete:** the validation-only pilot exposed
-> [F-36](findings_log.md#f-36) / B-44 in v2, and Amendment A3 closed it before any test result was
-> inspected. `confirmatory-freeze-v3` explicitly pins and audits `offload_blocks: true`. The corrected
-> joint W4 cell took **53.51 min** versus the invalid v2 pilot's 121.40 min, independently reloaded
-> with identical logits and the same checkpoint hash. Revised full-run estimate: **~65.3 hours**.
+> # 🔒 A1 STEP 10 IS COMPLETE. THE CONFIRMATORY RESULT IS IN.
+>
+> **2026-08-10.** All **171 cells**, **42/42 pairs**, **0 failures**, on the held-out **test** split.
+> `audit_confirmatory_run.py` prints **AUDIT PASSED**. Full record:
+> **[F-37](findings_log.md#f-37)**; regenerable report at
+> [`results/evidence/confirmatory_report.txt`](../results/evidence/confirmatory_report.txt).
+>
+> **No cell meets the pre-registered §6.3 practical-importance bar** (≥1.0 pp *and* sign-consistent
+> across all replicates). The study's answer to its primary question is **negative on practical
+> importance.**
+>
+> | Scale | 30% + W4 | positive | p | | 30% + W8 |
+> | --- | --- | --- | --- | --- | --- |
+> | **160M** | **+1.012 pp** | 7/8 | 0.0703 | | +0.038 pp |
+> | **410M** | **+0.935 pp** | **8/8** | **0.0078** | | +0.029 pp |
+> | **1B** | +0.132 pp | 4/5 | 0.3750 | | **−0.179 pp** (0/5) |
+>
+> The two W4 cells fail on **opposite** criteria: 160M clears 1.0 pp but has a negative replicate;
+> 410M is unanimous and the only significant cell in the study, yet lands **0.065 pp short**.
+> **The bar is pre-registered and is not being moved.**
+>
+> **The motivating hypothesis is refuted:** joint does not pay off *more* at scale. It is flat
+> 160M→410M and falls at 1B. **Neither exploratory estimate replicated** — 160M fell from +1.69 to
+> +1.01, 410M rose from +0.39 to +0.93 — so the exploratory narrative is superseded.
+>
+> **No further tuning is permitted.** Step 10 runs once. What remains is analysis and writing.
 
-**Last updated:** 2026-07-31 · third session on the HP Omen · **Phases 0, 5 and 6 complete**;
-**Phase 7 has replicated results.** The pipeline passes three independent correctness anchors, the
-screening grid has been re-run on that anchored code, the frozen budgets survived a third time, both
-sequential orders are frozen at 160M and 410M, and the headline effect has been **replicated across
-three paired calibration draws at both scales** — it is real at 160M and shrinks with scale. An
-exploratory cell now costs ~1.3 min rather than ~9.3 min ([F-29](findings_log.md#f-29)). Governed by
-[Protocol Amendment A1](protocol_amendment_a1.md).
+**Last updated:** 2026-08-10 · **Phases 0, 5, 6, 7 complete; A1 steps 1–10 complete.** The pipeline
+passes three independent correctness anchors, the budgets and both sequential orders were frozen per
+cell on validation, and the confirmatory grid has now been executed once on the test split under the
+step-9 freeze. Governed by [Protocol Amendment A1](protocol_amendment_a1.md).
 
 > Read this first. It is the handoff between sessions and between machines. If it looks stale,
 > check `git log` — the truth is the commit history, this file is a summary of it.
@@ -761,13 +779,41 @@ it claims to; it says nothing about absolute quality against published work (A1 
 | — | **A4 downstream tasks** (§4.3) | ✅ **done** — [F-35](findings_log.md#f-35) |
 | — | Commit recomputable evidence artefacts | ✅ `results/evidence/`, headline verified reproducible |
 | 9 | Freeze the entire confirmatory configuration | 🔒 **DONE 2026-08-04** at `cbe2098` — [the freeze](protocol_freeze.md#-the-confirmatory-freeze--a1-step-9-executed-2026-08-04) |
-| 10 | Run test evaluation **once**, with no further tuning | 🟡 **launched 2026-08-05, stopped twice by pre-existing guards, relaunching** — see below |
+| 10 | Run test evaluation **once**, with no further tuning | ✅ **COMPLETE 2026-08-10** — 171/171 cells, 42/42 pairs, 0 failures, audit passed → [F-37](findings_log.md#f-37) |
 
 **A4 and A5 should come before step 9.** Step 10 costs ~38 h and is one-way — no tuning afterwards —
 and both A4 and A5 produce numbers that go in the same paper. Built after the freeze, they either sit
 outside it or force re-freezing.
 
-### 🟡 Step 10 has been launched, and two dormant guards fired on the way
+### ✅ Step 10 completed — what to do next
+
+The measurement phase of this project is over. **Nothing further may be tuned, re-run, or selected**;
+A1 step 10 runs once and the freeze forbids adjustment after inspection. The remaining work is
+analysis and writing, in this order:
+
+1. **Cross-verify [F-37](findings_log.md#f-37) independently.** Every number is regenerable:
+   `python scripts/audit_confirmatory_run.py` must print AUDIT PASSED, then
+   `python scripts/report_confirmatory.py` reproduces the tables from the records. The per-window
+   NLL needed to recompute the bootstrap intervals is committed in
+   `results/evidence/windows.csv`.
+2. **Decide how to frame a negative primary result.** The honest framing is in
+   [F-37](findings_log.md#f-37) and §6 of the findings log: a small, real, 4-bit-specific effect
+   that does not reach the pre-registered practical bar, with the motivating scale hypothesis
+   refuted. **Do not renegotiate the 1.0 pp threshold** — the 410M near-miss at 0.9348 pp is exactly
+   the case §6.3 was pre-registered to govern.
+3. **Regenerate the figures** with `scripts/generate_plots.py` against the test-split records, and
+   check it does not refuse on mixed hosts (it should not; all 171 share one `host_key`).
+4. **Write the limitations honestly** — all six joint-flattering bugs, the §6.3 loosening, R=5 at 1B,
+   the frozen-order baseline, and the two records with null `git_commit`.
+
+Optional, and explicitly **outside** the frozen grid if pursued: the unclaimed `pythia-1.4b` and
+`qwen2.5-0.5b` legs, which §8.2 requires not consume the primary sweep's time. They cannot change
+the primary result; they would only extend external validity.
+
+<details>
+<summary>The execution history of step 10, kept for the record — two dormant guards, a memory leak, and five pauses</summary>
+
+### 🟡 Step 10 was launched, and two dormant guards fired on the way
 
 Launched **2026-08-05 15:54**. Both stoppages were **pre-existing checks that had never been
 exercised on the test split**, and both were caught by watching the run rather than by a test.
@@ -950,6 +996,35 @@ nothing was wrong. It only becomes a useful progress signal once the joint arm i
 it now is. Until then the count to watch is records-by-arm, not pairs.
 
 160M cells are running ~7 min each. The intermittent stall did not recur in this stretch.
+
+#### How it finished — 2026-08-10
+
+Five deliberate pauses over six days. Measured per-cell times: 160M **7.8 min**, 410M **17.1 min**
+(sequential 15.0, quantisation uniformly 22.2), 1B **29.3 min** pruning rising to **~47–54 min** for
+the arms that pack. Total wall time far exceeded the frozen ~38 h estimate; the honest figure is
+roughly **60 h of compute across six days**.
+
+**Three operational faults, none of which touched a number:**
+
+| | |
+| --- | --- |
+| [B-45](findings_log.md#4-bugs-found-that-would-have-invalidated-results) | Dense reference selected across evaluation splits — caught live, 17 of the first 20 cells failed |
+| [B-46](findings_log.md#4-bugs-found-that-would-have-invalidated-results) | Reload guard demanded an unreachable sparsity — killed **every** sequential and joint cell while leaving controls green |
+| [B-47](findings_log.md#4-bugs-found-that-would-have-invalidated-results) | Modern Standby: cannot be prevented, and does not affect the run. Two of my own explanations were published and withdrawn |
+
+**A fourth, operational only:** the sweep process accumulates **~4 GiB of commit per 1B compression
+cell and never releases it** — commit free fell 20.24 → 1.03 GiB over five cells. With
+`continue_on_error` on, the resulting `MemoryError` would have *dropped* cells and silently removed
+comparisons. Handled by recycling the process on low commit, preferentially at a cell boundary;
+`skip_existing` makes a restart cost at most the in-flight cell. This is worth fixing in the runner
+before any future long grid: **memory is not released between cells.**
+
+**The lesson worth carrying:** B-46 removed both arms of every comparison while leaving every
+control green, so **36 records looked healthy and 0 comparisons existed**. A record count is not a
+progress measure — `find_comparison_pairs` against the records is. That is now enforced by
+`audit_confirmatory_run.py`, which fails closed.
+
+</details>
 
 The screening grid is re-runnable as below, and it still writes to the exploratory (validation)
 configuration. It now costs **~20 minutes** rather than 2 h 08 m ([F-29](findings_log.md#f-29)):
@@ -1290,8 +1365,10 @@ Full record in [protocol_freeze.md](protocol_freeze.md#environment). Summary:
       **121.40 min**; exposed missing offload pin → [F-36](findings_log.md#f-36)
 - [x] **Re-freeze the confirmatory config** — v3 pins `offload_blocks: true`; manifest valid at
       `e0c06ac`; B-44 closed before test evaluation
-- [ ] **Test evaluation once** — CPU, R=8/8/5, use v3 only. **Launched 2026-08-05**; stopped twice
-      by dormant guards ([B-45](findings_log.md#4-bugs-found-that-would-have-invalidated-results),
-      [B-46](findings_log.md#4-bugs-found-that-would-have-invalidated-results)), both numerically
-      inert, relaunched from the fixed tree. Cost now **~50–55 h** on measured per-cell times, plus
-      an uncharacterised intermittent stall
+- [x] **Test evaluation once** — ✅ **DONE 2026-08-10.** 171/171 cells, 42/42 pairs, 0 failures,
+      `AUDIT PASSED`. ~60 h of compute across six days, three operational faults en route
+      ([B-45](findings_log.md#4-bugs-found-that-would-have-invalidated-results),
+      [B-46](findings_log.md#4-bugs-found-that-would-have-invalidated-results),
+      [B-47](findings_log.md#4-bugs-found-that-would-have-invalidated-results)), none numerical.
+      Result: **[F-37](findings_log.md#f-37) — no cell meets the §6.3 bar**
+- [ ] **Write up** — cross-verify F-37, regenerate figures, draft with the §6 claim limits

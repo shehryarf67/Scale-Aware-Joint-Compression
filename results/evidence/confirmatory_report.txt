@@ -1,0 +1,135 @@
+===============================================================================
+CONFIRMATORY RESULT -- test split, run once, no tuning after the A1 step-9 freeze
+===============================================================================
+171 successful test-split records
+
+Baseline is the FROZEN sequential order per cell, not best-of-both: A1 §3 selects the
+order on validation and freezes it before test, so only that order was run.
+§6.3: practically important iff mean gain >= 1.0 pp AND sign-consistent across all R.
+
+-------------------------------------------------------------------------------
+pythia-160m / moderate    sequential order: P->Q
+-------------------------------------------------------------------------------
+  rep  sequential %     joint %   gain pp   95% CI on NLL advantage
+    0      79.6361    79.7270   +0.0909  [+0.00040, +0.00187] nats/token, excludes 0
+    1      79.8278    79.7816   -0.0462  [-0.00124, +0.00007] nats/token, includes 0
+    2      79.5166    79.6228   +0.1063  [+0.00052, +0.00213] nats/token, excludes 0
+    3      79.7049    79.7992   +0.0942  [+0.00037, +0.00202] nats/token, excludes 0
+    4      79.6476    79.7053   +0.0577  [+0.00000, +0.00143] nats/token, excludes 0
+    5      79.9085    79.7942   -0.1143  [-0.00227, -0.00064] nats/token, excludes 0
+    6      79.6715    79.6658   -0.0057  [-0.00076, +0.00068] nats/token, includes 0
+    7      79.8324    79.9544   +0.1221  [+0.00083, +0.00225] nats/token, excludes 0
+
+  R = 8    mean +0.0381 pp    sd 0.0847    median +0.0743 pp    range [-0.1143, +0.1221]
+  positive 5    negative 3    ties 0    sign-test n = 8    exact two-sided p = 0.7266
+  >= 1.0 pp: NO     sign-consistent: NO     => §6.3 PRACTICALLY IMPORTANT: NO
+
+-------------------------------------------------------------------------------
+pythia-160m / aggressive    sequential order: P->Q
+-------------------------------------------------------------------------------
+  rep  sequential %     joint %   gain pp   95% CI on NLL advantage
+    0      56.4467    57.4827   +1.0359  [+0.01267, +0.02376] nats/token, excludes 0
+    1      55.9025    56.3163   +0.4138  [+0.00169, +0.01295] nats/token, excludes 0
+    2      55.1392    57.2509   +2.1117  [+0.03222, +0.04315] nats/token, excludes 0
+    3      56.7151    56.4003   -0.3148  [-0.01107, +0.00012] nats/token, includes 0
+    4      55.8483    56.6375   +0.7893  [+0.00745, +0.02037] nats/token, excludes 0
+    5      56.2995    57.7733   +1.4739  [+0.02025, +0.03154] nats/token, excludes 0
+    6      54.6818    56.4863   +1.8046  [+0.02672, +0.03838] nats/token, excludes 0
+    7      55.4459    56.2275   +0.7816  [+0.00833, +0.01955] nats/token, excludes 0
+
+  R = 8    mean +1.0120 pp    sd 0.7812    median +0.9126 pp    range [-0.3148, +2.1117]
+  positive 7    negative 1    ties 0    sign-test n = 8    exact two-sided p = 0.0703
+  >= 1.0 pp: YES    sign-consistent: NO     => §6.3 PRACTICALLY IMPORTANT: NO
+
+-------------------------------------------------------------------------------
+pythia-410m / moderate    sequential order: P->Q
+-------------------------------------------------------------------------------
+  rep  sequential %     joint %   gain pp   95% CI on NLL advantage
+    0      76.0510    76.0832   +0.0322  [-0.00032, +0.00116] nats/token, includes 0
+    1      76.1693    76.1851   +0.0159  [-0.00055, +0.00097] nats/token, includes 0
+    2      76.1032    76.0839   -0.0192  [-0.00096, +0.00046] nats/token, includes 0
+    3      76.0744    76.1328   +0.0584  [-0.00010, +0.00159] nats/token, includes 0
+    4      75.9195    75.8865   -0.0330  [-0.00122, +0.00036] nats/token, includes 0
+    5      75.9706    76.0874   +0.1167  [+0.00074, +0.00232] nats/token, excludes 0
+    6      76.0587    76.0436   -0.0151  [-0.00104, +0.00063] nats/token, includes 0
+    7      75.6882    75.7635   +0.0753  [+0.00025, +0.00174] nats/token, excludes 0
+
+  R = 8    mean +0.0289 pp    sd 0.0521    median +0.0240 pp    range [-0.0330, +0.1167]
+  positive 5    negative 3    ties 0    sign-test n = 8    exact two-sided p = 0.7266
+  >= 1.0 pp: NO     sign-consistent: NO     => §6.3 PRACTICALLY IMPORTANT: NO
+
+-------------------------------------------------------------------------------
+pythia-410m / aggressive    sequential order: P->Q
+-------------------------------------------------------------------------------
+  rep  sequential %     joint %   gain pp   95% CI on NLL advantage
+    0      57.6153    59.0904   +1.4751  [+0.02016, +0.03071] nats/token, excludes 0
+    1      57.6845    58.2020   +0.5174  [+0.00351, +0.01434] nats/token, excludes 0
+    2      57.5442    58.8484   +1.3042  [+0.01676, +0.02813] nats/token, excludes 0
+    3      57.3335    58.4299   +1.0964  [+0.01351, +0.02442] nats/token, excludes 0
+    4      57.0057    58.9802   +1.9745  [+0.02869, +0.03938] nats/token, excludes 0
+    5      58.0092    58.4586   +0.4495  [+0.00170, +0.01377] nats/token, excludes 0
+    6      57.2530    57.7330   +0.4800  [+0.00286, +0.01383] nats/token, excludes 0
+    7      58.0401    58.2216   +0.1814  [-0.00226, +0.00843] nats/token, includes 0
+
+  R = 8    mean +0.9348 pp    sd 0.6233    median +0.8069 pp    range [+0.1814, +1.9745]
+  positive 8    negative 0    ties 0    sign-test n = 8    exact two-sided p = 0.0078
+  >= 1.0 pp: NO     sign-consistent: YES    => §6.3 PRACTICALLY IMPORTANT: NO
+
+-------------------------------------------------------------------------------
+pythia-1b / moderate    sequential order: Q->P
+-------------------------------------------------------------------------------
+  rep  sequential %     joint %   gain pp   95% CI on NLL advantage
+    0      96.5362    96.3887   -0.1475  [-0.00187, -0.00120] nats/token, excludes 0
+    1      96.4681    96.3535   -0.1146  [-0.00156, -0.00083] nats/token, excludes 0
+    2      96.4702    96.2333   -0.2369  [-0.00283, -0.00209] nats/token, excludes 0
+    3      96.5359    96.4137   -0.1222  [-0.00161, -0.00092] nats/token, excludes 0
+    4      96.5866    96.3105   -0.2761  [-0.00323, -0.00250] nats/token, excludes 0
+
+  R = 5    mean -0.1794 pp    sd 0.0727    median -0.1475 pp    range [-0.2761, -0.1146]
+  positive 0    negative 5    ties 0    sign-test n = 5    exact two-sided p = 0.0625
+  >= 1.0 pp: NO     sign-consistent: NO     => §6.3 PRACTICALLY IMPORTANT: NO
+
+-------------------------------------------------------------------------------
+pythia-1b / aggressive    sequential order: P->Q
+-------------------------------------------------------------------------------
+  rep  sequential %     joint %   gain pp   95% CI on NLL advantage
+    0      89.7111    90.0441   +0.3330  [+0.00183, +0.00553] nats/token, excludes 0
+    1      89.6524    89.7436   +0.0913  [-0.00063, +0.00266] nats/token, includes 0
+    2      89.4832    89.7806   +0.2974  [+0.00163, +0.00497] nats/token, excludes 0
+    3      89.7740    89.6558   -0.1182  [-0.00332, +0.00053] nats/token, includes 0
+    4      89.6521    89.7064   +0.0543  [-0.00106, +0.00223] nats/token, includes 0
+
+  R = 5    mean +0.1316 pp    sd 0.1858    median +0.0913 pp    range [-0.1182, +0.3330]
+  positive 4    negative 1    ties 0    sign-test n = 5    exact two-sided p = 0.3750
+  >= 1.0 pp: NO     sign-consistent: NO     => §6.3 PRACTICALLY IMPORTANT: NO
+
+===============================================================================
+SCALE TREND -- mean joint gain by scale
+===============================================================================
+
+  moderate:
+    pythia-160m   +0.0381 pp   R=8   5/8 positive   p=0.7266
+    pythia-410m   +0.0289 pp   R=8   5/8 positive   p=0.7266
+    pythia-1b     -0.1794 pp   R=5   0/5 positive   p=0.0625
+
+  aggressive:
+    pythia-160m   +1.0120 pp   R=8   7/8 positive   p=0.0703
+    pythia-410m   +0.9348 pp   R=8   8/8 positive   p=0.0078
+    pythia-1b     +0.1316 pp   R=5   4/5 positive   p=0.3750
+
+===============================================================================
+DENSE BASELINES (test split)
+===============================================================================
+  pythia-160m   35.8575
+  pythia-1b     17.2564
+  pythia-410m   21.3231
+
+===============================================================================
+ALL ARMS -- mean retention per cell
+===============================================================================
+  pythia-160m   moderate    pruning=79.75%  quantisation=99.95%  sequential=79.72%  joint=79.76%
+  pythia-160m   aggressive  pruning=79.75%  quantisation=69.30%  sequential=55.81%  joint=56.82%
+  pythia-410m   moderate    pruning=76.06%  quantisation=99.85%  sequential=76.00%  joint=76.03%
+  pythia-410m   aggressive  pruning=76.06%  quantisation=64.38%  sequential=57.56%  joint=58.50%
+  pythia-1b     moderate    pruning=96.35%  quantisation=99.96%  sequential_qp=96.52%  joint=96.34%
+  pythia-1b     aggressive  pruning=96.35%  quantisation=92.33%  sequential=89.65%  joint=89.79%
