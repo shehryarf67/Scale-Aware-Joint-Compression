@@ -101,6 +101,76 @@ which is what the arm comparison needs.
 
 ## 2. Findings
 
+### F-39 — Qwen2.5-0.5B external-validation leg: setup verified, arms run correctly {#f-39}
+
+**Date:** 2026-08-11 · **Exploratory, validation split, and outside the frozen primary result.** This
+leg cannot alter [F-37](#f-37); it exists to test whether the Pythia finding is a property of
+transformer compression or of Pythia specifically.
+
+#### Checkpoint and adapter
+
+| | |
+| --- | --- |
+| Revision | `060db6499f32faf8b98477b0a26969ef7d8b9987`, matching the config pin; verified on disk |
+| Architecture | `Qwen2ForCausalLM`, **24 blocks**, hidden 896, GQA 14 heads / **2 KV heads**, gated MLP, **tied embeddings** |
+| Targeted modules | **168** = 24 × 7 (separate q/k/v, plus gate/up/down), against Pythia's 4 per block |
+| Targeted parameters | **357,826,560** — 99.98% of non-embedding |
+| Exclusions | `embed_tokens`, `lm_head` — **0 targeted**, verified empirically |
+
+**The exclusions are load-bearing here in a way they are not for Pythia.** Qwen ties `lm_head` to
+`model.embed_tokens`, so targeting the head would silently prune the input embedding and the arm
+would stop matching Pythia's coverage. Both patterns are excluded in the model config and the
+experiment config, and the selection confirms neither is targeted.
+
+**Scale placement worth noting for the write-up:** 358M targeted parameters with **24 blocks** —
+the same depth as pythia-410m. Qwen therefore sits between 410M and 1B on the parameter axis
+*without* the depth confound that makes pythia-1b the shallow outlier ([F-38](#f-38)).
+
+#### Dense baseline (validation split)
+
+**Perplexity 17.7758** over 261,632 tokens (512 × 512), CPU. Generation diagnostics healthy —
+repetition 0.15, distinct-token ratio 0.49. CPU benchmark: median **594.94 ms**, 215.1 tok/s at 4
+threads, batch 1, seq 128.
+
+**This perplexity is not comparable to any Pythia number.** Different tokeniser, vocabulary (151,936
+against ~50,000) and training corpus. Only retention ratios and the sign of the joint gain transfer.
+
+#### Budget realisation at 30% + W4 — and the B-46 arithmetic flips direction
+
+| | Qwen2.5-0.5B | Pythia |
+| --- | --- | --- |
+| Mask sparsity | **0.300146** (*above* target) | 0.2997–0.2999 (*below*) |
+| Numeric zero fraction | 0.338618 | 0.3171–0.3217 |
+| Effective bits per weight | **4.0272** | 4.0117–4.0312 |
+| Modules converted | 168 | 48–96 |
+| Reload verified | **True**, max logit difference **0** | True |
+| Joint updates | **168 accepted, 0 rejected** | 310–384 accepted |
+
+**The realised sparsity lands *above* target here, where on Pythia it landed below**, and that is the
+same integer arithmetic reported in [B-46](#4-bugs-found-that-would-have-invalidated-results) seen
+from the other side: rows are 896 wide, `round(896 × 0.3) = 269`, and `269/896 = 0.300223`. Pythia's
+768-wide rows gave `230/768 = 0.299479`. The B-46 fix guards only the shortfall, so both directions
+pass — which is the first evidence that the fix generalises beyond the width it was written for.
+
+**Packing is bit-exact on a new architecture**: the independent reload reproduced logits with a
+maximum difference of **0**, on a model with grouped-query attention and a gated MLP that the packing
+path had never seen.
+
+#### Operational note
+
+The first attempt failed on a transient `RemoteProtocolError` fetching the calibration corpus, even
+though the raw dataset was already cached. Re-run with `HF_DATASETS_OFFLINE=1 HF_HUB_OFFLINE=1` and
+it proceeded. **Use offline mode for the long grid** — a network refresh failure mid-grid would drop
+cells under `continue_on_error`.
+
+#### Status
+
+Order selection (both sequential orders plus joint, one draw, validation) is running. **No order is
+frozen for this model yet, and `qwen_validation.yaml` refuses to build a test-split plan until one
+is** — verified: it raises `ProtocolError` naming the missing cell.
+
+---
+
 ### F-38 — The mechanism does not weaken with scale; its translation into quality does {#f-38}
 
 **Date:** 2026-08-10 · **Computed entirely from the committed confirmatory records — nothing was
