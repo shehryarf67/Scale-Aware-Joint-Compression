@@ -122,7 +122,11 @@ def _run_isolated(arguments: argparse.Namespace, executable: list) -> int:
 
     if failed:
         LOGGER.warning("%d isolated cell(s) failed: %s", len(failed), ", ".join(failed))
+        # Still a finished sweep. A supervisor must not relaunch on failures alone, or a cell that
+        # fails deterministically becomes an infinite loop.
+        LOGGER.info("SWEEP FINISHED: %d of %d cell(s) failed", len(failed), len(executable))
         return 1
+    LOGGER.info("SWEEP FINISHED: %d isolated cell(s), 0 failures", len(executable))
     return 0
 
 
@@ -220,6 +224,15 @@ def main(argv: list[str] | None = None) -> int:
         return 3
 
     LOGGER.info("Completed %d run(s)", len(records))
+    # Unambiguous end-of-sweep marker for an external supervisor. "Completed N run(s)" cannot serve:
+    # under --isolate-cells every child prints it for its own single cell.
+    #
+    # Emitted ONLY by a whole-sweep invocation. A `--only-cell` child is not a sweep, and if it
+    # printed this the supervisor would see it after the first cell, conclude the grid was done, and
+    # exit -- leaving the rest of a multi-day run unsupervised, which is the failure this marker
+    # exists to prevent.
+    if not arguments.only_cell:
+        LOGGER.info("SWEEP FINISHED: %d run(s) executed", len(records))
     return 0
 
 
