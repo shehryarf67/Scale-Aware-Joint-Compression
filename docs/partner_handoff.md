@@ -10,7 +10,8 @@
 > **The headline: no cell meets the pre-registered §6.3 practical-importance bar.** Joint gives
 > +1.01 pp at 160M (7/8) and +0.93 pp at 410M (8/8, p = 0.0078 — the only significant cell) at 4
 > bits, +0.13 pp at 1B, and **nothing at 8 bits**. The motivating hypothesis — that joint pays off
-> *more* at scale — is **refuted**.
+> *more* at scale — is **not supported**; the observed direction is opposite, but the decline is
+> not statistically established.
 >
 > **Task 5 below is DONE.** Tasks 1–4 are done. What remains is analysis and writing; see
 > [STATUS.md](STATUS.md) for the ordered next steps. If you are picking this up cold, read

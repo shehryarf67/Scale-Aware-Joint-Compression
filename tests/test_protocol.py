@@ -162,3 +162,58 @@ class TestConfirmatoryConfigsHonourTheFreeze:
                 "a `sequential` cell would mean P→Q even where Q→P is frozen"
             )
         assert checked >= 1, "no test-split config was found; the guard would pass vacuously"
+
+
+class TestCellIsolationForLongSweeps:
+    """B-48. The runner does not release memory between cells, so a long grid exhausts commit.
+
+    Measured on the confirmatory 1B leg: commit free fell 20.24 -> 1.03 GiB over five sequential
+    cells, ~4 GiB each, and stopping the process returned all of it. With ``continue_on_error`` on
+    the resulting ``MemoryError`` does not stop the run -- it drops a cell and continues, and a
+    dropped sequential or joint cell silently removes a whole comparison.
+
+    ``--isolate-cells`` runs every cell in a child process, so the memory is released at the cell
+    boundary by construction rather than by finding every retention inside the runner.
+    """
+
+    def _run(self, *args: str) -> int:
+        import importlib.util
+        from pathlib import Path
+
+        spec = importlib.util.spec_from_file_location(
+            "_sweep_script", Path("scripts/run_scale_sweep.py")
+        )
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        return module.main(list(args))
+
+    def test_isolate_and_only_cell_are_mutually_exclusive(self):
+        """One drives the other. Passing both means the caller has misunderstood which is which."""
+        code = self._run(
+            "--config",
+            "configs/experiments/main_scale_sweep.yaml",
+            "--isolate-cells",
+            "--only-cell",
+            "anything",
+        )
+        assert code == 2
+
+    def test_an_unknown_cell_id_is_refused_rather_than_silently_running_nothing(self):
+        """A typo must not look like a completed run: exit 0 with no work is the dangerous case."""
+        code = self._run(
+            "--config",
+            "configs/experiments/main_scale_sweep.yaml",
+            "--only-cell",
+            "pythia-160m_joint_moderate_s30_b8_rep999",
+        )
+        assert code == 2
+
+    def test_the_sweep_script_offers_cell_isolation(self):
+        """The flag is the B-48 mitigation; losing it silently reopens the failure mode."""
+        from pathlib import Path
+
+        source = Path("scripts/run_scale_sweep.py").read_text(encoding="utf-8")
+        assert "--isolate-cells" in source
+        assert "--only-cell" in source
+        assert "subprocess" in source, "isolation must actually spawn a process, not just claim to"

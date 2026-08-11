@@ -27,8 +27,10 @@
 > marginally significant *and* 0.065 pp short of the practical bar, so the effect is **real but
 > small and fragile**, not established.
 >
-> **The motivating hypothesis is refuted:** joint does not pay off *more* at scale. It is flat
-> 160M→410M and falls at 1B. **Neither exploratory estimate replicated** — 160M fell from +1.69 to
+> **The motivating hypothesis is NOT SUPPORTED:** joint does not pay off *more* at scale. The
+> observed direction is the opposite — flat 160M→410M, falling at 1B — but **the cross-scale decline
+> is not statistically established**, and the 410M→1B step is confounded with depth
+> ([F-38](findings_log.md#f-38): 1B has 16 blocks against 410M's 24). **Neither exploratory estimate replicated** — 160M fell from +1.69 to
 > +1.01, 410M rose from +0.39 to +0.93 — so the exploratory narrative is superseded.
 >
 > **No further tuning is permitted.** Step 10 runs once. What remains is analysis and writing.
@@ -805,16 +807,37 @@ analysis and writing, in this order:
 2. **Decide how to frame a negative primary result.** The honest framing is in
    [F-37](findings_log.md#f-37) and §6 of the findings log: a small, real, 4-bit-specific effect
    that does not reach the pre-registered practical bar, with the motivating scale hypothesis
-   refuted. **Do not renegotiate the 1.0 pp threshold** — the 410M near-miss at 0.9348 pp is exactly
+   not supported. **Do not renegotiate the 1.0 pp threshold** — the 410M near-miss at 0.9348 pp is exactly
    the case §6.3 was pre-registered to govern.
 3. **Regenerate the figures** with `scripts/generate_plots.py` against the test-split records, and
    check it does not refuse on mixed hosts (it should not; all 171 share one `host_key`).
 4. **Write the limitations honestly** — all six joint-flattering bugs, the §6.3 loosening, R=5 at 1B,
    the frozen-order baseline, and the two records with null `git_commit`.
 
-Optional, and explicitly **outside** the frozen grid if pursued: the unclaimed `pythia-1.4b` and
-`qwen2.5-0.5b` legs, which §8.2 requires not consume the primary sweep's time. They cannot change
-the primary result; they would only extend external validity.
+### The optional experiments — decided 2026-08-11
+
+None of these is required. **The paper can proceed without any of them**, and none can change the
+primary result. Recorded as decisions so they are not silently reopened.
+
+| Leg | Decision | Why |
+| --- | --- | --- |
+| **qwen2.5-0.5b** — external validity | **Worthwhile if time permits** | The single strongest weakness in the write-up is that every number is one model family. Registered, pinned, Qwen2 adapter implemented; needs download + order selection. Tier 2, so it can run on any CUDA machine and need not occupy the benchmark host |
+| **pythia-1.4b** — fourth scale point | **Omit from the primary trend; exploratory appendix only** | It cannot repair the trend claim. The scale axis is already confounded with depth ([F-38](findings_log.md#f-38)) and 1.4B is the *same width* as 1B per protocol_freeze D2, so it adds depth variation at fixed width — informative in principle, but a fourth point added *after* seeing the result is not part of the pre-registered design and must not be folded into the primary analysis |
+| **1B S6 control** (40% + W8) | **Skip** | Only worth running if the mechanism becomes the paper's focus. [F-33](findings_log.md#f-33) already gives the control at 160M and 410M, and [F-38](findings_log.md#f-38) now supplies per-layer mechanism evidence at all three scales from records that already exist |
+| **Additional sparsity levels** | **Omit** | Only needed to answer the full latency-curve question (RQ4). [F-34](findings_log.md#f-34) measured one sparsity and found no speedup; a curve is a separate study, and D1 keeps W4 out of latency tables regardless |
+
+**If any of them is run, `--isolate-cells` is now available** and should be used — see B-48 below.
+
+### ✅ B-48 fixed: cells can now run in isolated child processes
+
+`scripts/run_scale_sweep.py --isolate-cells` runs every cell in its own child process, so the ~4 GiB
+of commit the runner accumulates per 1B compression cell is released at the cell boundary by
+construction. `--only-cell <id>` runs exactly one cell and is also the way to re-run a single failed
+cell by hand.
+
+Overhead is ~4 s per cell for interpreter start and config load — negligible against a ~50 min 1B
+cell. **The completed primary experiment is untouched**; this exists for the optional legs and any
+future grid.
 
 <details>
 <summary>The execution history of step 10, kept for the record — two dormant guards, a memory leak, and five pauses</summary>

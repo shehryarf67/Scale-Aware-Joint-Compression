@@ -101,6 +101,128 @@ which is what the arm comparison needs.
 
 ## 2. Findings
 
+### F-38 — The mechanism does not weaken with scale; its translation into quality does {#f-38}
+
+**Date:** 2026-08-10 · **Computed entirely from the committed confirmatory records — nothing was
+re-run.** Regenerate with `python scripts/report_diagnostics.py`; committed output at
+[`results/evidence/diagnostics_report.txt`](../results/evidence/diagnostics_report.txt).
+
+These are the mechanism diagnostics behind [F-37](#f-37). The headline says *whether* joint wins;
+these say *where* the difference is created and where it is lost.
+
+#### 1. Mask disagreement is W4-specific, and flat across scale
+
+Fraction of mask positions the joint refinement moves away from the sequential choice
+(`joint_trace[].mask_divergence`, mean over layers then replicates):
+
+| Scale | 30% + W8 | 30% + W4 | max layer at W4 |
+| --- | --- | --- | --- |
+| 160M | 0.0036% | **3.6896%** | 11.21% |
+| 410M | 0.0009% | **2.9241%** | 9.63% |
+| 1B | 0.0019% | **3.4063%** | 10.16% |
+
+**Three orders of magnitude between W8 and W4**, confirming [F-05](#f-05)'s prediction at all three
+scales on the test split rather than on six hand-picked 160M layers. And it is **flat with scale** —
+1B diverges as much as 160M.
+
+#### 2. The layerwise joint advantage is also flat across scale
+
+| Scale | W8 layer gain | W4 layer gain | accepted | rejected |
+| --- | --- | --- | --- | --- |
+| 160M | 0.0120% | **1.5295%** | 384 | 0 |
+| 410M | 0.0103% | **1.3898%** | 760 | 8 |
+| 1B | 0.0097% | **1.4914%** | 310 | 10 |
+
+The incumbent guard rejects more often at W8, which is the guard working: at 8 bits the joint
+proposal usually is not better, so the layer keeps its sequential value.
+
+#### 3. Final layer objective, matched layer by layer — joint wins locally at every scale
+
+| Scale | W8 | W4 | layers joint wins at W4 |
+| --- | --- | --- | --- |
+| 160M | +0.0039% | **+2.1647%** | 367 / 384 |
+| 410M | −0.4911% | **+2.2826%** | 752 / 768 |
+| 1B | +0.1668% | **+2.3214%** | 317 / 320 |
+
+> **A correction worth recording, because the first version of this table was wrong.**
+> `relative_improvement` is **not comparable across arms** and must never be used for one. Each arm
+> divides by its own naive baseline and the arms do not share one: Q→P quantises first, so at
+> 1B/moderate its `naive_loss` is **9,548** where the joint arm's is **1,635,000** — same layer,
+> references three orders of magnitude apart. Averaging that ratio produced an apparent **−6921%
+> "solver efficiency"** for sequential, which is an artefact of the denominator. `final_loss` is the
+> comparable quantity and is what the table uses.
+
+#### The central mechanistic finding
+
+**At W4 the local mechanism is undiminished at 1B — mask divergence 3.41%, layer gain 1.49%, layer
+objective advantage +2.32%, all at or above the 160M values — while the end-to-end gain collapses
+from +1.01 pp to +0.13 pp.** The joint step keeps finding better layer solutions at scale; those
+solutions stop translating into model-level quality.
+
+That is a dissociation, not an explanation, and this log does not have the evidence to close it.
+Two candidates, neither tested:
+
+- **Depth.** See the confound below. Layerwise error compensation is applied block by block, and 1B
+  has *fewer* blocks than 410M.
+- **Headroom.** The 1B aggressive cell retains 89.5% against 160M's 55.8%. A baseline that already
+  loses little leaves little for a better layer solution to recover, so the same local advantage
+  buys less end-to-end.
+
+#### ⚠️ The scale axis is confounded with depth, and 1B is the shallow point
+
+| Model | Blocks | Targeted parameters | Modules |
+| --- | --- | --- | --- |
+| pythia-160m | **12** | 84,934,656 | 48 |
+| pythia-410m | **24** | 301,989,888 | 96 |
+| pythia-1b | **16** | 805,306,368 | 64 |
+
+**Pythia-1B is shallower than Pythia-410M** — 16 blocks against 24 — while being 2.7× wider in
+targeted parameters. Depth is therefore **not monotone across the sweep**: 12 → 24 → 16.
+
+This matters because the method is layerwise. Activations are captured through the already-compressed
+prefix, so reconstruction error compounds with depth, and the number of blocks is the number of
+opportunities for a joint step to help. **The drop in joint gain at 1B coincides with a drop in
+depth**, and this design cannot separate the two. It is a property of the Pythia suite, not a choice
+made here — but it was not accounted for when the scale axis was defined as targeted parameters
+(§2.6), and it is a live alternative explanation for the only large movement in the trend.
+
+#### 4. The retention metric is not doing the work
+
+Per-token NLL is additive where retention is a ratio; if they disagreed on sign the headline would
+be a metric artefact. They agree in **all six cells**:
+
+| Scale | Budget | Mean NLL advantage (nats/token) | Positive | Retention pp | Agree |
+| --- | --- | --- | --- | --- | --- |
+| 160M | W8 | +0.000479 | 5/8 | +0.0381 | yes |
+| 160M | W4 | +0.017990 | 7/8 | +1.0120 | yes |
+| 410M | W8 | +0.000380 | 5/8 | +0.0289 | yes |
+| 410M | W4 | +0.016100 | 8/8 | +0.9348 | yes |
+| 1B | W8 | −0.001861 | 0/5 | −0.1794 | yes |
+| 1B | W4 | +0.001466 | 4/5 | +0.1316 | yes |
+
+#### 5. The budgets are matched, and it is now checkable rather than asserted
+
+Within every cell all arms share target sparsity, mask sparsity, effective bits, module count and
+targeted-parameter count. §3.11's matched-conditions requirement holds on the test split:
+
+| Scale | Mask sparsity | Effective bits, W8 | Effective bits, W4 | Modules | Targeted params |
+| --- | --- | --- | --- | --- | --- |
+| 160M | 0.2997 | 8.0312 | 4.0312 | 48 | 84,934,656 |
+| 410M | 0.2999 | 8.0234 | 4.0234 | 96 | 301,989,888 |
+| 1B | 0.2999 | 8.0117 | 4.0117 | 64 | 805,306,368 |
+
+Mask sparsity sits just below 0.30 because the per-row prune count is an integer — the arithmetic of
+[B-46](#4-bugs-found-that-would-have-invalidated-results). Effective bits exceed the nominal width by
+the fp32 scale overhead, which shrinks with width because the group count per weight falls.
+
+**Realised zero fraction is higher than mask sparsity at W4 only** — 0.3171–0.3217 against 0.2997 —
+because 4-bit rounding sends surviving weights to zero. The quantisation-only arm shows this cleanly:
+**0.2183 / 0.2165 / 0.2321** of weights become zero at W4 with **no pruning at all**. That is a large
+uncontrolled sparsity the W4 comparison carries in both arms, and it is why `mask_sparsity` rather
+than the zero count is the budget of record.
+
+---
+
 ### F-37 — THE CONFIRMATORY RESULT: no cell meets the pre-registered practical-importance bar {#f-37}
 
 **Date:** 2026-08-10 · **A1 step 10, run once on the held-out test split, no tuning afterwards**
@@ -245,12 +367,22 @@ which is the signature of regression from a selection surface — and it substan
 | 30% + W4 | +1.0120 | +0.9348 | +0.1316 |
 | 30% + W8 | +0.0381 | +0.0289 | −0.1794 |
 
-**The motivating hypothesis is refuted.** The study asked whether joint pays off *more* at scale.
-It pays off **less**, on the test split, at both budgets. But the shape is not the smooth monotone
-decline [F-32](#f-32) reported: 160M and 410M are now within 0.08 pp of each other, and effectively
-all of the decline sits between 410M and 1B. Two points at the same level and one below them is a
-weaker basis for a trend claim than three descending points, and the plan already says three points
-cannot fit a scaling law.
+**The motivating hypothesis is NOT SUPPORTED, and that is the strongest wording the evidence
+carries.** The study asked whether joint pays off *more* at scale. The observed direction is the
+**opposite** — it pays off less, on the test split, at both budgets. But **the cross-scale decline is
+not statistically established**, and three things stop it being called a refutation:
+
+1. **The shape is not the monotone decline [F-32](#f-32) reported.** 160M and 410M are within
+   0.08 pp of each other; effectively all of the movement sits in the 410M→1B step. Two points at
+   one level and one below them is a weaker basis for a trend than three ordered points.
+2. **No test compares the scales.** Every p-value here is within-cell. The differences *between*
+   cells carry no significance test at all, and with three points none is available.
+3. **The one large step is confounded with depth.** pythia-1b has **16 blocks against
+   pythia-410m's 24** ([F-38](#f-38)) — depth is not monotone across the sweep — and the method is
+   layerwise. The decline at 1B and the drop in depth cannot be separated by this design.
+
+The defensible claim is: *the advantage did not increase with scale, and the observed direction was
+opposite, but the decline is not established.*
 
 **The W4/W8 split survives confirmation.** Every W8 cell is at or below zero; every W4 cell is above
 it. That is consistent with [F-05](#f-05)'s mechanism prediction (8.86% mask divergence at W4
@@ -2799,7 +2931,7 @@ recording.
 
 | # | Bug | What it would have done |
 | --- | --- | --- |
-| B-48 | **The runner does not release memory between cells**, and at 1B that exhausts the commit limit ([F-37](#f-37)) | Measured on the confirmatory 1B leg: commit free fell **20.24 → 1.03 GiB over five `sequential` cells**, about **4 GiB per cell**, and stopping the process returned all of it at once — so it is the sweep accumulating, not system pressure. Pruning cells leak less (~1.6 GiB) than the arms that pack, which is consistent with `convert` plus `_verify_saved_artefact` loading a **second** full model to reload the checkpoint. **The consequence is the dangerous part:** `continue_on_error` is on, so the resulting `MemoryError` would not stop the run — it would *drop a cell and continue*, and a dropped `sequential` or `joint` cell silently removes an entire comparison. That is [B-46](#4-bugs-found-that-would-have-invalidated-results)'s failure shape again, arriving by a different route. **Worked around, not fixed:** the sweep was recycled whenever commit free fell below a threshold, preferentially within the first minutes of a cell so the loss is bounded by one in-flight cell (`skip_existing` re-runs nothing and each record is written whole, so recycling is numerically inert — the 171 records were produced across roughly a dozen process lifetimes). **No number is affected.** But any future long grid must either fix the release or supervise the process, and the naive fix — restarting on a threshold alone — thrashes once the recycle interval approaches the cell duration, which at 1B it did (~55 min against ~54 min). Not fixed in code because the fix would have to land after the step-9 freeze |
+| B-48 | **The runner does not release memory between cells**, and at 1B that exhausts the commit limit ([F-37](#f-37)) | Measured on the confirmatory 1B leg: commit free fell **20.24 → 1.03 GiB over five `sequential` cells**, about **4 GiB per cell**, and stopping the process returned all of it at once — so it is the sweep accumulating, not system pressure. Pruning cells leak less (~1.6 GiB) than the arms that pack, which is consistent with `convert` plus `_verify_saved_artefact` loading a **second** full model to reload the checkpoint. **The consequence is the dangerous part:** `continue_on_error` is on, so the resulting `MemoryError` would not stop the run — it would *drop a cell and continue*, and a dropped `sequential` or `joint` cell silently removes an entire comparison. That is [B-46](#4-bugs-found-that-would-have-invalidated-results)'s failure shape again, arriving by a different route. **Worked around, not fixed:** the sweep was recycled whenever commit free fell below a threshold, preferentially within the first minutes of a cell so the loss is bounded by one in-flight cell (`skip_existing` re-runs nothing and each record is written whole, so recycling is numerically inert — the 171 records were produced across roughly a dozen process lifetimes). **No number is affected.** But any future long grid must either fix the release or supervise the process, and the naive fix — restarting on a threshold alone — thrashes once the recycle interval approaches the cell duration, which at 1B it did (~55 min against ~54 min). **Fixed 2026-08-11, after the confirmatory run and therefore without touching it:** `scripts/run_scale_sweep.py --isolate-cells` runs every cell in a child process, so memory is released at the boundary by construction rather than by hunting every retention inside the runner. Overhead is ~4 s per cell for interpreter start and config load, negligible against a ~50 min 1B cell. `--only-cell` drives the children and is also the way to re-run a single failed cell by hand. **Use it for any future long grid**; the completed primary experiment is untouched |
 | B-47 | The benchmark host **enters Modern Standby mid-run**, and `duration_seconds` counts the suspended time as compute | STATUS recorded the power profile as "High performance, no downclocking, never sleeps". Measured rather than trusted: `powercfg` reports `STANDBYIDLE` on **AC** = 0x0e10 = **3600 s**, not 0, and the System log shows six Modern Standby exits on 2026-08-05 alone. Modern Standby is S0 low-power idle, so it logs Kernel-Power **506/507**, *not* the classic 42 that a sleep check greps for -- which is why the sleep history looked clean while the machine had been suspending all day. A busy CPU does not prevent it; a process must assert `SetThreadExecutionState`, and this one does not. **A first reading of this -- that standby explains the "intermittent stall" -- was published here on 2026-08-06 and is now WITHDRAWN as unsupported.** The correlation looked decisive: both slow cells of 2026-08-05 contain a standby window, 43.6 min containing 37.6 leaving **6.0 min** of work against a 6.2 min norm, and 52.5 containing 44.7 leaving **7.8** against 7.8, arithmetic closing to the minute on two cells. **It does not replicate.** On 2026-08-06 an 83-minute standby window (14:46:36-16:09:38, same `506 Idle Timeout` -> `507` structure, no power-source change in between) contained **four** 410M cells that ran at completely normal speed -- quality stages 15.7-15.8 min against a 15.8 norm, benchmark stages 16-17 s. A Win32 process is not frozen by Modern Standby as a rule, which is what those four cells show. So the stall mechanism is **unknown again**, the withdrawal of the [B-36](#f-33)/[B-41](#f-35) attribution is itself only provisional, and two matching cells were simply not enough evidence for a causal claim I stated as settled. Recorded in full because the error is instructive: an exact-looking arithmetic fit on n=2 persuaded me to close an open question, and the next four observations falsified it. **Consequence for quality numbers: none** -- suspension is not arithmetic, and the cells either side reproduce. **Consequence for §4.6 deployment measurements: real** -- a latency or throughput benchmark that spans a standby entry records the suspended interval inside its timing, and while the median survives one such sample the p95 and IQR need not. **Modern Standby entry could not be prevented, and on the evidence it does not need to be. Stop trying.** Three methods were applied and all three failed to stop entry: `standby-timeout-ac 0` (applied 10:59 on 2026-08-06, host suspended twice afterwards, both `Reason: Idle Timeout`, verifiably on AC with `STANDBYIDLE` reading 0); then `monitor-timeout-ac 0` plus `UNATTENDSLEEP 0`; then `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)` held by `scripts/keep_host_awake.py` for the whole run -- the host entered standby again at 09:36 on 2026-08-07 with the request verifiably held by a live process. That flag blocks classic **S3** sleep; it does not block **S0** low-power idle, which is a different state, and no user-mode setting reliably does. **It also does not matter.** Every cell measured across a standby window ran at normal speed: four 410M cells through the 83-minute window of 2026-08-06 (quality 15.7-15.8 min against a 15.8 norm), and two more through the 13.6-minute window of 2026-08-07 at 15.2 and 14.4 min against a **median of 15.0 over all 16** 410M sequential cells -- the cell containing the suspend was the fastest of the sixteen. A Win32 process keeps running through Modern Standby. The setting changes above are harmless and were left in place, but they bought nothing, and the ~65 cells run since have shown no stall at all. **Audited, and the result is clean:** all 73 suspend windows since 2026-07-14 -- the full span of the System log, which predates every deployment record -- were paired 506/507 and 42/107 and intersected against the 24 records carrying deployment data. Exactly one cell overlaps, `pythia-160m_pruning_aggressive_s30_b32_rep3`, and its suspend fell wholly inside the **quality evaluation** stage (17:02:56-17:45:56) while its `benchmark (CPU)` stage ran 17:45:56-17:46:02, after the wake. **No deployment figure in this project is contaminated.** The exposure is structurally small: the benchmark stage is ~6 s against a 6-40 min cell, so it is ~1% of the window -- which is luck rather than design, and is the reason the check was worth running rather than assuming. One methodological note from the audit itself: a record's `timestamp` is the cell **start**, not the end; reading it as the end inverts every window by one cell length and manufactures false overlaps |
 | B-46 | The reload guard demanded a sparsity the mask arithmetic cannot reach | `_verify_reloaded` compared the reloaded zero fraction against the **nominal** `target_sparsity` with a `1e-6` tolerance. But `build_mask_from_scores` prunes `round(in_features * sparsity)` weights **per output row** -- an integer count -- so the realised fraction is quantised to multiples of `1/in_features` and lands up to `0.5/in_features` either side of target. pythia-160m's `attention.query_key_value` is 768 wide: `round(768 x 0.30) = 230`, realising `230/768 = 0.299479`, short of 0.30 by **5.2e-04**, or 520x the tolerance. The guard therefore rejected masks that were exactly right, and the comment above it asserted the opposite of the truth ("the mask budget is a floor, not a target"). **Caught live on the confirmatory run: every `sequential` cell failed at `measure checkpoint`.** It hits `sequential` and `joint` only -- pruning-only stays FP32 so never enters `load_packed_model`, and quantisation-only has `target = 0` so the check is skipped -- which is to say it removed **both arms of every comparison** while leaving the controls green, so a casual read of the record count would have looked healthy. Fixed by deriving the allowance from the row width the manifest already records, keeping it three orders of magnitude below any real serialisation loss. **Numerically inert:** it only decides whether a verification raises, so the 36 records already written stay valid and `METHOD_VERSION` is not bumped |
 | B-45 | The dense reference was chosen **before** the fingerprint that guards it exists | `_load_dense_reference` filtered candidates with `_window_mismatch`, whose corpus check reads `self._eval_fingerprint` -- an attribute set *during* evaluation, while the dense reference is loaded *before* evaluation to be passed into it. The expected fingerprint was therefore always `None` there, that check short-circuited, and the remaining window checks passed because validation and test share identical 493x512 shapes. A test-split cell silently accepted a **validation-split** dense record and the error surfaced later in `add_quality`. Caught live on the confirmatory run: **17 of the first 20 test-split records failed**, and with `continue_on_error` on it would have spent ~78 h producing dense records and nothing else. Fixed by filtering on `config.data.eval_split`, which every record carries and which *is* available at lookup time. Note against myself: [B-37](#f-33) added the **device** to this same guard earlier and did not notice the fingerprint half was already dead -- adding a check beside a broken one is not the same as checking it |
@@ -2894,8 +3026,9 @@ Full reasoning in [protocol_freeze.md](protocol_freeze.md). Summarised here with
   and a **small reliable disadvantage at 1B** (−0.18 pp, 0/5, every bootstrap interval excluding
   zero on the negative side).
 - **The joint advantage does not grow with scale.** It is flat from 160M to 410M (+1.01, +0.93) and
-  falls at 1B (+0.13). This **refutes the study's motivating hypothesis**, which was that joint
-  compression would pay off more as models grow.
+  falls at 1B (+0.13). The study's motivating hypothesis — that joint compression would pay off
+  more as models grow — is therefore **not supported**. It must **not** be described as refuted:
+  no test compares the scales, and the 410M→1B step is confounded with depth ([F-38](#f-38)).
 
 **May also claim, with the conditions attached:**
 
