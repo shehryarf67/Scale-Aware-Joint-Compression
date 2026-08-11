@@ -86,7 +86,17 @@ kill_sweep() {
   sleep 8
 }
 
+# Is the sweep isolating cells? If so the memory logic is not merely unnecessary but HARMFUL, and
+# it is switched off entirely -- see the comment on the recycling block below.
+ISOLATED=0
+for arg in "${EXTRA[@]:-}"; do
+  [ "$arg" = "--isolate-cells" ] && ISOLATED=1
+done
+
 echo "$(date '+%F %T') SUPERVISOR: watching $CONFIG (log $LOG)"
+if [ "$ISOLATED" -eq 1 ]; then
+  echo "$(date '+%F %T') SUPERVISOR: --isolate-cells detected; memory recycling DISABLED, crash recovery only"
+fi
 
 while true; do
   # Exit once the sweep says every planned cell has a record, so the supervisor cannot resurrect a
@@ -108,7 +118,37 @@ while true; do
   up=$(uptime_s "$pid")
   free_int=${free%.*}
 
+  # WHY THIS IS SKIPPED UNDER --isolate-cells, learned the hard way on the Qwen leg.
+  #
+  # Commit-free is a BAD signal on Windows: the page file grows dynamically, so the figure craters
+  # for a few seconds while a child allocates a model and recovers as the file expands. The limit
+  # moved 29.95 -> 34.8 -> 37.6 GiB across one session. Sampling at the wrong instant reads
+  # "1.24 GiB critical" while the true state is 12 GiB free and the largest process holds 1.3 GiB.
+  #
+  # That false positive killed a cell 15 minutes in. On a ~28 min cell, repeating it means no cell
+  # ever completes -- the thrashing this block's boundary logic was written to avoid, arriving
+  # through the sensor rather than the schedule.
+  #
+  # Under isolation the child exits per cell and releases everything, so there is nothing to
+  # recycle. The only correct action is to leave it alone.
+  if [ "$ISOLATED" -eq 1 ]; then
+    sleep "$POLL_S"
+    continue
+  fi
+
+  # For a non-isolated run the recycling still earns its place, but the reading must PERSIST:
+  # a single low sample is an allocation spike, not pressure.
   if [ -n "$free_int" ] && [ "$free_int" -lt "$MIN_COMMIT_GIB" ] && [ "$up" -gt "$MIN_UPTIME_S" ]; then
+    sleep 30
+    confirm=$(commit_free_gib)
+    confirm_int=${confirm%.*}
+    if [ -z "$confirm_int" ] || [ "$confirm_int" -ge "$MIN_COMMIT_GIB" ]; then
+      echo "$(date '+%F %T') SUPERVISOR: commit free ${free} -> ${confirm} GiB, transient spike, ignoring"
+      sleep "$POLL_S"
+      continue
+    fi
+    free=$confirm
+    free_int=$confirm_int
     last_start=$(grep -E "\] (run|isolated child for) " "$LOG" 2>/dev/null | tail -1 | cut -c1-19)
     cell_age=999999
     if [ -n "$last_start" ]; then
