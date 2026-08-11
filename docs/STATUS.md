@@ -814,6 +814,35 @@ analysis and writing, in this order:
 4. **Write the limitations honestly** — all six joint-flattering bugs, the §6.3 loosening, R=5 at 1B,
    the frozen-order baseline, and the two records with null `git_commit`.
 
+### 📄 Artefacts ready for the paper — all regenerable, all committed
+
+| Artefact | Command | What it gives you |
+| --- | --- | --- |
+| [`results/evidence/paper_tables.md`](../results/evidence/paper_tables.md) | `python scripts/build_paper_tables.py` | **T1–T7**: headline gains with adjusted p, every replicate, all-arm retention, budget realisation, dense baselines, latency. Captions carry the limitation each table needs |
+| [`results/evidence/confirmatory_report.txt`](../results/evidence/confirmatory_report.txt) | `python scripts/report_confirmatory.py` | Per-replicate gains, bootstrap CIs, sign tests, Holm correction |
+| [`results/evidence/diagnostics_report.txt`](../results/evidence/diagnostics_report.txt) | `python scripts/report_diagnostics.py` | Mechanism evidence: mask divergence, layer advantage, layer objective, additive NLL, budget realisation |
+| [`limitations.md`](limitations.md) | — | 16 items, drafted **before** any interpretation |
+| `results/evidence/*.csv` | `python scripts/export_evidence.py` | 225 cells, 56 gain rows, 99,877 window rows — recompute any interval |
+| Gate | `python scripts/audit_confirmatory_run.py` | Must print **AUDIT PASSED** |
+
+### 🔴 Figures are BLOCKED — the visualisation layer is unimplemented scaffold
+
+`scripts/generate_plots.py` runs, filters correctly to the 171 test-split records, and then stops:
+**all four plot functions and the results-table builder raise `NotImplementedError`**
+(`visualisation/plots.py`, `visualisation/tables.py`). That is the project's rule working as
+intended — an unimplemented path raises rather than inventing output — but it means **no figure
+exists yet.**
+
+Implementing them is the one substantial piece of code the paper still needs. The data is ready:
+every figure below can be built from the committed evidence with no re-run.
+
+| Figure | Source | Caution |
+| --- | --- | --- |
+| Joint gain vs scale, replicate points + error bars | T1/T2, or `joint_gains.csv` | Plot the *replicates*, not just means — F-26 exists because a mean hid a sign flip |
+| Retention vs checkpoint size | T3 + T4 | — |
+| W4 vs W8 comparison | T1 | This is the study's clearest structural result |
+| 30% pruning latency | T7 | **Do not label it a sparsity curve** — one non-zero sparsity only. And see B-49: rows measured on different days are not comparable |
+
 ### The optional experiments — decided 2026-08-11
 
 None of these is required. **The paper can proceed without any of them**, and none can change the
