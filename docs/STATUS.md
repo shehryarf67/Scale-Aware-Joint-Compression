@@ -861,6 +861,39 @@ panels so the Q→P series is labelled.*
 (8/8), −0.1794 (0/5) — from a different code path than `report_confirmatory.py`. Two independent
 implementations agreeing is stronger evidence than either alone.
 
+### 🟡 Qwen2.5-0.5B external validation — steps 1–6 done, test grid paused at cell 1 of 65
+
+**Paused 2026-08-11 19:15.** Exploratory leg; it **cannot alter [F-37](findings_log.md#f-37)**.
+
+| Step | State |
+| --- | --- |
+| 1 Checkpoint | ✅ pinned SHA `060db649` verified on disk |
+| 2 Dense smoke | ✅ validation ppl **17.7758** |
+| 3 W4 smoke | ✅ joint + sequential; **reload bit-exact, max logit diff 0** |
+| 4 Adapter | ✅ 168 modules, exclusions clean, sparsity 0.300146, eff. bits 4.0272 |
+| 5 Order selection | ✅ **P→Q both budgets** — [F-40](findings_log.md#f-40) |
+| 6 Freeze | ✅ committed in `protocol.py` with margins |
+| 7 Test grid | 🟡 **1 of 65 cells**, 9 test records (dense 1, pruning 8) |
+| 8 Audit + evidence | ⬜ |
+
+**Resume with the supervisor**, which handles crash recovery and forces offline datasets:
+
+```bash
+bash scripts/supervise_sweep.sh configs/experiments/qwen_validation.yaml <log> --isolate-cells
+```
+
+R=8, 65 cells, 16 pairs, ~28 min/cell ≈ **30 h**.
+
+⚠️ **[B-51](findings_log.md#4-bugs-found-that-would-have-invalidated-results) is open and touches this leg.** A record id carries no split, so the
+test-split dense run **overwrote** the validation dense baseline that order selection was measured
+against. F-40's numbers survive — the smoke left a copy under a different id, and every arm record
+stores its own retention — but the fix (split in the id, or refuse cross-split overwrite) changes
+filenames and must wait until this grid is not mid-flight.
+
+**Screening signal, not a result:** joint −0.0144 pp at W8 and **+0.6216 pp** at W4 on validation.
+The W4/W8 structure transfers to a second model family; the confirmatory grid will say whether it
+holds on test.
+
 ### The optional experiments — decided 2026-08-11
 
 None of these is required. **The paper can proceed without any of them**, and none can change the
