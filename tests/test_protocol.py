@@ -31,8 +31,22 @@ BUDGETS = ("moderate", "aggressive")
 class TestTheFrozenTableMatchesTheDocument:
     """docs/protocol_freeze.md is authoritative for *why*; this table is authoritative for *what*."""
 
-    def test_all_six_cells_are_frozen(self):
-        assert set(FROZEN_SEQUENTIAL_ORDER) == {(m, b) for m in MODELS for b in BUDGETS}
+    def test_every_primary_sweep_cell_is_frozen(self):
+        """The six primary cells must all be frozen; the confirmatory grid cannot run otherwise."""
+        primary = {(model, budget) for model in MODELS for budget in BUDGETS}
+        assert primary <= set(FROZEN_SEQUENTIAL_ORDER)
+
+    def test_the_external_validation_cells_are_frozen_separately(self):
+        """Qwen2.5-0.5B was frozen on 2026-08-11 (F-40) for the external-validation leg.
+
+        Kept as its own assertion rather than folded into the primary set: this leg is exploratory,
+        it cannot alter F-37, and a future reader must be able to see at a glance which cells belong
+        to the frozen primary experiment and which do not.
+        """
+        for budget in BUDGETS:
+            assert ("qwen2.5-0.5b", budget) in FROZEN_SEQUENTIAL_ORDER
+            # P→Q both budgets: measured by 1.351 pp at W4, pre-declared fallback at W8.
+            assert resolve_sequential_order("qwen2.5-0.5b", budget) is CompressionMethod.SEQUENTIAL
 
     @pytest.mark.parametrize("model", MODELS)
     def test_w4_is_p_to_q_at_every_scale(self, model: str):
@@ -68,7 +82,15 @@ class TestAnUnfrozenCellIsRefusedNotDefaulted:
 
     @pytest.mark.parametrize(
         ("model", "budget"),
-        [("pythia-1.4b", "moderate"), ("qwen2.5-0.5b", "aggressive"), ("pythia-160m", "s6_40_w8")],
+        # qwen2.5-0.5b was one of these until 2026-08-11, when F-40 froze it. Replaced with
+        # pythia-1.4b's other budget and an unregistered family, so the guard still has genuinely
+        # unfrozen cells to refuse.
+        [
+            ("pythia-1.4b", "moderate"),
+            ("pythia-1.4b", "aggressive"),
+            ("qwen2.5-1.5b", "aggressive"),
+            ("pythia-160m", "s6_40_w8"),
+        ],
     )
     def test_unknown_cells_raise(self, model: str, budget: str):
         with pytest.raises(ProtocolError, match="no sequential order is frozen"):

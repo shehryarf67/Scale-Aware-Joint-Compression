@@ -101,6 +101,71 @@ which is what the arm comparison needs.
 
 ## 2. Findings
 
+### F-40 — Qwen2.5-0.5B sequential order frozen: P→Q at both budgets {#f-40}
+
+**Date:** 2026-08-11 · **Validation split, one calibration draw, seven cells, all `success`.**
+Exploratory and outside the frozen primary result. Config:
+`configs/experiments/qwen_order_selection.yaml`. Dense validation perplexity **17.7758**.
+
+#### The measurement
+
+| Budget | P→Q | Q→P | Margin (Q→P − P→Q) | Frozen | Basis |
+| --- | --- | --- | --- | --- | --- |
+| moderate, 30% + W8 | **95.2854%** | 95.1916% | **−0.0937 pp** | **P→Q** | pre-declared **fallback** |
+| aggressive, 30% + W4 | **77.3993%** | 76.0485% | **−1.3507 pp** | **P→Q** | **measured** |
+
+#### Why the two budgets are frozen on different grounds
+
+**Aggressive is measured.** 1.351 pp is far outside single-draw noise, and it is the same direction
+and rough magnitude as every Pythia W4 cell (+4.26, +6.82, +2.15 pp). The mechanism recorded in
+`protocol.py` predicts it: Q→P reuses dense-fitted scales against a post-pruning distribution, which
+is nearly free at 8 bits and punishing at 4. **The staged rule in the config — one draw first, more
+only if the orders fail to separate — takes its measured branch here.**
+
+**Moderate is a fallback, not a measurement.** 0.094 pp is well inside noise; one draw cannot
+separate two orders at a near-lossless precision. **Additional draws were deliberately not run**,
+and the reasoning is worth recording because it could look like a shortcut:
+
+> P→Q is *both* the single-draw winner *and* the pre-declared fallback for an indistinguishable
+> comparison. No replicate count can change what gets frozen — only the confidence with which the
+> indistinguishability is stated. Four more W8 cells (~2 h) could flip the sign of a 0.094 pp margin
+> without flipping the decision.
+
+This is [F-28](#f-28) repeating on a new family: there, five paired draws at W8 produced a mean
+margin of 0.18 pp with an inconsistent sign, and the same fallback fired. The cost of that
+thoroughness bought a sentence, not a different baseline. **Recorded as ARBITRARY**, exactly as the
+Pythia W8 cells are, and it carries the same caveat as [limitations §7](limitations.md): the order
+uncertainty at W8 is comparable to the W8 effect itself.
+
+#### Screening joint gain — selection surface, NOT a result
+
+| Budget | Best-of sequential | Joint | Gain |
+| --- | --- | --- | --- |
+| moderate, W8 | 95.2854% | 95.2710% | **−0.0144 pp** |
+| aggressive, W4 | 77.3993% | 78.0208% | **+0.6216 pp** |
+
+**The W4/W8 structure transfers to a different model family.** W8 is inert-to-slightly-negative and
+W4 is positive, which is the one structural claim that looked the same before and after the freeze
+on Pythia ([F-37](#f-37) §6). One draw on a selection surface, so it is a screening signal and
+nothing more — but it is the signal the confirmatory grid will either replicate or not.
+
+**Qwen tolerates the recipe far better than the small Pythias:** 77.4% retention at 30% + W4 against
+55.8% (160M) and 57.6% (410M). Its screening gain, +0.62 pp, sits below both. That is what the
+headroom explanation in [limitations §6](limitations.md) predicts — a baseline that loses less leaves
+less for a better layer solution to recover — and it makes the confirmatory outcome predictable in
+advance rather than after, which is the honest order.
+
+#### What was frozen, mechanically
+
+`FROZEN_SEQUENTIAL_ORDER` now carries `("qwen2.5-0.5b", "aggressive")` and
+`("qwen2.5-0.5b", "moderate")`, both `SEQUENTIAL` (P→Q), with the margins recorded in
+`FROZEN_ORDER_EVIDENCE`. `qwen_validation.yaml` previously refused to build a plan and now builds
+**65 executable cells, 16 pairs**. Two tests were updated: one asserted exactly six frozen cells,
+the other used Qwen as its example of an *unfrozen* cell. Both assumptions were true until this
+finding and are now stale; the guards are preserved with genuinely unfrozen cells.
+
+---
+
 ### F-39 — Qwen2.5-0.5B external-validation leg: setup verified, arms run correctly {#f-39}
 
 **Date:** 2026-08-11 · **Exploratory, validation split, and outside the frozen primary result.** This

@@ -1,13 +1,13 @@
 {
-  "cells": 225,
+  "cells": 233,
   "excluded_and_why": {
     "checkpoints, packed artefacts, model weights": "large and derivable from the config",
     "datasets": "licence and size; the dataset fingerprint in cells.csv identifies them",
     "logs": "transient, and their content is in the findings log"
   },
-  "generated_at_commit": "ecaf8c73e768caa7c5829221d543323b538efd0e",
+  "generated_at_commit": "e4547d50d2dcd4b029b1ed20705f93e8e495e713-dirty",
   "generated_by": "scripts/export_evidence.py",
-  "joint_gain_rows": 56,
+  "joint_gain_rows": 58,
   "purpose": "Enough committed, plain-text evidence to recompute every table in docs/findings_log.md from a fresh clone. outputs/ is git-ignored and holds the only copy of the source records, so without this the findings log is assertions rather than a derivation.",
   "record_sha256": {
     "downstream.json": "2bfc36edc0423abbdf134721e36e21eff0f73f4e4b3906f5b08de5d2bbed3824",
@@ -234,9 +234,17 @@
     "pythia-410m_sequential_qp_moderate_s30_b8_seed1234.json": "f2477d7ef35b600d890239d4b4e174b376efb562e0c78738d14640e3ea06b6c7",
     "pythia-410m_sequential_s6_40_w8_s40_b8_rep0.json": "90e92cd1c8791b1190efb5812fbb17ac3e5391ca9586de2f19d5321677ff9f0c",
     "pythia-410m_sequential_s6_40_w8_s40_b8_rep1.json": "05d849ba93ebd57c69a58c654a97854d614fa77ccd37939dc4859835fb6f5424",
-    "pythia-410m_sequential_s6_40_w8_s40_b8_rep2.json": "3060fcbd4167860be58150322b1ada1fefbb25c40a9547cbe35517ec897a8c65"
+    "pythia-410m_sequential_s6_40_w8_s40_b8_rep2.json": "3060fcbd4167860be58150322b1ada1fefbb25c40a9547cbe35517ec897a8c65",
+    "qwen2.5-0.5b_dense_moderate_s00_b32_rep0.json": "8b434f4b6a58938901d24afc73b4644b7e483ff6372e00877cbf505ae2071d64",
+    "qwen2.5-0.5b_joint_aggressive_s30_b4_rep0.json": "6a9eb060b8f70e9e035b035502216753bb8696a2ca8e0c50fc184860f1ab3b03",
+    "qwen2.5-0.5b_joint_moderate_s30_b8_rep0.json": "18194aa8d6970eb3b9f614973212c28d8ef3df109e988b3b0ba9c1bf0f843d84",
+    "qwen2.5-0.5b_sequential_aggressive_s30_b4_rep0.json": "2b9e0c493ef8614c324fa0a2418b5bf590e3aac2598acaeabd1b7af24829243c",
+    "qwen2.5-0.5b_sequential_moderate_s30_b8_rep0.json": "0731aa8d7c26f9775ded5b90a4c1c83ab905a65c22d1113c1e8188ff8c6d06a1",
+    "qwen2.5-0.5b_sequential_qp_aggressive_s30_b4_rep0.json": "9b2f5f469e5dab855499b5b7cd020892f8266af42be83f7aa5c458e948945801",
+    "qwen2.5-0.5b_sequential_qp_moderate_s30_b8_rep0.json": "88d8ae4a9b111ed586cb0584ed0142ce283aa36d4deef93de97c8f34c5bafce9",
+    "qwen_smoke_dense__qwen2.5-0.5b_dense_moderate_s00_b32_seed1234.json": "292233e60ef7e107d73e0cbac78c8c10cf8034bac70ea4baaf718d59ed2162c6"
   },
   "schema": "evidence/1",
-  "source_records": 225,
-  "window_rows": 99877
+  "source_records": 233,
+  "window_rows": 103973
 }
