@@ -41,6 +41,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory of JSON run records (default: outputs/metrics)",
     )
     parser.add_argument(
+        "--eval-split",
+        default="test",
+        help=(
+            "Only plot records evaluated on this split (default: test, the confirmatory one). "
+            "Pass 'all' to plot everything, which mixes the exploratory validation records with "
+            "the confirmatory ones and is almost never what a figure should show"
+        ),
+    )
+    parser.add_argument(
         "--output",
         default="outputs/figures",
         help="Destination for figures (default: outputs/figures)",
@@ -152,6 +161,28 @@ def main(argv: list[str] | None = None) -> int:
     if not records:
         LOGGER.error("No JSON records found in %s; run some experiments first.", results_dir)
         return 1
+
+    # Filter by evaluation split BEFORE anything is plotted. `outputs/metrics` holds the exploratory
+    # validation records alongside the confirmatory test ones, and a figure that silently averages
+    # the two is the B-45 failure in visual form: the shapes match, so nothing complains. The
+    # default is the confirmatory split, because that is what a published figure should show.
+    if arguments.eval_split != "all":
+        wanted = arguments.eval_split
+        kept = [
+            record
+            for record in records
+            if (((record.get("config") or {}).get("data") or {}).get("eval_split")) == wanted
+        ]
+        LOGGER.info(
+            "Filtered to eval_split=%r: %d of %d record(s) kept", wanted, len(kept), len(records)
+        )
+        if not kept:
+            LOGGER.error(
+                "No records evaluated on split %r. Use --eval-split all to plot everything.",
+                wanted,
+            )
+            return 1
+        records = kept
 
     summary = summarise_records(records)
     log_key_values(LOGGER, f"Loaded {len(records)} record(s) from {results_dir}", summary)

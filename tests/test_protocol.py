@@ -217,3 +217,62 @@ class TestCellIsolationForLongSweeps:
         assert "--isolate-cells" in source
         assert "--only-cell" in source
         assert "subprocess" in source, "isolation must actually spawn a process, not just claim to"
+
+
+class TestScaleTrendAcceptsTheFrozenQtoPOrder:
+    """B-50. ``scale_trend`` filtered on SEQUENTIAL and JOINT and never learned about SEQUENTIAL_QP.
+
+    ``find_comparison_pairs`` was fixed for this (B-42); this function was not. The one cell whose
+    frozen order is Q→P -- pythia-1b/moderate -- was therefore dropped from every trend and every
+    figure built from records: 37 pairs reported where 42 exist.
+
+    The direction is what makes it serious. The dropped cell is the only one where joint is
+    consistently WORSE than sequential, so omitting it flattered joint -- the seventh fault in this
+    project to run that way.
+    """
+
+    def _record(self, method: str, model: str, budget: str, replicate: int, ppl: float) -> dict:
+        return {
+            "experiment_id": f"{model}_{method}_{budget}_rep{replicate}",
+            "status": "success",
+            "compression_method": method,
+            "model_name": model,
+            "budget_label": budget,
+            "seed": 1234,
+            "parameter_count": 1_000_000,
+            "method_version": "4",
+            "config": {"data": {"calibration_replicate": replicate, "eval_split": "test"}},
+            "quality": {
+                "perplexity": {
+                    "perplexity": ppl,
+                    "total_nll": ppl * 100.0,
+                    "total_tokens": 100,
+                    "evaluation_device": "cpu",
+                },
+                "retention": {"perplexity_retention": 100.0 / ppl},
+            },
+            "compression": {"statistics": {"targeted_parameters": 1_000_000}},
+        }
+
+    def test_a_qp_frozen_cell_still_forms_a_pair(self):
+        """The comparator is whichever order was frozen, not the one that happens to be named."""
+        from scale_aware_compression.experiments.scale_sweep import scale_trend
+
+        records = [
+            self._record("sequential_qp", "pythia-1b", "moderate", 0, 20.0),
+            self._record("joint", "pythia-1b", "moderate", 0, 21.0),
+        ]
+        rows = scale_trend(records)
+        assert len(rows) == 1, "a Q→P cell must still yield a comparison"
+        assert rows[0]["sequential_experiment_id"].endswith("sequential_qp_moderate_rep0")
+
+    def test_a_pq_frozen_cell_is_unaffected(self):
+        """The common case must not regress while fixing the rare one."""
+        from scale_aware_compression.experiments.scale_sweep import scale_trend
+
+        records = [
+            self._record("sequential", "pythia-160m", "aggressive", 0, 20.0),
+            self._record("joint", "pythia-160m", "aggressive", 0, 19.0),
+        ]
+        rows = scale_trend(records)
+        assert len(rows) == 1

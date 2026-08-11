@@ -1,5 +1,24 @@
 # Paper outline
 
+> # ⚠️ SUPERSEDED IN PART — read [F-37](findings_log.md#f-37) first
+>
+> **Updated 2026-08-11.** This document was written **before** the confirmatory run. A1 step 10 has
+> since been executed once on the test split and the study has its answer:
+> **[F-37](findings_log.md#f-37)** (the result), **[F-38](findings_log.md#f-38)** (mechanism
+> diagnostics), **[limitations.md](limitations.md)** (what the result may not claim).
+>
+> **Specifically stale below, and superseded rather than corrected in place** — this file records
+> what was *planned*, which is worth keeping legible:
+>
+> - **The budget grid.** Only **30% + W8** and **30% + W4** were ever run end to end. The 50% and 70% sparsity budgets were screened and rejected as catastrophic ([F-23](findings_log.md#f-23)); no result uses them.
+> - **"Three seeds".** Withdrawn by Amendment A1 and replaced by paired calibration replicates, **R = 8 / 8 / 5**. There is no run-seed axis.
+> - **The results are in.** No cell meets the pre-registered practical-importance bar; the only significant cell is 410M/W4 at **Holm-adjusted p = 0.0469**. Any outline section that assumes a positive headline needs rewriting.
+> - **pythia-1.4b, Qwen2.5-0.5B and 2:4 structured sparsity were NOT run.** Do not outline sections that report them.
+> - **There is no latency curve.** [F-34](findings_log.md#f-34) measured a single sparsity (30%) at three scales. A figure from it must not be labelled a curve.
+>
+> The authoritative statement of what the paper may and may not claim is **§6 of
+> [findings_log.md](findings_log.md)**. Where this file and that section disagree, that section wins.
+
 Working title:
 
 > **Does model scale change whether joint pruning-aware quantisation beats sequential compression?**

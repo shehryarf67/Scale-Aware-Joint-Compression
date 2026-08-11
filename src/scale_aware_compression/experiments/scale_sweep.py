@@ -663,13 +663,27 @@ def scale_trend(
             )
             continue
         method = record.get("compression_method")
-        if method in {CompressionMethod.SEQUENTIAL.value, CompressionMethod.JOINT.value}:
+        # SEQUENTIAL_QP is a sequential arm and must be eligible as the comparator. `main`'s
+        # `find_comparison_pairs` was fixed for this (B-42) and this function was not, so the one
+        # cell whose frozen order is Q->P -- pythia-1b/moderate -- was dropped from every trend and
+        # figure built from records. That silently removed 5 of 42 pairs, and, worse, it removed
+        # the only cell where joint is consistently WORSE than sequential: the seventh fault in this
+        # project to run in the joint arm's favour (B-50).
+        if method in {
+            CompressionMethod.SEQUENTIAL.value,
+            CompressionMethod.SEQUENTIAL_QP.value,
+            CompressionMethod.JOINT.value,
+        }:
             by_cell[_pair_key(record)][method] = record
 
     rows: list[dict[str, Any]] = []
     for key, arms in by_cell.items():
         model_name, budget_label, replicate = key
-        sequential = arms.get(CompressionMethod.SEQUENTIAL.value)
+        # Whichever sequential order was frozen for this cell is the baseline. Only one is ever
+        # present, because the confirmatory run executes the frozen order alone.
+        sequential = arms.get(CompressionMethod.SEQUENTIAL.value) or arms.get(
+            CompressionMethod.SEQUENTIAL_QP.value
+        )
         joint = arms.get(CompressionMethod.JOINT.value)
         if sequential is None or joint is None:
             LOGGER.info(

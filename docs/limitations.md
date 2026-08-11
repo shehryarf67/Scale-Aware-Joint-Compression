@@ -199,6 +199,22 @@ Two further constraints:
 - **Any figure derived from F-34 must not be labelled a sparsity curve.** It contains a single
   non-zero sparsity.
 
+## 13b. Per-cell latency measurements are not comparable across arms
+
+Separate from the "one sparsity, not a curve" point above: the sweep benchmarks each cell *inside*
+its own run, so every latency is taken at whatever moment that cell executed. The confirmatory grid
+spanned six days of varying machine state — commit exhaustion, ~12 process recycles, repeated host
+standby.
+
+The failure is visible in the records: pythia-1b **dense** reads 1041 ms and pythia-1b **pruning**
+630 ms, an apparent 40% speedup from masking weights, which is impossible — pruned weights stay FP32
+and dense in storage. The dense figure was measured 2026-08-05 and the pruning figures 2026-08-07
+([B-49](findings_log.md#4-bugs-found-that-would-have-invalidated-results)).
+
+**Cost to the claim.** No latency comparison may be drawn from the per-cell sweep records.
+[F-34](findings_log.md#f-34) — a dedicated §4.7 study with model-order rotation, which exists to
+control exactly this drift — is the only citable latency evidence.
+
 ## 14. Structured sparsity was never run
 
 The mask supports 2:4 and 4:8 semi-structured patterns and they are tested at the tensor level, but

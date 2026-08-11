@@ -1,5 +1,24 @@
 # Research question
 
+> # ⚠️ SUPERSEDED IN PART — read [F-37](findings_log.md#f-37) first
+>
+> **Updated 2026-08-11.** This document was written **before** the confirmatory run. A1 step 10 has
+> since been executed once on the test split and the study has its answer:
+> **[F-37](findings_log.md#f-37)** (the result), **[F-38](findings_log.md#f-38)** (mechanism
+> diagnostics), **[limitations.md](limitations.md)** (what the result may not claim).
+>
+> **Specifically stale below, and superseded rather than corrected in place** — this file records
+> what was *planned*, which is worth keeping legible:
+>
+> - **The budget grid.** 50% and 70% sparsity appear here as planned budgets. They were screened and rejected; every reported number is **30%** sparsity at W8 or W4.
+> - **The scale axis is confounded with depth.** pythia-1b has **16 blocks against pythia-410m's 24** ([F-38](findings_log.md#f-38)), so "scale" is not a clean single factor across the sweep.
+> - **The seed-spread clause is withdrawn** as vacuous; see [protocol_freeze.md](protocol_freeze.md#the-amended-practical-importance-rule).
+> - **2:4 / structured sparsity was never run** end to end.
+> - **The primary question now has an answer:** the advantage did **not** increase with scale, the observed direction was opposite, and **the decline is not statistically established**.
+>
+> The authoritative statement of what the paper may and may not claim is **§6 of
+> [findings_log.md](findings_log.md)**. Where this file and that section disagree, that section wins.
+
 ## Primary question
 
 > **How does model scale influence the effectiveness of joint versus sequential pruning and
