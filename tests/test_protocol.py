@@ -276,3 +276,69 @@ class TestScaleTrendAcceptsTheFrozenQtoPOrder:
         ]
         rows = scale_trend(records)
         assert len(rows) == 1
+
+
+class TestTheFiguresAndTablesRefuseToMislead:
+    """The visualisation layer was scaffold until 2026-08-11; these pin what it must not do.
+
+    Two failure modes are specific to this project and both nearly shipped:
+
+    * a latency ratio built from measurements taken in different sessions, which produced a
+      pythia-1b point **above** the theoretical speedup bound -- physically impossible (B-49)
+    * an arm coloured by its index within a subplot, so ``sequential_qp`` at 1B took the colour
+      ``sequential`` had at the other scales and a reader comparing panels was misled
+    """
+
+    def test_arm_colours_are_keyed_to_the_arm_not_its_position(self):
+        """Same arm, same colour, in every panel of every figure."""
+        from scale_aware_compression.visualisation.plots import METHOD_COLOURS, _method_colour
+
+        assert _method_colour("joint") == METHOD_COLOURS["joint"]
+        assert _method_colour("sequential") != _method_colour("sequential_qp"), (
+            "the two frozen orders must be distinguishable; they are different baselines"
+        )
+        assert _method_colour("joint") not in {
+            _method_colour("sequential"),
+            _method_colour("sequential_qp"),
+        }
+
+    def test_the_joint_gain_table_keeps_the_qp_cell(self):
+        """B-50 in table form: a Q→P cell must appear, not be silently dropped."""
+        from scale_aware_compression.visualisation.tables import build_joint_gain_table
+
+        trend = [
+            {
+                "model_name": "pythia-1b",
+                "budget_label": "moderate",
+                "targeted_parameters": 805306368,
+                "comparable": True,
+                "sequential_retention": 96.5,
+                "joint_retention": 96.3,
+                "joint_gain_retention_pp": -0.2,
+                "joint_advantage_nll": -0.002,
+            }
+        ]
+        rows = build_joint_gain_table(trend)
+        assert len(rows) == 1
+        assert rows[0]["positive_replicates"] == "0/1"
+        assert rows[0]["sign_consistent"] is False
+
+    def test_the_main_table_reports_replicate_count_per_row(self):
+        """A row averaged over one replicate must not read as though it were averaged over eight."""
+        from scale_aware_compression.visualisation.tables import build_main_results_table
+
+        records = [
+            {
+                "status": "success",
+                "model_name": "pythia-160m",
+                "compression_method": "joint",
+                "budget_label": "aggressive",
+                "sparsity": 0.3,
+                "quantisation_bits": 4,
+                "parameter_count": 1000,
+                "quality": {"perplexity": {"perplexity": 40.0}, "retention": {}},
+                "compression": {"statistics": {"targeted_parameters": 1000}},
+            }
+        ]
+        rows = build_main_results_table(records)
+        assert rows[0]["replicates"] == 1

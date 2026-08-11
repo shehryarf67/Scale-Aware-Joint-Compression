@@ -825,23 +825,41 @@ analysis and writing, in this order:
 | `results/evidence/*.csv` | `python scripts/export_evidence.py` | 225 cells, 56 gain rows, 99,877 window rows — recompute any interval |
 | Gate | `python scripts/audit_confirmatory_run.py` | Must print **AUDIT PASSED** |
 
-### 🔴 Figures are BLOCKED — the visualisation layer is unimplemented scaffold
+### ✅ Figures and tables — implemented 2026-08-11
 
-`scripts/generate_plots.py` runs, filters correctly to the 171 test-split records, and then stops:
-**all four plot functions and the results-table builder raise `NotImplementedError`**
-(`visualisation/plots.py`, `visualisation/tables.py`). That is the project's rule working as
-intended — an unimplemented path raises rather than inventing output — but it means **no figure
-exists yet.**
+The visualisation layer was scaffold (every function raised `NotImplementedError`). It is now
+implemented and produces four figures plus two tables from the **171 test-split records**:
 
-Implementing them is the one substantial piece of code the paper still needs. The data is ready:
-every figure below can be built from the committed evidence with no re-run.
+```bash
+python scripts/generate_plots.py --output results/figures --tables-output results/tables
+```
 
-| Figure | Source | Caution |
-| --- | --- | --- |
-| Joint gain vs scale, replicate points + error bars | T1/T2, or `joint_gains.csv` | Plot the *replicates*, not just means — F-26 exists because a mean hid a sign flip |
-| Retention vs checkpoint size | T3 + T4 | — |
-| W4 vs W8 comparison | T1 | This is the study's clearest structural result |
-| 30% pruning latency | T7 | **Do not label it a sparsity curve** — one non-zero sparsity only. And see B-49: rows measured on different days are not comparable |
+| Output | What it shows |
+| --- | --- |
+| `joint_gain_vs_scale` | The headline. Individual replicates as faint points, means with SEM bars, zero line, and the **§6.3 bar at 1.0 pp** so the criterion is visible rather than implied |
+| `quality_vs_size` | Pareto view per scale; joint sits just above sequential at 160M and 410M |
+| `latency_vs_sparsity` | **Not a curve** — one non-zero sparsity. Cross-session series are drawn hollow/dashed and named |
+| `training_cost` | Fairness audit: every point must sit at ratio 1.0, and all six do |
+| `results/tables/joint_gain.{md,csv}` | Reproduces T1 from an independent code path |
+| `results/tables/main_results.{md,csv}` | 27 rows, every arm × scale × budget, R per row |
+
+**Two defects were caught in the figures before anything was published.**
+
+*The latency figure showed pythia-1b at **1.66× speedup, above the theoretical bound of 1.43×** —
+physically impossible, since pruned weights stay FP32 and dense in storage. It is
+[B-49](findings_log.md#4-bugs-found-that-would-have-invalidated-results): the 1B dense baseline was
+measured 2026-08-05 and its sparse counterpart 2026-08-07. The figure now **detects a bound
+violation**, draws that series hollow and dashed, names it in the caption and logs an error. Only
+pythia-160m is same-session, and it shows ~1.00 — no speedup, matching
+[F-34](findings_log.md#f-34).*
+
+*Arm colours were assigned by position within each subplot, so `sequential_qp` at 1B took the colour
+`sequential` held elsewhere. Colour is now keyed to the arm, and the legend is gathered across all
+panels so the Q→P series is labelled.*
+
+**Cross-validation:** `results/tables/joint_gain.md` reproduces T1 exactly — +1.0120 (7/8), +0.9348
+(8/8), −0.1794 (0/5) — from a different code path than `report_confirmatory.py`. Two independent
+implementations agreeing is stronger evidence than either alone.
 
 ### The optional experiments — decided 2026-08-11
 
