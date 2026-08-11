@@ -398,6 +398,10 @@ class TestShippedConfigs:
             # A1 step 6: both sequential orderings on validation, so the stronger baseline can be
             # frozen per (model, budget) before any test evaluation.
             "order_selection.yaml",
+            # The same, for the Qwen2.5-0.5B external-validation leg. `qwen_validation.yaml` sets
+            # `use_frozen_order: true` and refuses to build a plan until an order is frozen for that
+            # model, so this config produces the evidence that permits the freeze.
+            "qwen_order_selection.yaml",
             # A1 step 7: re-checks the W8 order across paired draws, because it was frozen on a
             # +0.43 pp single-draw margin and the sign of that budget's joint gain depends on it.
             "order_selection_w8_replicates.yaml",
