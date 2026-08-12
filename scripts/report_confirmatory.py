@@ -50,9 +50,29 @@ from scale_aware_compression.metrics.replicates import (  # noqa: E402
 
 SEQUENTIAL_ARMS = ("sequential", "sequential_qp")
 ORDER_NAME = {"sequential": "P->Q", "sequential_qp": "Q->P"}
-SCALES = ("pythia-160m", "pythia-410m", "pythia-1b")
+PYTHIA_SCALES = ("pythia-160m", "pythia-410m", "pythia-1b")
+"""The primary sweep, in scale order. Used only to ORDER output, never to filter it."""
+
 BUDGETS = ("moderate", "aggressive")
 IMPORTANCE_THRESHOLD_PP = 1.0
+
+
+def models_in(records: list[dict[str, Any]]) -> list[str]:
+    """Every model present in the records, primary scales first and anything else after.
+
+    Derived from the records rather than hardcoded. A hardcoded list would silently omit the Qwen
+    external-validation leg, which writes to the same directory -- the B-50 failure shape, where a
+    filter that predates a new arm drops it without changing any count the reader sees.
+
+    Args:
+        records: Loaded run records.
+
+    Returns:
+        Model names, Pythia scales in size order first.
+    """
+    present = {str(record.get("model_name")) for record in records}
+    ordered = [model for model in PYTHIA_SCALES if model in present]
+    return ordered + sorted(present - set(ordered))
 
 
 def load_test_records(metrics: Path) -> list[dict[str, Any]]:
@@ -121,17 +141,40 @@ def report(records: list[dict[str, Any]], stream: TextIO) -> None:
         key = (record["model_name"], record.get("budget_label"), replicate_of(record))
         index.setdefault(key, {})[method] = record
 
+    present = models_in(records)
+    primary = [model for model in present if model in PYTHIA_SCALES]
+    external = [model for model in present if model not in PYTHIA_SCALES]
+
     say("=" * 79)
-    say("CONFIRMATORY RESULT -- test split, run once, no tuning after the A1 step-9 freeze")
-    say("=" * 79)
-    say(f"{len(records)} successful test-split records")
+    if external and not primary:
+        # Label by what is actually in the file. A report headed "CONFIRMATORY ... A1 step-9 freeze"
+        # while containing only the external-validation leg would misrepresent an exploratory result
+        # as the frozen primary, and it is the header a reader quotes.
+        say("EXTERNAL VALIDATION -- test split, EXPLORATORY, outside the A1 step-9 freeze")
+        say("=" * 79)
+        say(f"{len(records)} successful test-split records for {', '.join(external)}")
+        say("")
+        say("THIS IS NOT THE PRIMARY RESULT and cannot alter it. A different model family means a")
+        say("different tokeniser, vocabulary and training corpus, so ABSOLUTE PERPLEXITY IS NOT")
+        say("COMPARABLE with any Pythia number. Only retention ratios and the sign of the joint")
+        say("gain transfer.")
+    else:
+        say("CONFIRMATORY RESULT -- test split, run once, no tuning after the A1 step-9 freeze")
+        say("=" * 79)
+        say(f"{len(records)} successful test-split records")
+        if external:
+            say("")
+            say(
+                f"WARNING: this file MIXES the frozen primary with external legs ({', '.join(external)})."
+            )
+            say("Use --primary-only for the result of record, and --models for a leg on its own.")
     say("")
     say("Baseline is the FROZEN sequential order per cell, not best-of-both: A1 §3 selects the")
     say("order on validation and freezes it before test, so only that order was run.")
     say("§6.3: practically important iff mean gain >= 1.0 pp AND sign-consistent across all R.")
 
     summaries: dict[tuple, Any] = {}
-    for model in SCALES:
+    for model in models_in(records):
         for budget in BUDGETS:
             rows, gains, orders = [], [], set()
             pairs = [
@@ -196,7 +239,7 @@ def report(records: list[dict[str, Any]], stream: TextIO) -> None:
     say("=" * 79)
     for budget in BUDGETS:
         say(f"\n  {budget}:")
-        for model in SCALES:
+        for model in models_in(records):
             summary = summaries.get((model, budget))
             if summary is None:
                 continue
@@ -254,7 +297,7 @@ def report(records: list[dict[str, Any]], stream: TextIO) -> None:
             continue
         key = (record["model_name"], record.get("budget_label"), record["compression_method"])
         by_cell.setdefault(key, []).append(value)
-    for model in SCALES:
+    for model in models_in(records):
         for budget in BUDGETS:
             parts = []
             for arm in ("pruning", "quantisation", *SEQUENTIAL_ARMS, "joint"):
@@ -274,12 +317,35 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--metrics", type=Path, default=REPOSITORY_ROOT / "outputs" / "metrics")
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--models",
+        nargs="+",
+        metavar="NAME",
+        help=(
+            "Restrict the report to these models. Use it to keep the FROZEN primary result and the "
+            "exploratory external-validation leg in separate files: both write test-split records "
+            "to the same directory, and a combined report would make the primary appear to change "
+            "when an unrelated leg advances"
+        ),
+    )
+    parser.add_argument(
+        "--primary-only",
+        action="store_true",
+        help="Shorthand for --models pythia-160m pythia-410m pythia-1b (the frozen A1 step-10 grid)",
+    )
     arguments = parser.parse_args()
 
     records = load_test_records(arguments.metrics)
     if not records:
         print(f"no successful test-split records under {arguments.metrics}", file=sys.stderr)
         return 1
+
+    wanted = list(PYTHIA_SCALES) if arguments.primary_only else arguments.models
+    if wanted:
+        records = [r for r in records if str(r.get("model_name")) in set(wanted)]
+        if not records:
+            print(f"no test-split records for models {wanted}", file=sys.stderr)
+            return 1
 
     if arguments.output:
         arguments.output.parent.mkdir(parents=True, exist_ok=True)

@@ -1,11 +1,11 @@
 {
-  "cells": 241,
+  "cells": 261,
   "excluded_and_why": {
     "checkpoints, packed artefacts, model weights": "large and derivable from the config",
     "datasets": "licence and size; the dataset fingerprint in cells.csv identifies them",
     "logs": "transient, and their content is in the findings log"
   },
-  "generated_at_commit": "cb5e9b37f58fac5e3f8b17fdb65f587c82a20f3e-dirty",
+  "generated_at_commit": "a640eac37c99d47a9cb097eeb92d8fc7f12d16fe-dirty",
   "generated_by": "scripts/export_evidence.py",
   "joint_gain_rows": 58,
   "purpose": "Enough committed, plain-text evidence to recompute every table in docs/findings_log.md from a fresh clone. outputs/ is git-ignored and holds the only copy of the source records, so without this the findings log is assertions rather than a derivation.",
@@ -238,6 +238,14 @@
     "qwen2.5-0.5b_dense_moderate_s00_b32_rep0.json": "670ea127c1004621dd065b2779c4ecbe7a9e18dea3c488b66b2e9d5665d80c06",
     "qwen2.5-0.5b_joint_aggressive_s30_b4_rep0.json": "6a9eb060b8f70e9e035b035502216753bb8696a2ca8e0c50fc184860f1ab3b03",
     "qwen2.5-0.5b_joint_moderate_s30_b8_rep0.json": "18194aa8d6970eb3b9f614973212c28d8ef3df109e988b3b0ba9c1bf0f843d84",
+    "qwen2.5-0.5b_pruning_aggressive_s30_b32_rep0.json": "a1787e050a81012db6a27f810806ea57f600f12bccd28a801dfe6ab8ced2b437",
+    "qwen2.5-0.5b_pruning_aggressive_s30_b32_rep1.json": "0ba2c9c9cf33c2f7a09b6218917f1b786c514b6bd339754b96a3579f384862c8",
+    "qwen2.5-0.5b_pruning_aggressive_s30_b32_rep2.json": "1b8f4862ad8d94e3544dab173a0b30b61c676b3ee95ad5a8454806e2f24e5b61",
+    "qwen2.5-0.5b_pruning_aggressive_s30_b32_rep3.json": "7368df14896c8d90ea890f51ff96dd178aee542977c534874d5e3d4627b607c5",
+    "qwen2.5-0.5b_pruning_aggressive_s30_b32_rep4.json": "f2d28209f8e5b1cdb97ca60cf5e097a1bd7a677d034608fa3462290ee8a8e929",
+    "qwen2.5-0.5b_pruning_aggressive_s30_b32_rep5.json": "fe2e6a35fc115f01c56f39cfbdfe6a04490b404499ab8462c3d3fb830e894c76",
+    "qwen2.5-0.5b_pruning_aggressive_s30_b32_rep6.json": "af7c7576cd5ca96e1ab11fb7b7bddff7cbf32b52a397925d7abf547fcbb1128e",
+    "qwen2.5-0.5b_pruning_aggressive_s30_b32_rep7.json": "1d40d2845d3acec43dad77ac4cd4aca424346b77f8fc5c66fd8216075afee966",
     "qwen2.5-0.5b_pruning_moderate_s30_b32_rep0.json": "c893bf4e1c99b5f80f55c29215935ed2ae237d02bcd54e12a64ab04193a30e96",
     "qwen2.5-0.5b_pruning_moderate_s30_b32_rep1.json": "ce317cf535f2f0ac1bd9619613e899eb4edca5addbfbf69cbd26d4c4eec46a94",
     "qwen2.5-0.5b_pruning_moderate_s30_b32_rep2.json": "0e7a660f0a229e4aa246627146b416bd03060095f9b8d2789497a2839a274d67",
@@ -246,6 +254,18 @@
     "qwen2.5-0.5b_pruning_moderate_s30_b32_rep5.json": "e8742680bff2304adcc676c7a2cd2366a86a3802fcd56297b1bb7436115ac197",
     "qwen2.5-0.5b_pruning_moderate_s30_b32_rep6.json": "db1626a2991b6be3950659f3b57565fdd9bbdfd9e7bd00c8dfafe85acb42a5d6",
     "qwen2.5-0.5b_pruning_moderate_s30_b32_rep7.json": "8266213deb2a89fded7407f02d0b8fd2c1835f265c12d3edcfce521f7e9de5a2",
+    "qwen2.5-0.5b_quantisation_aggressive_s00_b4_rep0.json": "fb1efc0f011467b1ff226f70b65840b2e49004fdbdb38fc2b1bc177b3eebbf7e",
+    "qwen2.5-0.5b_quantisation_aggressive_s00_b4_rep1.json": "315bbf76371ffaa419a307f8ad3b03c988ae3d4cb0e690112129ae258e61171e",
+    "qwen2.5-0.5b_quantisation_aggressive_s00_b4_rep2.json": "958369e378800fbfe880d80fdc38673ad0febb136e9577b74cf5daf7ad3f6d66",
+    "qwen2.5-0.5b_quantisation_aggressive_s00_b4_rep3.json": "6903931dbab8aa82046b40bbb2fbf6a7afbb4e3103a2d17f19a011f43a82d40e",
+    "qwen2.5-0.5b_quantisation_moderate_s00_b8_rep0.json": "7fe6fcf5d6122d40ed61a0ce9f8b5c0f38f9ef9e0773a5142424beaff60732e6",
+    "qwen2.5-0.5b_quantisation_moderate_s00_b8_rep1.json": "c6173f3454a3b8e79a5454171a599e8f43fcc029d67c07a6db5451c5e10e5d2d",
+    "qwen2.5-0.5b_quantisation_moderate_s00_b8_rep2.json": "6f43b64f3f6a9ab9ddcc8fea3e7fd387cfa1b0a2c3408fb63c642b161fcca6d8",
+    "qwen2.5-0.5b_quantisation_moderate_s00_b8_rep3.json": "6d204b832ca845123cc06c1179cc96586175e34251f888d0c056b23165f6344a",
+    "qwen2.5-0.5b_quantisation_moderate_s00_b8_rep4.json": "5aceff7e5ecc0f14e70a78e8d36ff50a65f3430692fc33b4348b34a944a60768",
+    "qwen2.5-0.5b_quantisation_moderate_s00_b8_rep5.json": "51c2ceb24d96386bd6541ab6b599455e4ef9ddbe1fd8c0547291dca1312c85ed",
+    "qwen2.5-0.5b_quantisation_moderate_s00_b8_rep6.json": "f9bee284708bcd7098c72d0320ea6e8b373a9f9cbfbd9a3cc6befef646014dfe",
+    "qwen2.5-0.5b_quantisation_moderate_s00_b8_rep7.json": "bc8ed0b03974df8eb16d93f22de510e6cd9f6eeb9219110029e760c80f26a814",
     "qwen2.5-0.5b_sequential_aggressive_s30_b4_rep0.json": "2b9e0c493ef8614c324fa0a2418b5bf590e3aac2598acaeabd1b7af24829243c",
     "qwen2.5-0.5b_sequential_moderate_s30_b8_rep0.json": "0731aa8d7c26f9775ded5b90a4c1c83ab905a65c22d1113c1e8188ff8c6d06a1",
     "qwen2.5-0.5b_sequential_qp_aggressive_s30_b4_rep0.json": "9b2f5f469e5dab855499b5b7cd020892f8266af42be83f7aa5c458e948945801",
@@ -253,6 +273,6 @@
     "qwen_smoke_dense__qwen2.5-0.5b_dense_moderate_s00_b32_seed1234.json": "292233e60ef7e107d73e0cbac78c8c10cf8034bac70ea4baaf718d59ed2162c6"
   },
   "schema": "evidence/1",
-  "source_records": 241,
-  "window_rows": 108069
+  "source_records": 261,
+  "window_rows": 118309
 }
