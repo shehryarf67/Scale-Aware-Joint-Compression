@@ -1,7 +1,7 @@
 ===============================================================================
 EXTERNAL VALIDATION -- test split, EXPLORATORY, outside the A1 step-9 freeze
 ===============================================================================
-29 successful test-split records for qwen2.5-0.5b
+35 successful test-split records for qwen2.5-0.5b
 
 THIS IS NOT THE PRIMARY RESULT and cannot alter it. A different model family means a
 different tokeniser, vocabulary and training corpus, so ABSOLUTE PERPLEXITY IS NOT
@@ -42,5 +42,5 @@ DENSE BASELINES (test split)
 ===============================================================================
 ALL ARMS -- mean retention per cell
 ===============================================================================
-  qwen2.5-0.5b  moderate    pruning=95.11%  quantisation=99.87%
-  qwen2.5-0.5b  aggressive  pruning=95.11%  quantisation=79.42%
+  qwen2.5-0.5b  moderate    pruning=95.11%  quantisation=99.87%  sequential=94.99%
+  qwen2.5-0.5b  aggressive  pruning=95.11%  quantisation=79.56%

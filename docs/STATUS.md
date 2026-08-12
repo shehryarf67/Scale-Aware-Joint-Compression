@@ -863,7 +863,22 @@ implementations agreeing is stronger evidence than either alone.
 
 ### 🟡 Qwen2.5-0.5B external validation — steps 1–6 done, test grid paused at cell 1 of 65
 
-**Paused 2026-08-11 19:15.** Exploratory leg; it **cannot alter [F-37](findings_log.md#f-37)**.
+**Paused 2026-08-12 23:50 at cell 36 of 65.** Exploratory leg; it **cannot alter
+[F-37](findings_log.md#f-37)**.
+
+**Records so far, all `success`:** dense 1, pruning 16, quantisation 16, sequential 2.
+**No pairs yet** — sequential and joint run last, so all 16 land in the final stretch and the pair
+count stays at 0 while nothing is wrong. Watch records-by-arm until the joint arm starts.
+
+| Arm | Retention (mean over completed replicates) |
+| --- | --- |
+| pruning, both budgets | **95.11%** |
+| quantisation W8 | 99.87% |
+| quantisation W4 | 79.42% |
+
+Pace ~26.5 min/cell; the remaining 29 cells are ~13 h. Snapshot regenerable with
+`python scripts/report_confirmatory.py --models qwen2.5-0.5b`, committed at
+[`results/evidence/qwen_external_validation.txt`](../results/evidence/qwen_external_validation.txt).
 
 | Step | State |
 | --- | --- |
@@ -873,7 +888,7 @@ implementations agreeing is stronger evidence than either alone.
 | 4 Adapter | ✅ 168 modules, exclusions clean, sparsity 0.300146, eff. bits 4.0272 |
 | 5 Order selection | ✅ **P→Q both budgets** — [F-40](findings_log.md#f-40) |
 | 6 Freeze | ✅ committed in `protocol.py` with margins |
-| 7 Test grid | 🟡 **1 of 65 cells**, 9 test records (dense 1, pruning 8) |
+| 7 Test grid | 🟡 **36 of 65 cells**, 35 test records, 0 failures |
 | 8 Audit + evidence | ⬜ |
 
 **Resume with the supervisor**, which handles crash recovery and forces offline datasets:
