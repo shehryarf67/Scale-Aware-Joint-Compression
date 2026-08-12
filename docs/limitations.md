@@ -123,8 +123,14 @@ P→Q won there by 4–7 pp, far outside any plausible order uncertainty.
 
 ## 8. One model family, one corpus, one evaluation window
 
-- **One family.** Pythia only. The Qwen2.5-0.5B external-validity point was registered, pinned and
-  adapter-implemented but **not run**.
+- **One family for the primary result.** Every number in [F-37](findings_log.md#f-37) is Pythia.
+  A Qwen2.5-0.5B external-validity leg is **being run** as of 2026-08-11
+  ([F-39](findings_log.md#f-39), [F-40](findings_log.md#f-40)) — but it is exploratory, it cannot
+  alter the primary result, and its absolute perplexity is not comparable to any Pythia number
+  because the tokeniser, vocabulary (151,936) and training corpus all differ. **Only retention
+  ratios and the sign of the joint gain transfer.** If the leg completes, it can support a claim of
+  the form "the W4/W8 structure appears in a second family" and nothing stronger; if it does not
+  complete, this limitation stands unchanged.
 - **One corpus.** WikiText for calibration *and* evaluation. Perplexity on a single corpus is the
   primary metric.
 - **One window.** 512 sequences × 512 tokens on the test split. Not a full test set at 2048.
