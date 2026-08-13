@@ -1,7 +1,7 @@
 ===============================================================================
 EXTERNAL VALIDATION -- test split, EXPLORATORY, outside the A1 step-9 freeze
 ===============================================================================
-35 successful test-split records for qwen2.5-0.5b
+54 successful test-split records for qwen2.5-0.5b
 
 THIS IS NOT THE PRIMARY RESULT and cannot alter it. A different model family means a
 different tokeniser, vocabulary and training corpus, so ABSOLUTE PERPLEXITY IS NOT
@@ -12,11 +12,26 @@ Baseline is the FROZEN sequential order per cell, not best-of-both: A1 §3 selec
 order on validation and freezes it before test, so only that order was run.
 §6.3: practically important iff mean gain >= 1.0 pp AND sign-consistent across all R.
 
+-------------------------------------------------------------------------------
+qwen2.5-0.5b / moderate    sequential order: P->Q
+-------------------------------------------------------------------------------
+  rep  sequential %     joint %   gain pp   95% CI on NLL advantage
+    0      95.0130    94.9773   -0.0357  [-0.00057, -0.00018] nats/token, excludes 0
+    1      94.9684    94.9193   -0.0491  [-0.00072, -0.00032] nats/token, excludes 0
+    2      95.0364    95.0066   -0.0298  [-0.00052, -0.00010] nats/token, excludes 0
+    3      94.9644    94.9516   -0.0129  [-0.00032, +0.00005] nats/token, includes 0
+    4      95.0610    95.0120   -0.0490  [-0.00071, -0.00032] nats/token, excludes 0
+
+  R = 5    mean -0.0353 pp    sd 0.0151    median -0.0357 pp    range [-0.0491, -0.0129]
+  positive 0    negative 5    ties 0    sign-test n = 5    exact two-sided p = 0.0625
+  >= 1.0 pp: NO     sign-consistent: NO     => §6.3 PRACTICALLY IMPORTANT: NO
+
 ===============================================================================
 SCALE TREND -- mean joint gain by scale
 ===============================================================================
 
   moderate:
+    qwen2.5-0.5b  -0.0353 pp   R=5   0/5 positive   p=0.0625
 
   aggressive:
 
@@ -29,8 +44,9 @@ MULTIPLE COMPARISONS -- Holm-Bonferroni over every cell examined
   headline significance comes from one cell out of the number below.
 
   cell                           raw p   adjusted
+  qwen2.5-0.5b/moderate         0.0625     0.0625
 
-  0 of 0 cells significant after correction.
+  0 of 1 cells significant after correction.
   Report the ADJUSTED value. Quoting the raw p while reporting the largest of several
   cells is the inflation this correction exists to remove.
 
@@ -42,5 +58,5 @@ DENSE BASELINES (test split)
 ===============================================================================
 ALL ARMS -- mean retention per cell
 ===============================================================================
-  qwen2.5-0.5b  moderate    pruning=95.11%  quantisation=99.87%  sequential=94.99%
-  qwen2.5-0.5b  aggressive  pruning=95.11%  quantisation=79.56%
+  qwen2.5-0.5b  moderate    pruning=95.11%  quantisation=99.87%  sequential=95.02%  joint=94.97%
+  qwen2.5-0.5b  aggressive  pruning=95.11%  quantisation=79.56%  sequential=76.94%
