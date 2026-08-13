@@ -1,13 +1,13 @@
 {
-  "cells": 283,
+  "cells": 289,
   "excluded_and_why": {
     "checkpoints, packed artefacts, model weights": "large and derivable from the config",
     "datasets": "licence and size; the dataset fingerprint in cells.csv identifies them",
     "logs": "transient, and their content is in the findings log"
   },
-  "generated_at_commit": "b864a0fe37ff7968f2e95c365872475de83ca2fe-dirty",
+  "generated_at_commit": "afe4900020effe8ef39058043f92ac7a6f67d8e7-dirty",
   "generated_by": "scripts/export_evidence.py",
-  "joint_gain_rows": 62,
+  "joint_gain_rows": 68,
   "purpose": "Enough committed, plain-text evidence to recompute every table in docs/findings_log.md from a fresh clone. outputs/ is git-ignored and holds the only copy of the source records, so without this the findings log is assertions rather than a derivation.",
   "record_sha256": {
     "downstream.json": "2bfc36edc0423abbdf134721e36e21eff0f73f4e4b3906f5b08de5d2bbed3824",
@@ -236,12 +236,18 @@
     "pythia-410m_sequential_s6_40_w8_s40_b8_rep1.json": "05d849ba93ebd57c69a58c654a97854d614fa77ccd37939dc4859835fb6f5424",
     "pythia-410m_sequential_s6_40_w8_s40_b8_rep2.json": "3060fcbd4167860be58150322b1ada1fefbb25c40a9547cbe35517ec897a8c65",
     "qwen2.5-0.5b_dense_moderate_s00_b32_rep0.json": "670ea127c1004621dd065b2779c4ecbe7a9e18dea3c488b66b2e9d5665d80c06",
-    "qwen2.5-0.5b_joint_aggressive_s30_b4_rep0.json": "6a9eb060b8f70e9e035b035502216753bb8696a2ca8e0c50fc184860f1ab3b03",
+    "qwen2.5-0.5b_joint_aggressive_s30_b4_rep0.json": "9dfc0b73c37094c69bd76dbb1e80a35fbf7cb1964cdf3b79927ee4167ed838ae",
+    "qwen2.5-0.5b_joint_aggressive_s30_b4_rep1.json": "9a56a71cf543440b6a5932f7cc28b085c4e5cb1366e0336833bfa773efc20ef3",
+    "qwen2.5-0.5b_joint_aggressive_s30_b4_rep2.json": "a0316469ac9e9f288c28274441052d10e8d8ef5937c685cf2ec8d58642010d95",
+    "qwen2.5-0.5b_joint_aggressive_s30_b4_rep3.json": "ef9b54eae171c71ab5b46ede45414f2d17b3b13d2bb2dc724673e482ff354997",
     "qwen2.5-0.5b_joint_moderate_s30_b8_rep0.json": "9f9c2cd379cb6536295c77a4044c065696d9ba7d1736d29ff37e912ef5abfee7",
     "qwen2.5-0.5b_joint_moderate_s30_b8_rep1.json": "6e23bc8c16a72f34a9437bc757e2b394162f7f3a4fcb6c8403d685660b3e7847",
     "qwen2.5-0.5b_joint_moderate_s30_b8_rep2.json": "fcc007e761527eb4844d820b7558ea9d06f54a17681514295404b78609b2835f",
     "qwen2.5-0.5b_joint_moderate_s30_b8_rep3.json": "772209c3f516cbb6acf690414d54af3e6efbc00f8764fbad0ca0038789131ea9",
     "qwen2.5-0.5b_joint_moderate_s30_b8_rep4.json": "25a7b05e2e8b72d87d869952b575268283e0d2d2df5adf4badde043cb56615b0",
+    "qwen2.5-0.5b_joint_moderate_s30_b8_rep5.json": "f17638e370036e807b1f44b352788f9c7fe905b6ccb00f136fed37e679ac49e0",
+    "qwen2.5-0.5b_joint_moderate_s30_b8_rep6.json": "78ae2618ad348e95f63c34a96dc0e5f57b55c350beb67f0cf327644a9dcca6e1",
+    "qwen2.5-0.5b_joint_moderate_s30_b8_rep7.json": "b0d6bffd78a989f8acb5cadfa49b91ece4563410dc7a859921cf5d36d8de0aab",
     "qwen2.5-0.5b_pruning_aggressive_s30_b32_rep0.json": "a1787e050a81012db6a27f810806ea57f600f12bccd28a801dfe6ab8ced2b437",
     "qwen2.5-0.5b_pruning_aggressive_s30_b32_rep1.json": "0ba2c9c9cf33c2f7a09b6218917f1b786c514b6bd339754b96a3579f384862c8",
     "qwen2.5-0.5b_pruning_aggressive_s30_b32_rep2.json": "1b8f4862ad8d94e3544dab173a0b30b61c676b3ee95ad5a8454806e2f24e5b61",
@@ -295,6 +301,6 @@
     "qwen_smoke_dense__qwen2.5-0.5b_dense_moderate_s00_b32_seed1234.json": "292233e60ef7e107d73e0cbac78c8c10cf8034bac70ea4baaf718d59ed2162c6"
   },
   "schema": "evidence/1",
-  "source_records": 283,
-  "window_rows": 129573
+  "source_records": 289,
+  "window_rows": 132645
 }

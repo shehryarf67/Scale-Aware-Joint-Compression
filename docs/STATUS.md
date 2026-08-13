@@ -863,22 +863,32 @@ implementations agreeing is stronger evidence than either alone.
 
 ### 🟡 Qwen2.5-0.5B external validation — steps 1–6 done, test grid paused at cell 1 of 65
 
-**Paused 2026-08-12 23:50 at cell 36 of 65.** Exploratory leg; it **cannot alter
+**Paused 2026-08-13 21:10 at cell 62 of 65.** Exploratory leg; it **cannot alter
 [F-37](findings_log.md#f-37)**.
 
-**Records so far, all `success`:** dense 1, pruning 16, quantisation 16, sequential 2.
-**No pairs yet** — sequential and joint run last, so all 16 land in the final stretch and the pair
-count stays at 0 while nothing is wrong. Watch records-by-arm until the joint arm starts.
+**61 records, 0 failures, 12 of 16 pairs.** dense 1, pruning 16, quantisation 16, sequential 16,
+joint 12. Only **3 cells remain** — joint/aggressive rep5–rep7, roughly **1.5 h**.
 
-| Arm | Retention (mean over completed replicates) |
-| --- | --- |
-| pruning, both budgets | **95.11%** |
-| quantisation W8 | 99.87% |
-| quantisation W4 | 79.42% |
+**Partial result, and it is NOT to be read as final** — the W4 cell has 5 of 8 draws:
 
-Pace ~26.5 min/cell; the remaining 29 cells are ~13 h. Snapshot regenerable with
-`python scripts/report_confirmatory.py --models qwen2.5-0.5b`, committed at
-[`results/evidence/qwen_external_validation.txt`](../results/evidence/qwen_external_validation.txt).
+| Budget | R so far | Mean gain | Positive | Note |
+| --- | --- | --- | --- | --- |
+| moderate, W8 | 8 of 8 ✅ | **−0.0353 pp** | 0/8 | small, reliable disadvantage |
+| aggressive, W4 | 5 of 8 | **≈ +0.5 pp** | 5/5 | below the 1.0 pp bar |
+
+**The W4/W8 structure of the Pythia result reproduces on a second family**: W8 inert-to-negative,
+W4 positive but under the bar. Whether it survives all eight draws is what the last three cells
+decide.
+
+Sequential completed all 16 cells packing and reloading on Qwen's **896-wide** rows with no reload
+failure — the [B-46](findings_log.md#4-bugs-found-that-would-have-invalidated-results) guard path
+exercised on an architecture it was not written for, where realised sparsity lands *above* target
+(0.300146) rather than below.
+
+Snapshot regenerable with `python scripts/report_confirmatory.py --models qwen2.5-0.5b`, committed
+at [`results/evidence/qwen_external_validation.txt`](../results/evidence/qwen_external_validation.txt).
+That file is labelled **EXPLORATORY, outside the freeze**, so it cannot be mistaken for the primary
+report.
 
 | Step | State |
 | --- | --- |
@@ -888,7 +898,7 @@ Pace ~26.5 min/cell; the remaining 29 cells are ~13 h. Snapshot regenerable with
 | 4 Adapter | ✅ 168 modules, exclusions clean, sparsity 0.300146, eff. bits 4.0272 |
 | 5 Order selection | ✅ **P→Q both budgets** — [F-40](findings_log.md#f-40) |
 | 6 Freeze | ✅ committed in `protocol.py` with margins |
-| 7 Test grid | 🟡 **36 of 65 cells**, 35 test records, 0 failures |
+| 7 Test grid | 🟡 **62 of 65 cells**, 61 test records, 0 failures, **12 of 16 pairs** |
 | 8 Audit + evidence | ⬜ |
 
 **Resume with the supervisor**, which handles crash recovery and forces offline datasets:

@@ -1,7 +1,7 @@
 ===============================================================================
 EXTERNAL VALIDATION -- test split, EXPLORATORY, outside the A1 step-9 freeze
 ===============================================================================
-54 successful test-split records for qwen2.5-0.5b
+61 successful test-split records for qwen2.5-0.5b
 
 THIS IS NOT THE PRIMARY RESULT and cannot alter it. A different model family means a
 different tokeniser, vocabulary and training corpus, so ABSOLUTE PERPLEXITY IS NOT
@@ -21,19 +21,36 @@ qwen2.5-0.5b / moderate    sequential order: P->Q
     2      95.0364    95.0066   -0.0298  [-0.00052, -0.00010] nats/token, excludes 0
     3      94.9644    94.9516   -0.0129  [-0.00032, +0.00005] nats/token, includes 0
     4      95.0610    95.0120   -0.0490  [-0.00071, -0.00032] nats/token, excludes 0
+    5      95.0226    95.0335   +0.0109  [-0.00008, +0.00031] nats/token, includes 0
+    6      94.9817    94.9454   -0.0363  [-0.00059, -0.00018] nats/token, excludes 0
+    7      95.0915    95.0364   -0.0551  [-0.00077, -0.00039] nats/token, excludes 0
 
-  R = 5    mean -0.0353 pp    sd 0.0151    median -0.0357 pp    range [-0.0491, -0.0129]
-  positive 0    negative 5    ties 0    sign-test n = 5    exact two-sided p = 0.0625
+  R = 8    mean -0.0321 pp    sd 0.0219    median -0.0360 pp    range [-0.0551, +0.0109]
+  positive 1    negative 7    ties 0    sign-test n = 8    exact two-sided p = 0.0703
   >= 1.0 pp: NO     sign-consistent: NO     => §6.3 PRACTICALLY IMPORTANT: NO
+
+-------------------------------------------------------------------------------
+qwen2.5-0.5b / aggressive    sequential order: P->Q
+-------------------------------------------------------------------------------
+  rep  sequential %     joint %   gain pp   95% CI on NLL advantage
+    0      76.5851    77.2868   +0.7017  [+0.00627, +0.01202] nats/token, excludes 0
+    1      76.9815    77.3301   +0.3486  [+0.00139, +0.00758] nats/token, excludes 0
+    2      77.0258    77.6696   +0.6437  [+0.00559, +0.01106] nats/token, excludes 0
+    3      77.1903    77.3171   +0.1268  [-0.00103, +0.00431] nats/token, includes 0
+
+  R = 4    mean +0.4552 pp    sd 0.2680    median +0.4962 pp    range [+0.1268, +0.7017]
+  positive 4    negative 0    ties 0    sign-test n = 4    exact two-sided p = 0.1250
+  >= 1.0 pp: NO     sign-consistent: YES    => §6.3 PRACTICALLY IMPORTANT: NO
 
 ===============================================================================
 SCALE TREND -- mean joint gain by scale
 ===============================================================================
 
   moderate:
-    qwen2.5-0.5b  -0.0353 pp   R=5   0/5 positive   p=0.0625
+    qwen2.5-0.5b  -0.0321 pp   R=8   1/8 positive   p=0.0703
 
   aggressive:
+    qwen2.5-0.5b  +0.4552 pp   R=4   4/4 positive   p=0.1250
 
 ===============================================================================
 MULTIPLE COMPARISONS -- Holm-Bonferroni over every cell examined
@@ -44,9 +61,10 @@ MULTIPLE COMPARISONS -- Holm-Bonferroni over every cell examined
   headline significance comes from one cell out of the number below.
 
   cell                           raw p   adjusted
-  qwen2.5-0.5b/moderate         0.0625     0.0625
+  qwen2.5-0.5b/moderate         0.0703     0.1406
+  qwen2.5-0.5b/aggressive       0.1250     0.1406
 
-  0 of 1 cells significant after correction.
+  0 of 2 cells significant after correction.
   Report the ADJUSTED value. Quoting the raw p while reporting the largest of several
   cells is the inflation this correction exists to remove.
 
@@ -58,5 +76,5 @@ DENSE BASELINES (test split)
 ===============================================================================
 ALL ARMS -- mean retention per cell
 ===============================================================================
-  qwen2.5-0.5b  moderate    pruning=95.11%  quantisation=99.87%  sequential=95.02%  joint=94.97%
-  qwen2.5-0.5b  aggressive  pruning=95.11%  quantisation=79.56%  sequential=76.94%
+  qwen2.5-0.5b  moderate    pruning=95.11%  quantisation=99.87%  sequential=95.02%  joint=94.99%
+  qwen2.5-0.5b  aggressive  pruning=95.11%  quantisation=79.56%  sequential=76.94%  joint=77.40%
