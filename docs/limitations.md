@@ -124,13 +124,14 @@ P→Q won there by 4–7 pp, far outside any plausible order uncertainty.
 ## 8. One model family, one corpus, one evaluation window
 
 - **One family for the primary result.** Every number in [F-37](findings_log.md#f-37) is Pythia.
-  A Qwen2.5-0.5B external-validity leg is **being run** as of 2026-08-11
-  ([F-39](findings_log.md#f-39), [F-40](findings_log.md#f-40)) — but it is exploratory, it cannot
-  alter the primary result, and its absolute perplexity is not comparable to any Pythia number
-  because the tokeniser, vocabulary (151,936) and training corpus all differ. **Only retention
-  ratios and the sign of the joint gain transfer.** If the leg completes, it can support a claim of
-  the form "the W4/W8 structure appears in a second family" and nothing stronger; if it does not
-  complete, this limitation stands unchanged.
+  A Qwen2.5-0.5B external-validity leg **completed 2026-08-14** ([F-41](findings_log.md#f-41)):
+  65 cells, 16/16 pairs, R = 8, 0 failures. It supports exactly one claim — **the W4/W8 structure
+  appears in a second family** (+0.4213 pp at W4, −0.0321 pp at W8) — and nothing stronger.
+  **Neither Qwen cell meets §6.3 and neither is significant** (Holm-adjusted p = 0.1406 for both),
+  so the leg does not strengthen the effect-size claim; it corroborates a *structural* pattern.
+  Absolute perplexity remains incomparable across families (different tokeniser, 151,936
+  vocabulary, different corpus), and **Qwen is not a scale point** — its 358M targeted parameters
+  sit between 410M and 1B, which makes interpolating tempting and wrong.
 - **One corpus.** WikiText for calibration *and* evaluation. Perplexity on a single corpus is the
   primary metric.
 - **One window.** 512 sequences × 512 tokens on the test split. Not a full test set at 2048.

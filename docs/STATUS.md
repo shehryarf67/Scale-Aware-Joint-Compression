@@ -861,63 +861,41 @@ panels so the Q→P series is labelled.*
 (8/8), −0.1794 (0/5) — from a different code path than `report_confirmatory.py`. Two independent
 implementations agreeing is stronger evidence than either alone.
 
-### 🟡 Qwen2.5-0.5B external validation — steps 1–6 done, test grid paused at cell 1 of 65
+### ✅ Qwen2.5-0.5B external validation — COMPLETE 2026-08-14
 
-**Paused 2026-08-13 21:10 at cell 62 of 65.** Exploratory leg; it **cannot alter
-[F-37](findings_log.md#f-37)**.
+**65 cells, 16/16 pairs, R = 8, 0 failures.** Full record: **[F-41](findings_log.md#f-41)**;
+report at
+[`results/evidence/qwen_external_validation.txt`](../results/evidence/qwen_external_validation.txt).
+Exploratory — it **cannot alter [F-37](findings_log.md#f-37)** and is **not a scale point**.
 
-**61 records, 0 failures, 12 of 16 pairs.** dense 1, pruning 16, quantisation 16, sequential 16,
-joint 12. Only **3 cells remain** — joint/aggressive rep5–rep7, roughly **1.5 h**.
+| Budget | R | Mean gain | Positive | Raw *p* | Holm *p* | §6.3 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 30% + W8 | 8 | **−0.0321 pp** | 1/8 | 0.0703 | 0.1406 | NO |
+| 30% + W4 | 8 | **+0.4213 pp** | 7/8 | 0.0703 | 0.1406 | NO |
 
-**Partial result, and it is NOT to be read as final** — the W4 cell has 5 of 8 draws:
+**The W4/W8 structure transfers to a second family**; the verdict does not change. Neither cell
+meets §6.3, and neither is significant before or after correction. The W4 cell fails on **both**
+criteria — 0.58 pp short of the bar *and* not sign-consistent (rep4 at −0.4407 pp).
 
-| Budget | R so far | Mean gain | Positive | Note |
+Across both families every W4 cell is positive and every W8 cell is at or below zero:
+
+| | 160M | 410M | 1B | **Qwen 0.5B** |
 | --- | --- | --- | --- | --- |
-| moderate, W8 | 8 of 8 ✅ | **−0.0353 pp** | 0/8 | small, reliable disadvantage |
-| aggressive, W4 | 5 of 8 | **≈ +0.5 pp** | 5/5 | below the 1.0 pp bar |
+| 30% + W4 | +1.0120 | +0.9348 | +0.1316 | **+0.4213** |
+| 30% + W8 | +0.0381 | +0.0289 | −0.1794 | **−0.0321** |
 
-**The W4/W8 structure of the Pythia result reproduces on a second family**: W8 inert-to-negative,
-W4 positive but under the bar. Whether it survives all eight draws is what the last three cells
-decide.
+**The validation estimate overstated the test result for the third time** — +0.6216 → **+0.4213 pp**.
+160M fell, 410M rose, Qwen fell. The direction varies; the unreliability does not, which is the
+clearest argument available that the two-split design earned its cost. A partial reading would have
+overstated it too: at 5 of 8 draws the cell read ~+0.5 pp with 5/5 positive, and the final three
+draws removed both the magnitude and the sign consistency.
 
-Sequential completed all 16 cells packing and reloading on Qwen's **896-wide** rows with no reload
-failure — the [B-46](findings_log.md#4-bugs-found-that-would-have-invalidated-results) guard path
-exercised on an architecture it was not written for, where realised sparsity lands *above* target
-(0.300146) rather than below.
+**Provenance is cleaner than the primary's:** single pinned revision across all 65 records, single
+host, all CPU, uniform `method_version`, and **zero** null `git_commit` values against the primary's
+two.
 
-Snapshot regenerable with `python scripts/report_confirmatory.py --models qwen2.5-0.5b`, committed
-at [`results/evidence/qwen_external_validation.txt`](../results/evidence/qwen_external_validation.txt).
-That file is labelled **EXPLORATORY, outside the freeze**, so it cannot be mistaken for the primary
-report.
-
-| Step | State |
-| --- | --- |
-| 1 Checkpoint | ✅ pinned SHA `060db649` verified on disk |
-| 2 Dense smoke | ✅ validation ppl **17.7758** |
-| 3 W4 smoke | ✅ joint + sequential; **reload bit-exact, max logit diff 0** |
-| 4 Adapter | ✅ 168 modules, exclusions clean, sparsity 0.300146, eff. bits 4.0272 |
-| 5 Order selection | ✅ **P→Q both budgets** — [F-40](findings_log.md#f-40) |
-| 6 Freeze | ✅ committed in `protocol.py` with margins |
-| 7 Test grid | 🟡 **62 of 65 cells**, 61 test records, 0 failures, **12 of 16 pairs** |
-| 8 Audit + evidence | ⬜ |
-
-**Resume with the supervisor**, which handles crash recovery and forces offline datasets:
-
-```bash
-bash scripts/supervise_sweep.sh configs/experiments/qwen_validation.yaml <log> --isolate-cells
-```
-
-R=8, 65 cells, 16 pairs, ~28 min/cell ≈ **30 h**.
-
-⚠️ **[B-51](findings_log.md#4-bugs-found-that-would-have-invalidated-results) is open and touches this leg.** A record id carries no split, so the
-test-split dense run **overwrote** the validation dense baseline that order selection was measured
-against. F-40's numbers survive — the smoke left a copy under a different id, and every arm record
-stores its own retention — but the fix (split in the id, or refuse cross-split overwrite) changes
-filenames and must wait until this grid is not mid-flight.
-
-**Screening signal, not a result:** joint −0.0144 pp at W8 and **+0.6216 pp** at W4 on validation.
-The W4/W8 structure transfers to a second model family; the confirmatory grid will say whether it
-holds on test.
+⚠️ **[B-51](findings_log.md#4-bugs-found-that-would-have-invalidated-results) is now safe to fix** —
+the grid is no longer mid-flight.
 
 ### The optional experiments — decided 2026-08-11
 

@@ -101,6 +101,85 @@ which is what the arm comparison needs.
 
 ## 2. Findings
 
+### F-41 — External validation on Qwen2.5-0.5B: the W4/W8 structure transfers, the verdict does not change {#f-41}
+
+**Date:** 2026-08-14 · **65 cells, 16/16 pairs, 0 failures, R = 8 at both budgets, test split.**
+**Exploratory. This leg cannot alter [F-37](#f-37)** and is not a fourth scale point. Report:
+[`results/evidence/qwen_external_validation.txt`](../results/evidence/qwen_external_validation.txt),
+regenerable with `python scripts/report_confirmatory.py --models qwen2.5-0.5b`.
+
+#### The result
+
+| Budget | R | Mean gain | sd | Positive | Raw *p* | Holm *p* | §6.3 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| moderate, 30% + W8 | 8 | **−0.0321 pp** | 0.022 | 1/8 | 0.0703 | 0.1406 | **NO** |
+| aggressive, 30% + W4 | 8 | **+0.4213 pp** | 0.413 | 7/8 | 0.0703 | 0.1406 | **NO** |
+
+**Neither cell meets §6.3**, and neither reaches significance before or after correction. The W4
+cell fails on **both** criteria — 0.58 pp short of the 1.0 pp bar *and* not sign-consistent, with
+rep4 at −0.4407 pp.
+
+#### What transfers, and what that is worth
+
+**The W4/W8 structure reproduces on a second model family.** W4 positive (+0.42 pp, 7/8), W8
+negative (−0.03 pp, 1/8). That is the one structural claim which survived the freeze on Pythia
+([F-37](#f-37) §6), and it now holds across two families, two tokenisers and two training corpora.
+
+Across both families the picture is consistent:
+
+| | 160M | 410M | 1B | **Qwen 0.5B** |
+| --- | --- | --- | --- | --- |
+| 30% + W4 | +1.0120 | +0.9348 | +0.1316 | **+0.4213** |
+| 30% + W8 | +0.0381 | +0.0289 | −0.1794 | **−0.0321** |
+
+**Every W4 cell is positive; every W8 cell is at or below zero except two that are indistinguishable
+from it. And no cell in either family meets the practical-importance bar.**
+
+**Qwen is not a scale point and must not be plotted as one.** Different tokeniser, vocabulary
+(151,936) and corpus mean absolute perplexity is incomparable; only retention ratios and the sign
+transfer. Its 358M targeted parameters happen to sit between 410M and 1B, which makes the
+temptation to interpolate obvious and wrong.
+
+#### The validation estimate overstated the test result, again
+
+| | Validation (1 draw) | Test (R=8) | Movement |
+| --- | --- | --- | --- |
+| W4 | +0.6216 pp | **+0.4213 pp** | **−0.20 pp** |
+| W8 | −0.0144 pp | **−0.0321 pp** | −0.02 pp |
+
+**Third time this project has seen a validation figure fail to hold on test** — 160M fell
++1.69 → +1.01, 410M rose +0.39 → +0.93 ([F-37](#f-37)), and now Qwen falls +0.62 → +0.42. The
+direction varies; the unreliability does not. It is the clearest available argument that the
+two-split design earned its cost.
+
+**A partial reading would also have overstated it.** At 5 of 8 draws this cell read ~+0.5 pp with
+5/5 positive; the last three draws included rep4's −0.4407 pp, which removed both the magnitude and
+the sign consistency. Logged at the time as *"not to be read as final"* — and it was not.
+
+#### Conditions
+
+| | |
+| --- | --- |
+| Revision | `060db6499f32faf8b98477b0a26969ef7d8b9987`, single value across all 65 records |
+| Host / split / device | single host · all `test` · all CPU evaluation |
+| `method_version` | **4**, uniform |
+| Null `git_commit` | **0** — cleaner provenance than the primary, which has two ([F-37](#f-37)) |
+| Frozen order | **P→Q at both budgets** ([F-40](#f-40)); no `sequential_qp` cell exists on this leg, so [B-50](#4-bugs-found-that-would-have-invalidated-results)'s dropped-pair mode cannot arise |
+| Mean retention | pruning 95.11% · quantisation 99.87% (W8) / 79.56% (W4) · sequential 76.94% (W4) · joint 77.36% (W4) |
+
+#### What the paper may say from this
+
+**May claim:** the W4-specific structure of the primary result appears in a second model family, at
+a magnitude that also fails the pre-registered practical bar; and that the joint advantage at 8 bits
+is absent or slightly negative in both families.
+
+**May not claim:** that Qwen is a scale point, that its perplexity is comparable to Pythia's, that
+anything here is statistically significant (nothing is, corrected or not), or that this leg
+strengthens the primary result. It is external *validity* evidence for a structural pattern, not
+additional evidence for an effect size.
+
+---
+
 ### F-40 — Qwen2.5-0.5B sequential order frozen: P→Q at both budgets {#f-40}
 
 **Date:** 2026-08-11 · **Validation split, one calibration draw, seven cells, all `success`.**
@@ -3163,6 +3242,10 @@ Full reasoning in [protocol_freeze.md](protocol_freeze.md). Summarised here with
 - At **8 bits** the mechanism yields nothing at 160M and 410M (+0.04, +0.03 pp, sign inconsistent)
   and a **small reliable disadvantage at 1B** (−0.18 pp, 0/5, every bootstrap interval excluding
   zero on the negative side).
+- **The W4/W8 structure holds in a second model family.** Qwen2.5-0.5B, run under the same protocol
+  at R = 8, gives **+0.4213 pp at W4** (7/8) and **−0.0321 pp at W8** (1/8)
+  ([F-41](#f-41)). Neither cell meets §6.3 and neither is significant, so this is evidence for the
+  **structural** claim only — W4-specific, small, sub-threshold — not for any effect size.
 - **The joint advantage does not grow with scale.** It is flat from 160M to 410M (+1.01, +0.93) and
   falls at 1B (+0.13). The study's motivating hypothesis — that joint compression would pay off
   more as models grow — is therefore **not supported**. It must **not** be described as refuted:
@@ -3204,6 +3287,12 @@ Full reasoning in [protocol_freeze.md](protocol_freeze.md). Summarised here with
 - **That the exploratory point estimates were reliable.** Neither replicated: 160M fell from +1.69
   to +1.01 and 410M rose from +0.39 to +0.93 ([F-27](#f-27) vs [F-37](#f-37)). Any narrative built
   on the exploratory numbers is superseded.
+- **That Qwen2.5-0.5B is a scale point, or that its perplexity is comparable to Pythia's.**
+  Different tokeniser, vocabulary and corpus. Its 358M targeted parameters fall between pythia-410m
+  and pythia-1b, so plotting it on the scale axis would look natural and be wrong
+  ([F-41](#f-41)).
+- **That the external leg strengthens the primary result.** Nothing in it is significant, and no
+  cell meets §6.3. It corroborates a structural pattern; it adds no evidence for an effect size.
 - **Anything about absolute quality against published results at the exploratory evaluation window.**
   The screening numbers used 64 sequences at 256 tokens; the confirmatory run used 512 × 512, and
   only the latter is comparable across cells here.
