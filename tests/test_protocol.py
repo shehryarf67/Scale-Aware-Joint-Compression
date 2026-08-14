@@ -364,3 +364,61 @@ class TestTheFiguresAndTablesRefuseToMislead:
         ]
         rows = build_main_results_table(records)
         assert rows[0]["replicates"] == 1
+
+
+class TestACrossSplitWriteDoesNotDestroyTheOtherRecord:
+    """B-51. A record id encodes the cell but NOT the evaluation split.
+
+    So a test-split run writes to the same filename as the validation-split run of the same cell
+    and destroys it. `exists_valid` gates *reuse* on the split and correctly refuses to read the
+    wrong record; nothing gated the *write*.
+
+    It happened: the Qwen test grid overwrote the validation dense baseline its own order selection
+    had been measured against. The figures survived only by luck -- a smoke run had left a copy
+    under a different experiment id.
+    """
+
+    def _record(self, split: str, perplexity: float):
+        from scale_aware_compression.experiments.runner import ExperimentRecord
+
+        return ExperimentRecord(
+            experiment_id="m_dense_moderate_s00_b32_rep0",
+            model_name="m",
+            compression_method="dense",
+            budget_label="moderate",
+            seed=1234,
+            config={"data": {"eval_split": split}},
+            quality={"perplexity": {"perplexity": perplexity}},
+        )
+
+    def test_the_validation_record_survives_a_test_run(self, tmp_path):
+        """The exact Qwen failure: the first record must still be readable afterwards."""
+        from scale_aware_compression.experiments.runner import ExperimentTracker
+
+        tracker = ExperimentTracker(tmp_path)
+        tracker.save(self._record("validation", 17.7758))
+        tracker.save(self._record("test", 17.0962))
+
+        splits = {
+            ((r.get("config") or {}).get("data") or {}).get("eval_split"): (
+                r.get("quality", {}).get("perplexity", {}).get("perplexity")
+            )
+            for r in tracker.load_all()
+        }
+        assert splits == {"validation": 17.7758, "test": 17.0962}, (
+            "both splits must survive; overwriting one deletes the reference other records were "
+            "normalised against"
+        )
+        assert any("__split-validation" in p.name for p in tmp_path.glob("*.json"))
+
+    def test_rerunning_the_same_split_still_overwrites(self, tmp_path):
+        """Archiving must not fire for the ordinary case, or every re-run leaves litter."""
+        from scale_aware_compression.experiments.runner import ExperimentTracker
+
+        tracker = ExperimentTracker(tmp_path)
+        tracker.save(self._record("test", 20.0))
+        tracker.save(self._record("test", 21.0))
+
+        records = tracker.load_all()
+        assert len(records) == 1, "a same-split re-run replaces its record rather than archiving it"
+        assert records[0]["quality"]["perplexity"]["perplexity"] == 21.0

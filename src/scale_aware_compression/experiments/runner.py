@@ -28,6 +28,7 @@ import json
 import shutil
 import subprocess
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -617,6 +618,7 @@ class ExperimentTracker:
         """
         self.output_dir.mkdir(parents=True, exist_ok=True)
         destination = self.record_path(record.experiment_id)
+        self._archive_if_other_split(destination, record)
         try:
             destination.write_text(
                 json.dumps(record.to_dict(), indent=2, sort_keys=False, default=str),
@@ -627,6 +629,68 @@ class ExperimentTracker:
         self.append_csv_row(record)
         LOGGER.info("Recorded %s -> %s", record.experiment_id, destination)
         return destination
+
+    def _archive_if_other_split(self, destination: Path, record: ExperimentRecord) -> None:
+        """Preserve an existing record before overwriting it with one from a different split.
+
+        B-51. A record id encodes model, arm, budget, sparsity, bits and replicate -- but **not the
+        evaluation split**. So a test-split run of a cell writes to the same filename as the
+        validation-split run of that cell and destroys it. `exists_valid` gates *reuse* on the
+        split and correctly refuses to read the wrong record; nothing gated the *write*.
+
+        It happened: the Qwen test grid overwrote the validation dense baseline that its own order
+        selection had been measured against ([F-40](../../docs/findings_log.md#f-40)). The figures
+        survived only because a smoke run had left a copy under a different experiment id and
+        because every arm record stores the retention it computed at run time.
+
+        Renaming rather than refusing, deliberately. Refusing would block the legitimate case --
+        running the same grid on the other split, which is the whole two-split design -- and an
+        error at that point would strand a completed cell. The archived file keeps the `.json`
+        suffix in the same directory, so `load_all` still finds it and every split-aware consumer
+        still filters it correctly; `_load_dense_reference` in particular recovers the reference
+        this bug used to delete.
+
+        Args:
+            destination: Where the new record is about to be written.
+            record: The record about to be written.
+        """
+        if not destination.exists():
+            return
+        try:
+            existing = json.loads(destination.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            # An unreadable record carries no split to compare and no value to preserve.
+            return
+
+        def split_of(payload: Mapping[str, Any]) -> Any:
+            return ((payload.get("config") or {}).get("data") or {}).get("eval_split")
+
+        old_split = split_of(existing)
+        new_split = split_of(record.to_dict())
+        if old_split is None or new_split is None or old_split == new_split:
+            return
+
+        archive = destination.with_name(f"{destination.stem}__split-{old_split}.json")
+        index = 1
+        while archive.exists():
+            index += 1
+            archive = destination.with_name(f"{destination.stem}__split-{old_split}-{index}.json")
+        try:
+            destination.rename(archive)
+        except OSError as error:  # pragma: no cover - filesystem refusal
+            raise ExperimentError(
+                f"Refusing to overwrite the {old_split} record at {destination} with a "
+                f"{new_split} one: it could not be archived ({error}). Move it aside by hand; "
+                "losing it would delete the reference other records were normalised against."
+            ) from error
+        LOGGER.warning(
+            "Record %s already existed for the %r split and this run is %r. Archived the old one "
+            "to %s rather than overwriting it (B-51).",
+            record.experiment_id,
+            old_split,
+            new_split,
+            archive.name,
+        )
 
     def append_csv_row(self, record: ExperimentRecord) -> Path:
         """Write one row to the aggregated CSV, **replacing** any existing row for the same run.
