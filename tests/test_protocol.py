@@ -516,12 +516,16 @@ class TestTheScaleFigureRefusesNonScalePoints:
         ]
 
     def test_a_non_primary_model_is_refused(self, tmp_path):
+        # The refusal happens before any drawing, but apply_style imports matplotlib, and the
+        # no-torch CI job installs neither torch nor matplotlib.
+        pytest.importorskip("matplotlib")
         from scale_aware_compression.visualisation import plots
 
         with pytest.raises(ValueError, match="non-scale-point model"):
             plots.plot_joint_gain_vs_scale(self._trend("qwen2.5-0.5b"), tmp_path)
 
     def test_a_primary_model_still_plots(self, tmp_path):
+        pytest.importorskip("matplotlib")
         from scale_aware_compression.visualisation import plots
 
         written = plots.plot_joint_gain_vs_scale(self._trend("pythia-410m"), tmp_path, name="ok")
@@ -529,6 +533,7 @@ class TestTheScaleFigureRefusesNonScalePoints:
 
     def test_the_external_panel_accepts_what_the_scale_figure_rejects(self, tmp_path):
         """The categorical alternative must exist, or the refusal just blocks the work."""
+        pytest.importorskip("matplotlib")
         from scale_aware_compression.visualisation import plots
 
         written = plots.plot_external_validation(self._trend("qwen2.5-0.5b"), tmp_path)
