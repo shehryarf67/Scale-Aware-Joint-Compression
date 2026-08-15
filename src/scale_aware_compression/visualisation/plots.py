@@ -178,11 +178,30 @@ def save_figure(
 
 
 def apply_style() -> None:
-    """Apply the shared figure style.
+    """Select a headless backend and apply the shared figure style.
+
+    **Agg is forced, and that is not incidental.** Every figure here is written to a file; none is
+    ever shown. The environment default was `tkagg`, an interactive GUI backend, which made the
+    plotting tests intermittently fail -- a flake is worse than a hard failure, because it teaches
+    people to re-run the suite rather than read it -- and would fail outright under CI, which has
+    no display at all.
+
+    Set before `pyplot` is imported, because the backend cannot be changed afterwards. matplotlib
+    is imported lazily throughout this module precisely so this is still possible.
 
     Raises:
         ImportError: If matplotlib is not installed.
     """
+    import matplotlib
+
+    # force=True, not a conditional switch. Guarding on "has pyplot been imported yet" is too weak:
+    # once any earlier code has imported it under an interactive backend the guard skips, and the
+    # next figure still goes through Tk -- which is exactly how the flake survived a first attempt
+    # at this fix, failing with `_tkinter.TclError: invalid command name "tcl_findLibrary"` on
+    # roughly half of runs. Switching unconditionally is safe here because this module only ever
+    # writes files.
+    matplotlib.use("Agg", force=True)
+
     import matplotlib.pyplot as plt
 
     plt.rcParams.update(
