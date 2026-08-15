@@ -132,8 +132,10 @@ Across both families the picture is consistent:
 | 30% + W4 | +1.0120 | +0.9348 | +0.1316 | **+0.4213** |
 | 30% + W8 | +0.0381 | +0.0289 | −0.1794 | **−0.0321** |
 
-**Every W4 cell is positive; every W8 cell is at or below zero except two that are indistinguishable
-from it. And no cell in either family meets the practical-importance bar.**
+**Every W4 cell is positive; every W8 cell is near zero or negative.** Two W8 cells carry a
+small positive mean (+0.0381 at 160M, +0.0289 at 410M) but neither is sign-consistent, so
+neither is distinguishable from zero -- "at or below zero" would overstate it. **And no cell
+in either family meets the practical-importance bar.**
 
 **Qwen is not a scale point and must not be plotted as one.** Different tokeniser, vocabulary
 (151,936) and corpus mean absolute perplexity is incomparable; only retention ratios and the sign
@@ -598,7 +600,7 @@ not statistically established**, and three things stop it being called a refutat
 The defensible claim is: *the advantage did not increase with scale, and the observed direction was
 opposite, but the decline is not established.*
 
-**The W4/W8 split survives confirmation.** Every W8 cell is at or below zero; every W4 cell is above
+**The W4/W8 split survives confirmation.** Every W8 cell is near zero or negative; every W4 cell is above
 it. That is consistent with [F-05](#f-05)'s mechanism prediction (8.86% mask divergence at W4
 against 0.46% at W8) and with the [F-33](#f-33) control, and it is the one structural claim that
 looks the same before and after the freeze.

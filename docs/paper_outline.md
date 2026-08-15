@@ -13,7 +13,10 @@
 > - **The budget grid.** Only **30% + W8** and **30% + W4** were ever run end to end. The 50% and 70% sparsity budgets were screened and rejected as catastrophic ([F-23](findings_log.md#f-23)); no result uses them.
 > - **"Three seeds".** Withdrawn by Amendment A1 and replaced by paired calibration replicates, **R = 8 / 8 / 5**. There is no run-seed axis.
 > - **The results are in.** No cell meets the pre-registered practical-importance bar; the only significant cell is 410M/W4 at **Holm-adjusted p = 0.0469**. Any outline section that assumes a positive headline needs rewriting.
-> - **pythia-1.4b, Qwen2.5-0.5B and 2:4 structured sparsity were NOT run.** Do not outline sections that report them.
+> - **pythia-1.4b and 2:4 structured sparsity were NOT run.** Do not outline sections that report
+>   them. **Qwen2.5-0.5B WAS run** and completed 2026-08-14 ([F-41](findings_log.md#f-41)) — but
+>   it is exploratory external validity, **not a fourth scale point**, and must never appear on
+>   the Figure 1 scale axis.
 > - **There is no latency curve.** [F-34](findings_log.md#f-34) measured a single sparsity (30%) at three scales. A figure from it must not be labelled a curve.
 >
 > The authoritative statement of what the paper may and may not claim is **§6 of
@@ -35,7 +38,8 @@ as the numbers.
 - Pruning and quantisation are normally applied sequentially; joint optimisation is proposed as
   better but is almost always evaluated at a single model size.
 - We measure joint gain — joint minus sequential quality retention at a matched compression budget —
-  across the Pythia suite from 160M to 1.4B parameters, at two budgets, over three seeds, with
+  across the Pythia suite from 160M to 1B parameters, at two budgets, over R = 8/8/5 paired
+  calibration replicates (1.4B was never run; there is no run-seed axis), with
   matched optimisation budgets.
 - All deployment measurements are CPU-based, so we also report whether the theoretical sparsity and
   bit-width reductions translate into measured latency.
@@ -112,10 +116,12 @@ the ones that are easy to get wrong —
 
 ### 3.4 Experimental grid
 
-**3 Pythia sizes** (160M, 410M, 1B) × 5 arms × 2 budgets × 3 seeds. WikiText-2, 512-token
+**3 Pythia sizes** (160M, 410M, 1B) × 5 arms × 2 budgets × **R = 8/8/5 paired calibration
+replicates** — not seeds, which A1 withdrew. WikiText-2, 512-token
 non-overlapping windows.
 
-State plainly that the 1.4B point is optional and reported separately unless it was run under settings
+The 1.4B point was NOT run and must not appear. (Original note, kept for context: it was optional
+and to be reported separately unless run under settings
 identical to the main sweep — and if it was excluded, say why in this section rather than burying it in
 Limitations. Full definitions of the two arms are in `docs/method_definition.md`; cite it, do not
 paraphrase it, so the paper and the code cannot disagree about what was run.
@@ -145,8 +151,13 @@ quantisation implementations behave sensibly before any joint claim is made.
 
 ### 5.2 Joint gain versus scale — the main result
 
-**Figure 1:** joint gain against parameter count, log x axis, one line per budget, error bars from
-the seed spread, horizontal line at zero. The Qwen point marked distinctly and excluded from any fit.
+**Figure 1:** joint gain against parameter count, log x axis, one line per budget, individual
+replicates as faint points with SEM error bars on the means, a horizontal line at zero **and the
+§6.3 practical-importance bar at 1.0 pp**, so the criterion is visible rather than implied.
+**Qwen does NOT appear on this figure** — not even marked distinctly. Its 358M targeted
+parameters fall between pythia-410m and pythia-1b, so any presence on a parameter-count axis
+reads as a scale point. `plot_joint_gain_vs_scale` now raises if handed it. The external leg
+goes in its own categorical W4/W8 panel (`external_validation`), which has no scale axis.
 
 Table 6. State plainly whether the gain exceeds the seed spread at each scale.
 

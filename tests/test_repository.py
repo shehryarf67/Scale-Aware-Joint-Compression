@@ -689,11 +689,22 @@ class TestNoRunArtefactsCommitted:
     * ``results/summaries/*.md`` -- promoted human-readable summaries, already permitted by
       `.gitignore`.
 
-    Everything else -- checkpoints, packed artefacts, logs, figures, raw metrics -- stays out.
+    * ``results/figures/*.{png,pdf}`` and ``results/tables/*.{md,csv}`` -- the paper's figures and
+      tables. Same reasoning as the evidence set, one step further along: a reviewer cannot approve
+      a plot that exists only on the machine that produced it. Small, plain outputs of
+      `scripts/generate_plots.py` and `scripts/build_paper_tables.py`.
+
+    Everything else -- checkpoints, packed artefacts, logs, raw metrics -- stays out. The extension
+    lists matter: they are what stops a stray `.npy` or a 4 GB checkpoint riding along in a
+    directory that is otherwise permitted.
     """
 
     ALLOWED_PREFIXES = ("results/evidence/",)
     ALLOWED_SUFFIXES = (".gitkeep",)
+    ALLOWED_BY_DIRECTORY = {
+        "results/figures/": (".png", ".pdf"),
+        "results/tables/": (".md", ".csv"),
+    }
 
     def _is_permitted(self, path: str) -> bool:
         """Whether a tracked path under these directories is a declared exception."""
@@ -701,6 +712,9 @@ class TestNoRunArtefactsCommitted:
             return True
         if path.startswith(self.ALLOWED_PREFIXES):
             return True
+        for prefix, suffixes in self.ALLOWED_BY_DIRECTORY.items():
+            if path.startswith(prefix):
+                return path.endswith(suffixes)
         return path.startswith("results/summaries/") and path.endswith(".md")
 
     @pytest.mark.parametrize("directory", ["outputs", "results", "data"])

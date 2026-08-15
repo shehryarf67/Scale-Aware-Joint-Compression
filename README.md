@@ -321,31 +321,54 @@ Details in [docs/reproducibility.md](docs/reproducibility.md).
 
 ## Current project status
 
-This repository is a **scaffold**. The structure, configuration system, model registry, metrics,
-and CPU benchmarking harness are in place. The compression algorithms are not.
+**The study is complete.** All experiments have run; what remains is writing.
 
-| Area                                      | Status                       |
-| ----------------------------------------- | ---------------------------- |
-| Repository layout, packaging, tooling     | done                         |
-| CI (lint, format, fast tests)             | done                         |
-| Configuration system and validation       | done                         |
-| Model registry and safe loader            | done                         |
-| Metrics utilities (sparsity, ratio, gain) | done                         |
-| CPU benchmarking harness and statistics   | done                         |
-| Experiment records (JSON + CSV)           | done                         |
-| Method definition and validity analysis   | done                         |
-| **Data loading, chunking, calibration**   | **done**                     |
-| **Perplexity, agreement, generation**     | **done**                     |
-| **CPU benchmark workload (forward/decode)** | **done**                   |
-| **Dense baseline, end to end**            | **done**                     |
-| Pruning                                   | placeholder                  |
-| Quantisation                              | placeholder                  |
-| Sequential pipeline                       | placeholder (stages defined) |
-| Joint pruning-aware quantisation          | placeholder (stages defined) |
-| Layerwise reconstruction + activations    | not started                  |
-| Figures and tables                        | placeholder                  |
+**The headline result is negative on practical importance.** The confirmatory grid
+([F-37](docs/findings_log.md#f-37)) ran once on the held-out test split — 171 cells, 42 pairs, 0
+failures — and **no cell meets the pre-registered practical-importance bar** of ≥1.0 pp with a
+consistent sign. The one statistically significant cell, pythia-410m at 30% + W4, survives
+multiple-comparison correction at **Holm-adjusted p = 0.0469** while landing **0.065 pp short** of
+the bar: real, small, and fragile.
 
-Placeholder modules raise `NotImplementedError` with a pointer to what needs writing, rather than
+| Scale | 30% + W4 | 30% + W8 |
+| --- | --- | --- |
+| pythia-160m | +1.0120 pp (7/8) | +0.0381 pp |
+| pythia-410m | +0.9348 pp (8/8, Holm *p* = 0.0469) | +0.0289 pp |
+| pythia-1b | +0.1316 pp (4/5) | −0.1794 pp (0/5) |
+| **qwen2.5-0.5b** (external) | **+0.4213 pp (7/8)** | **−0.0321 pp** |
+
+**The motivating hypothesis is not supported:** the joint advantage did not increase with scale.
+The observed direction is the opposite, but the cross-scale decline is **not statistically
+established** and the 410M→1B step is confounded with depth
+([F-38](docs/findings_log.md#f-38): pythia-1b has 16 blocks against pythia-410m's 24).
+
+Qwen2.5-0.5B is **external validity, not a fourth scale point** ([F-41](docs/findings_log.md#f-41)).
+
+| Area | Status |
+| --- | --- |
+| Repository layout, packaging, tooling | done |
+| CI (lint, format, fast tests) | done |
+| Configuration system and validation | done |
+| Model registry and safe loader | done |
+| Data loading, chunking, calibration | done |
+| Perplexity, agreement, generation | done |
+| CPU benchmarking harness and statistics | done |
+| Experiment records (JSON + CSV) | done |
+| Pruning, quantisation, sequential, joint | **done** — all five arms through one layerwise driver |
+| Layerwise reconstruction + activations | **done**, verified against three independent anchors |
+| Confirmatory grid (A1 step 10) | **done** — 171 cells, run once |
+| External validation (Qwen2.5-0.5B) | **done** — 65 cells |
+| Figures and tables | **done** — committed under `results/` |
+| Paper | not written |
+
+**Read these before quoting any number:**
+
+- [docs/findings_log.md](docs/findings_log.md) — every measurement with its conditions, and **§6,
+  which states exactly what the paper may and may not claim**
+- [docs/limitations.md](docs/limitations.md) — 16 items, written *before* any interpretation
+- [docs/STATUS.md](docs/STATUS.md) — current state and next steps
+
+Unimplemented paths still raise `NotImplementedError` naming the module to edit, rather than
 silently returning plausible-looking numbers.
 
 ### Open decisions requiring a human choice

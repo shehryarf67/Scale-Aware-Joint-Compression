@@ -877,7 +877,7 @@ Exploratory — it **cannot alter [F-37](findings_log.md#f-37)** and is **not a 
 meets §6.3, and neither is significant before or after correction. The W4 cell fails on **both**
 criteria — 0.58 pp short of the bar *and* not sign-consistent (rep4 at −0.4407 pp).
 
-Across both families every W4 cell is positive and every W8 cell is at or below zero:
+Across both families every W4 cell is positive and every W8 cell is **near zero or negative** — +0.0381 and +0.0289 pp are positive but sign-inconsistent, so neither is distinguishable from zero:
 
 | | 160M | 410M | 1B | **Qwen 0.5B** |
 | --- | --- | --- | --- | --- |
