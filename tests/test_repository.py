@@ -1128,3 +1128,62 @@ class TestTheConfirmatoryManifest:
             pytest.skip("manifest not generated on this machine")
         for key in ("latency", "downstream", "1b_significance", "extended_models"):
             assert key in manifest["exclusion_rules"], f"exclusion {key!r} is not stated"
+
+
+class TestTheRecoveredQwenOrderSelectionEvidence:
+    """B-51 destroyed the validation records that F-40's sequential-order freeze rests on.
+
+    Four were lost from disk -- `sequential` (P→Q) and `joint` at both budgets -- because the test
+    grid wrote to the same filenames. They are recoverable from the evidence set committed at
+    2832914, before the test grid ran, and are extracted to a dedicated artefact so the freeze does
+    not depend on a reader knowing which commit to look in.
+    """
+
+    def test_the_recovered_artefact_matches_history(self, project_root: Path):
+        """Guards against the artefact drifting from the commit it claims to come from."""
+        completed = subprocess.run(
+            [sys.executable, "scripts/recover_qwen_order_selection.py", "--check"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if "no qwen2.5-0.5b validation rows" in completed.stderr:
+            pytest.skip("source commit not present in this clone")
+        assert completed.returncode == 0, completed.stderr
+
+    def test_the_provenance_names_what_was_destroyed(self, project_root: Path):
+        """A recovery without provenance is just a file someone typed."""
+        path = project_root / "results" / "evidence" / "qwen_order_selection_provenance.json"
+        if not path.exists():
+            pytest.skip("recovered artefact not present")
+        provenance = json.loads(path.read_text(encoding="utf-8"))
+        assert provenance["source_commit"], "the source commit must be recorded"
+        assert provenance["record_sha256_at_source"], "per-record hashes must be recorded"
+        destroyed = set(provenance["destroyed_by_b51"])
+        assert any("sequential_" in name and "_qp" not in name for name in destroyed), (
+            "the P→Q records were destroyed and the provenance must say so"
+        )
+        assert any("joint" in name for name in destroyed), (
+            "the joint records were destroyed and the provenance must say so"
+        )
+
+    def test_the_recovered_values_reproduce_the_frozen_order(self, project_root: Path):
+        """The whole point: F-40's margins must be recomputable from the recovered file."""
+        import csv
+
+        path = project_root / "results" / "evidence" / "qwen_order_selection.csv"
+        if not path.exists():
+            pytest.skip("recovered artefact not present")
+        with path.open(encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        by_cell = {
+            (row["budget_label"], row["compression_method"]): float(row["perplexity_retention"])
+            for row in rows
+        }
+        for budget in ("moderate", "aggressive"):
+            pq = by_cell[(budget, "sequential")]
+            qp = by_cell[(budget, "sequential_qp")]
+            assert pq > qp, (
+                f"F-40 froze P→Q at {budget}; the recovered evidence must still show it winning"
+            )
