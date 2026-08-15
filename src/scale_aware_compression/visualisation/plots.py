@@ -47,6 +47,9 @@ BUDGET_LABELS: dict[str, str] = {
 }
 """Budget labels say the recipe. "moderate" alone tells a reader nothing about precision."""
 
+PRIMARY_SCALE_MODELS = ("pythia-160m", "pythia-410m", "pythia-1b")
+"""The only models the scale figure may draw. Anything else is not a point on that axis."""
+
 SEQUENTIAL_METHOD_VALUES = ("sequential", "sequential_qp")
 """Both frozen orders count as the sequential arm (B-42, B-50)."""
 
@@ -225,6 +228,21 @@ def plot_joint_gain_vs_scale(
     usable = [row for row in trend if row.get("comparable") and row.get(GAIN_KEY) is not None]
     if not usable:
         raise ValueError("plot_joint_gain_vs_scale needs at least one comparable trend row")
+
+    # This figure's x-axis is targeted parameters, so ANY model drawn on it reads as a scale point.
+    # The external-validation model is not one: a different family, tokeniser and corpus, with a
+    # parameter count that lands between pythia-410m and pythia-1b. Refusing here as well as in the
+    # calling script is deliberate -- a caller reaching this function directly, or passing
+    # --all-models, must not be able to produce a figure that asserts what §6 of the findings log
+    # forbids. Use plot_external_validation for those.
+    intruders = sorted({str(row.get("model_name")) for row in usable} - set(PRIMARY_SCALE_MODELS))
+    if intruders:
+        raise ValueError(
+            f"plot_joint_gain_vs_scale received non-scale-point model(s): {', '.join(intruders)}. "
+            "The x-axis is targeted parameters, so plotting them here interpolates a different "
+            "model family onto the scale trend. Filter to the primary sweep, or use "
+            "plot_external_validation for a categorical W4/W8 panel."
+        )
 
     # (budget, targeted_parameters) -> every replicate gain. The replicates are plotted
     # individually, not just their mean: F-26 exists because a mean concealed a sign flip, and a
@@ -596,6 +614,115 @@ def plot_training_cost(
         "Fairness audit: gain against solver budget\n"
         "Every point must sit on the dashed line; marker size is model scale"
     )
+    written = save_figure(figure, output_dir, name)
+    plt.close(figure)
+    return written
+
+
+def plot_external_validation(
+    trend: list[dict[str, Any]],
+    output_dir: str | Path,
+    *,
+    name: str = "external_validation",
+) -> list[Path]:
+    """Joint gain by PRECISION, categorical, for models that are not scale points.
+
+    Deliberately has no parameter-count axis. The external-validation model differs from the
+    primary sweep in family, tokeniser (151,936 vocabulary) and training corpus, so its absolute
+    perplexity is incomparable and only retention ratios and the sign of the gain transfer. Its
+    358M targeted parameters fall between pythia-410m and pythia-1b, which makes a scale plot look
+    natural and be wrong -- see docs/findings_log.md §6.
+
+    What the figure is FOR is the structural comparison: W4 positive, W8 at or below zero, in every
+    family measured. Grouping by precision rather than by size is what lets that be read without
+    implying a trend.
+
+    Args:
+        trend: Rows from :func:`~scale_aware_compression.experiments.scale_sweep.scale_trend`,
+            for any mix of models.
+        output_dir: Destination directory.
+        name: Base filename.
+
+    Returns:
+        The paths written.
+
+    Raises:
+        ValueError: If no comparable row carries a gain.
+    """
+    import statistics
+    from collections import defaultdict
+
+    import matplotlib.pyplot as plt
+
+    apply_style()
+    usable = [row for row in trend if row.get("comparable") and row.get(GAIN_KEY) is not None]
+    if not usable:
+        raise ValueError("plot_external_validation needs at least one comparable trend row")
+
+    grouped: dict[tuple[str, str], list[float]] = defaultdict(list)
+    for row in usable:
+        grouped[(str(row.get("model_name")), str(row.get("budget_label")))].append(
+            float(row[GAIN_KEY])
+        )
+
+    models = sorted({model for model, _ in grouped})
+    budgets = [b for b in ("aggressive", "moderate") if any(b == x for _, x in grouped)]
+
+    figure, axes = plt.subplots(figsize=(1.6 * len(models) + 3.0, 4.0))
+    axes.axhline(0.0, color="0.4", linewidth=1.0, zorder=1)
+    axes.axhline(IMPORTANCE_THRESHOLD_PP, color="0.4", linewidth=1.0, linestyle=":", zorder=1)
+    axes.text(
+        0.995,
+        IMPORTANCE_THRESHOLD_PP,
+        " §6.3 bar",
+        transform=axes.get_yaxis_transform(),
+        ha="right",
+        va="bottom",
+        fontsize=8,
+        color="0.35",
+    )
+
+    width = 0.36
+    for index, budget in enumerate(budgets):
+        offsets, means, errors = [], [], []
+        for position, model in enumerate(models):
+            gains = grouped.get((model, budget))
+            if not gains:
+                continue
+            offset = position + (index - (len(budgets) - 1) / 2) * width
+            offsets.append(offset)
+            means.append(statistics.mean(gains))
+            errors.append(statistics.stdev(gains) / (len(gains) ** 0.5) if len(gains) > 1 else 0.0)
+            # Replicates as faint points: a bar of means alone is how F-26 happened.
+            axes.scatter(
+                [offset] * len(gains),
+                gains,
+                s=12,
+                alpha=0.35,
+                color=f"C{index}",
+                zorder=3,
+                linewidths=0,
+            )
+        axes.bar(
+            offsets,
+            means,
+            width,
+            yerr=errors,
+            capsize=3,
+            color=f"C{index}",
+            alpha=0.65,
+            zorder=2,
+            label=BUDGET_LABELS.get(budget, budget),
+        )
+
+    axes.set_xticks(range(len(models)))
+    axes.set_xticklabels(models, rotation=15, ha="right")
+    axes.set_ylabel("Joint gain (pp of perplexity retention)")
+    axes.set_title(
+        "Joint gain by precision, not by scale\n"
+        "Categorical: these models are NOT points on a scale axis"
+    )
+    axes.legend(loc="best")
     written = save_figure(figure, output_dir, name)
     plt.close(figure)
     return written

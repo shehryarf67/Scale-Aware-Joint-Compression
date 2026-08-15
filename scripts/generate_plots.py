@@ -26,7 +26,10 @@ from scale_aware_compression.logging_utils import configure_logging, get_logger,
 
 LOGGER = get_logger(__name__)
 
-FIGURE_NUMBERS = ("1", "2", "3", "4")
+PRIMARY_MODELS = ("pythia-160m", "pythia-410m", "pythia-1b")
+"""The frozen primary sweep. The scale figure is only meaningful over these three."""
+
+FIGURE_NUMBERS = ("1", "2", "3", "4", "5")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -47,6 +50,26 @@ def build_parser() -> argparse.ArgumentParser:
             "Only plot records evaluated on this split (default: test, the confirmatory one). "
             "Pass 'all' to plot everything, which mixes the exploratory validation records with "
             "the confirmatory ones and is almost never what a figure should show"
+        ),
+    )
+    parser.add_argument(
+        "--models",
+        nargs="+",
+        metavar="NAME",
+        help=(
+            "Restrict to these models. DEFAULTS TO THE THREE PYTHIA SCALES, because the scale "
+            "figure has a parameter-count x-axis and the external-validation model is not a scale "
+            "point: qwen2.5-0.5b's 358M targeted parameters fall between pythia-410m and "
+            "pythia-1b, so including it would interpolate a different family, tokeniser and "
+            "corpus onto that axis. Pass it explicitly to plot it on its own"
+        ),
+    )
+    parser.add_argument(
+        "--all-models",
+        action="store_true",
+        help=(
+            "Plot every model present. Use only for a categorical figure with no scale axis; the "
+            "scale figure refuses non-primary models regardless"
         ),
     )
     parser.add_argument(
@@ -166,6 +189,32 @@ def main(argv: list[str] | None = None) -> int:
     # validation records alongside the confirmatory test ones, and a figure that silently averages
     # the two is the B-45 failure in visual form: the shapes match, so nothing complains. The
     # default is the confirmatory split, because that is what a published figure should show.
+    # Model filter BEFORE anything is plotted, and defaulting to the primary sweep. The scale
+    # figure's x-axis is targeted parameters, so any model on it reads as a scale point. Qwen is
+    # not one -- different family, tokeniser (151,936 vocabulary) and corpus, with a parameter
+    # count that lands invitingly between pythia-410m and pythia-1b. A default that silently
+    # included it would produce a publishable-looking figure asserting exactly what
+    # docs/findings_log.md §6 forbids.
+    if not arguments.all_models:
+        wanted = set(arguments.models or PRIMARY_MODELS)
+        kept = [record for record in records if str(record.get("model_name")) in wanted]
+        excluded = sorted({str(r.get("model_name")) for r in records} - wanted)
+        LOGGER.info(
+            "Model filter: %d of %d record(s) kept for %s",
+            len(kept),
+            len(records),
+            ", ".join(sorted(wanted)),
+        )
+        if excluded:
+            LOGGER.info(
+                "Excluded %s. These are not scale points; plot them separately with --models.",
+                ", ".join(excluded),
+            )
+        if not kept:
+            LOGGER.error("No records for models %s", sorted(wanted))
+            return 1
+        records = kept
+
     if arguments.eval_split != "all":
         wanted = arguments.eval_split
         kept = [
@@ -241,6 +290,21 @@ def main(argv: list[str] | None = None) -> int:
                 plots.plot_quality_vs_size(records, figure_directory)
             if "4" in selected:
                 plots.plot_training_cost(records, figure_directory)
+            if "5" in selected:
+                # Categorical, no scale axis. Only meaningful when a non-primary model is present,
+                # which requires --models or --all-models, so it is skipped silently otherwise.
+                external = [
+                    row
+                    for row in trend
+                    if str(row.get("model_name")) not in plots.PRIMARY_SCALE_MODELS
+                ]
+                if external:
+                    plots.plot_external_validation(trend, figure_directory)
+                else:
+                    LOGGER.info(
+                        "Figure 5 skipped: no external-validation model in this record set. "
+                        "Pass --models qwen2.5-0.5b to plot it."
+                    )
 
         if not arguments.figures_only:
             main_table = tables.build_main_results_table(records)

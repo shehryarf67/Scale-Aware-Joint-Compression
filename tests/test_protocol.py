@@ -493,3 +493,43 @@ class TestEvidencePairingRespectsTheEvaluationSplit:
             self._row("joint", "test", 95.5, fingerprint="fp-b"),
         ]
         assert self._gains(rows) == []
+
+
+class TestTheScaleFigureRefusesNonScalePoints:
+    """The x-axis is targeted parameters, so anything drawn on it reads as a scale point.
+
+    qwen2.5-0.5b is not one: a different family, tokeniser and corpus, with 358M targeted
+    parameters that land between pythia-410m and pythia-1b. Once its records shared the output
+    directory, the DEFAULT plotting command included them -- producing a publishable-looking
+    figure that asserts exactly what docs/findings_log.md §6 forbids.
+    """
+
+    def _trend(self, model):
+        return [
+            {
+                "model_name": model,
+                "budget_label": "aggressive",
+                "targeted_parameters": 357826560,
+                "comparable": True,
+                "joint_gain_retention_pp": 0.42,
+            }
+        ]
+
+    def test_a_non_primary_model_is_refused(self, tmp_path):
+        from scale_aware_compression.visualisation import plots
+
+        with pytest.raises(ValueError, match="non-scale-point model"):
+            plots.plot_joint_gain_vs_scale(self._trend("qwen2.5-0.5b"), tmp_path)
+
+    def test_a_primary_model_still_plots(self, tmp_path):
+        from scale_aware_compression.visualisation import plots
+
+        written = plots.plot_joint_gain_vs_scale(self._trend("pythia-410m"), tmp_path, name="ok")
+        assert written and all(p.exists() for p in written)
+
+    def test_the_external_panel_accepts_what_the_scale_figure_rejects(self, tmp_path):
+        """The categorical alternative must exist, or the refusal just blocks the work."""
+        from scale_aware_compression.visualisation import plots
+
+        written = plots.plot_external_validation(self._trend("qwen2.5-0.5b"), tmp_path)
+        assert written and all(p.exists() for p in written)
