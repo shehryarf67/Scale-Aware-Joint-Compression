@@ -5,7 +5,7 @@
     "datasets": "licence and size; the dataset fingerprint in cells.csv identifies them",
     "logs": "transient, and their content is in the findings log"
   },
-  "generated_at_commit": "94cbf78fd0ae6dabc72ca7430417ae7b1923c16f",
+  "generated_at_commit": "ad2c35a0e0354d783b517d117cd4762e0a5d414d-dirty",
   "generated_by": "scripts/export_evidence.py",
   "joint_gain_rows": 72,
   "purpose": "Enough committed, plain-text evidence to recompute every table in docs/findings_log.md from a fresh clone. outputs/ is git-ignored and holds the only copy of the source records, so without this the findings log is assertions rather than a derivation.",

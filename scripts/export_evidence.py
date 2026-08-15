@@ -132,12 +132,38 @@ def _cell_row(record: dict) -> dict:
 
 
 def _joint_gain_rows(rows: list[dict]) -> list[dict]:
-    """Compute per-replicate joint gains against **best-of-sequential**, as §6.1 requires.
+    """Compute per-replicate joint gains, pairing only arms that are actually comparable.
 
-    Emitted as its own table rather than left to the reader, because the best-of step is exactly
-    where B-30 went wrong: measuring against P→Q alone flattered joint. Making the chosen order an
-    explicit column means a reader can see *which* baseline each gain used.
+    THE PAIRING KEY INCLUDES THE EVALUATION SPLIT AND THE DATASET FINGERPRINT (B-52).
+
+    It did not, and that produced a wrong number in a committed table. The key was
+    ``(model, budget, replicate)``, so at ``qwen2.5-0.5b/moderate/rep0`` the **validation** Q->P
+    record was picked as best-of against the **test** joint record: exported ``-0.2143 pp`` where
+    the frozen-order test gain is ``-0.0357 pp``. The two splits produce the same experiment ids by
+    construction, which is why nothing looked wrong -- the same root cause as
+    [B-51](../docs/findings_log.md#4-bugs-found-that-would-have-invalidated-results), seen from the
+    analysis side rather than the write side.
+
+    The fingerprint is in the key as well as the split, because two runs can share a split label and
+    still evaluate different data if the window or corpus changed.
+
+    ON TEST, THE BASELINE IS THE FROZEN ORDER, NOT BEST-OF.
+
+    §3.6 defines the gain against best-of {P->Q, Q->P}, and that is right for a *selection* surface
+    where both orders were run. The confirmatory design supersedes it: A1 §3 selects the order on
+    validation and freezes it, so on the test split only the frozen order exists and taking a
+    maximum over whatever else happens to be present is how a validation record leaked in. Best-of
+    is therefore applied on validation only. This matches `report_confirmatory.py`, which is where
+    F-37 and F-41 come from, so the CSV and the reports can no longer disagree.
+
+    Args:
+        rows: Flattened cell rows.
+
+    Returns:
+        One row per comparable (model, budget, split, replicate).
     """
+    from scale_aware_compression.protocol import ProtocolError, resolve_sequential_order
+
     by_cell: dict[tuple, dict[str, dict]] = {}
     for row in rows:
         if row["status"] != "success" or row["perplexity_retention"] is None:
@@ -145,30 +171,64 @@ def _joint_gain_rows(rows: list[dict]) -> list[dict]:
         method = row["compression_method"]
         if method not in {"sequential", "sequential_qp", "joint"}:
             continue
-        key = (row["model_name"], row["budget_label"], row["calibration_replicate"])
+        key = (
+            row["model_name"],
+            row["budget_label"],
+            row["calibration_replicate"],
+            row.get("eval_split"),
+            row.get("dataset_fingerprint"),
+        )
         by_cell.setdefault(key, {})[method] = row
 
     gains: list[dict] = []
-    for (model, budget, replicate), arms in sorted(by_cell.items(), key=repr):
+    for key, arms in sorted(by_cell.items(), key=repr):
+        model, budget, replicate, split, fingerprint = key
         if "joint" not in arms:
             continue
         available = {k: v["perplexity_retention"] for k, v in arms.items() if k != "joint"}
         if not available:
             continue
-        best_order = max(available, key=lambda k: available[k])
-        best = available[best_order]
+
+        if split == "test":
+            try:
+                frozen = resolve_sequential_order(model, budget).value
+            except ProtocolError:
+                # No freeze recorded: emit nothing rather than guess a baseline. A gain against an
+                # unresolved order is exactly B-30.
+                LOGGER.warning(
+                    "No frozen order for %s/%s; skipping its test-split gain rows", model, budget
+                )
+                continue
+            if frozen not in available:
+                LOGGER.warning(
+                    "%s/%s/rep%s on test has no %s record; skipping rather than substituting "
+                    "another order",
+                    model,
+                    budget,
+                    replicate,
+                    frozen,
+                )
+                continue
+            baseline_order, baseline = frozen, available[frozen]
+        else:
+            baseline_order = max(available, key=lambda k: available[k])
+            baseline = available[baseline_order]
+
         joint = arms["joint"]["perplexity_retention"]
         gains.append(
             {
                 "model_name": model,
                 "budget_label": budget,
                 "calibration_replicate": replicate,
+                "eval_split": split,
+                "dataset_fingerprint": fingerprint,
                 "sequential_pq_retention": available.get("sequential"),
                 "sequential_qp_retention": available.get("sequential_qp"),
-                "best_of_order": best_order,
-                "best_of_retention": best,
+                "baseline_order": baseline_order,
+                "baseline_rule": "frozen" if split == "test" else "best-of",
+                "baseline_retention": baseline,
                 "joint_retention": joint,
-                "joint_gain_pp": joint - best,
+                "joint_gain_pp": joint - baseline,
                 "orders_available": len(available),
             }
         )

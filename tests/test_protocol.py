@@ -422,3 +422,74 @@ class TestACrossSplitWriteDoesNotDestroyTheOtherRecord:
         records = tracker.load_all()
         assert len(records) == 1, "a same-split re-run replaces its record rather than archiving it"
         assert records[0]["quality"]["perplexity"]["perplexity"] == 21.0
+
+
+class TestEvidencePairingRespectsTheEvaluationSplit:
+    """B-52. The exported joint-gain table paired arms across evaluation splits.
+
+    The key was (model, budget, replicate), and the two splits produce the same experiment ids by
+    construction, so at qwen2.5-0.5b/moderate/rep0 the VALIDATION Q→P record was selected as
+    best-of against the TEST joint record: -0.2143 pp exported where the frozen-order test gain is
+    -0.0357 pp. Same root cause as B-51, seen from the analysis side.
+    """
+
+    def _row(self, method, split, retention, replicate=0, fingerprint="fp-a"):
+        return {
+            "model_name": "qwen2.5-0.5b",
+            "budget_label": "moderate",
+            "calibration_replicate": replicate,
+            "compression_method": method,
+            "status": "success",
+            "perplexity_retention": retention,
+            "eval_split": split,
+            "dataset_fingerprint": fingerprint,
+        }
+
+    def _gains(self, rows):
+        import importlib.util
+        from pathlib import Path
+
+        spec = importlib.util.spec_from_file_location(
+            "_export_evidence", Path("scripts/export_evidence.py")
+        )
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        return module._joint_gain_rows(rows)
+
+    def test_a_validation_record_never_becomes_a_test_baseline(self):
+        """The exact Qwen failure, pinned to the numbers it produced."""
+        rows = [
+            self._row("sequential", "test", 95.01302088492389),
+            self._row("joint", "test", 94.97733340482291),
+            self._row("sequential_qp", "validation", 95.19164673718451),
+        ]
+        gains = self._gains(rows)
+        test_rows = [g for g in gains if g["eval_split"] == "test"]
+        assert len(test_rows) == 1
+        assert test_rows[0]["joint_gain_pp"] == pytest.approx(-0.03568748, abs=1e-6), (
+            "must be the frozen-order test gain, not -0.2143 against a validation Q→P record"
+        )
+        assert test_rows[0]["baseline_order"] == "sequential"
+        assert test_rows[0]["baseline_rule"] == "frozen"
+
+    def test_validation_still_uses_best_of_both_orders(self):
+        """Best-of is correct on a selection surface where both orders were actually run."""
+        rows = [
+            self._row("sequential", "validation", 95.0),
+            self._row("sequential_qp", "validation", 95.5),
+            self._row("joint", "validation", 95.2),
+        ]
+        gains = self._gains(rows)
+        assert len(gains) == 1
+        assert gains[0]["baseline_rule"] == "best-of"
+        assert gains[0]["baseline_order"] == "sequential_qp"
+        assert gains[0]["joint_gain_pp"] == pytest.approx(-0.3, abs=1e-9)
+
+    def test_a_differing_dataset_fingerprint_does_not_pair(self):
+        """Same split label is not enough: the window or corpus can still differ."""
+        rows = [
+            self._row("sequential", "test", 95.0, fingerprint="fp-a"),
+            self._row("joint", "test", 95.5, fingerprint="fp-b"),
+        ]
+        assert self._gains(rows) == []

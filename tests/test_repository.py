@@ -936,7 +936,9 @@ class TestTheCommittedEvidenceSetIsCurrent:
         """§6.1 requires best-of {P→Q, Q→P}. B-30 was measuring against the weaker order.
 
         Making the chosen order an explicit column is what lets a reader check it rather than
-        assume it.
+        assume it. B-52 added the RULE alongside the order: on the test split the baseline is the
+        frozen order, not a maximum, because only one order was ever run there and maximising over
+        whatever else is present is how a validation record leaked into a test comparison.
         """
         import csv
 
@@ -946,10 +948,34 @@ class TestTheCommittedEvidenceSetIsCurrent:
         with path.open(encoding="utf-8", newline="") as handle:
             rows = list(csv.DictReader(handle))
         assert rows, "joint_gains.csv is empty"
-        assert "best_of_order" in rows[0]
-        assert "orders_available" in rows[0]
+        for column in ("baseline_order", "baseline_rule", "orders_available", "eval_split"):
+            assert column in rows[0], f"joint_gains.csv must export {column!r}"
         for row in rows:
-            assert row["best_of_order"] in {"sequential", "sequential_qp"}
+            assert row["baseline_order"] in {"sequential", "sequential_qp"}
+            assert row["baseline_rule"] in {"frozen", "best-of"}
+            # B-52: a test-split gain must never be taken against a maximum.
+            if row["eval_split"] == "test":
+                assert row["baseline_rule"] == "frozen"
+
+    def test_joint_gains_never_pair_across_evaluation_splits(self, evidence_dir: Path):
+        """B-52. Both splits produce the same experiment ids, so this cannot be eyeballed.
+
+        The exported table once carried -0.2143 pp for qwen2.5-0.5b/moderate/rep0, formed from a
+        validation Q→P record and a test joint record. The frozen-order test gain is -0.0357 pp.
+        """
+        import csv
+
+        path = evidence_dir / "joint_gains.csv"
+        if not path.exists():
+            pytest.skip("evidence set not present")
+        with path.open(encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        for row in rows:
+            assert row.get("eval_split"), "every gain row must name the split it came from"
+            assert row.get("dataset_fingerprint"), (
+                "every gain row must name the evaluated data; a shared split label is not proof "
+                "the same corpus and window were used"
+            )
 
     def test_the_manifest_hashes_every_source_record(self, evidence_dir: Path):
         """The substitute for committing excluded artefacts: they stay identifiable."""
