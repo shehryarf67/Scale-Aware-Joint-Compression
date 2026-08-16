@@ -26,12 +26,12 @@ Secondary questions and the full framing live in [docs/research_question.md](doc
 - Nearly all published pruning + quantisation results are reported at a **single model size**, so
   it is unclear whether an advantage measured on a small model still exists at a larger one.
 - Compression papers frequently report *theoretical* sparsity and bit-width reductions rather
-  than **measured CPU latency**, which is what actually matters for commodity deployment.
+  than **measured CPU latency**, a relevant secondary outcome for local and edge deployment.
 - Joint optimisation costs additional training compute. That cost needs to be reported next to the
   quality benefit so the trade-off is legible.
-- The Pythia suite is trained with an identical data order and recipe across sizes, which makes it
-  one of the few model families where "model scale" can be treated as a genuinely controlled
-  independent variable.
+- The Pythia suite holds the data order, tokeniser, and training recipe unusually constant across
+  sizes. It reduces cross-model confounding, although architecture and depth still change and scale
+  is therefore not a perfectly isolated independent variable.
 
 ## Models
 
@@ -43,19 +43,15 @@ recipe fixed across sizes:
 | `pythia-160m`  | `EleutherAI/pythia-160m`  | **main** scale sweep                          |
 | `pythia-410m`  | `EleutherAI/pythia-410m`  | **main** scale sweep                          |
 | `pythia-1b`    | `EleutherAI/pythia-1b`    | **main** scale sweep                          |
-| `pythia-1.4b`  | `EleutherAI/pythia-1.4b`  | *extended* sweep — optional, hardware-dependent |
-| `qwen2.5-0.5b` | `Qwen/Qwen2.5-0.5B`       | optional external validation                  |
+| `pythia-1.4b`  | `EleutherAI/pythia-1.4b`  | registered extension — not run or analysed   |
+| `qwen2.5-0.5b` | `Qwen/Qwen2.5-0.5B`       | completed exploratory external validation    |
 
-The **main sweep is three models** (`main_scale_sweep.yaml`). `pythia-1.4b` lives in
-`extended_scale_sweep.yaml` and is run only after the main sweep succeeds — and it counts as a fourth
-scale point only if it can be run with settings identical to the main sweep. A 1.4B run that needed
-bf16, a smaller effective batch size, or gradient checkpointing differs from the 1B run in more than
-scale, so mixing it into the trend would attribute a training-settings difference to model scale. In
-that case it is reported separately and excluded from the trend.
+The **completed main sweep is three models** (`main_scale_sweep.yaml`). `pythia-1.4b` remains a
+registered, unexecuted follow-up in `extended_scale_sweep.yaml`; it is not evidence in this study.
 
-Qwen2.5-0.5B is deliberately *not* part of the scale sweep. It is a different family with a
-different tokeniser and training recipe, and is used only to check whether a trend observed within
-Pythia transfers outside it.
+Qwen2.5-0.5B is deliberately *not* part of the scale sweep. Its completed run is an exploratory
+external-family check, reported categorically because its tokeniser, architecture, and training
+recipe differ from Pythia.
 
 Model revisions ship unpinned. **Pilot runs may leave them unpinned; every result cited in the paper
 must use a pinned commit SHA** — see [reproducibility.md](docs/reproducibility.md#model-revisions).
@@ -103,10 +99,8 @@ neither was usable anywhere.
 
 Two consequences worth reading before interpreting any table:
 
-- **The frozen pair varies precision, not sparsity.** Both budgets prune 30%. So the sparsity-versus-
-  latency curve research question 4 asks for does **not** come from these budgets; it comes from
-  benchmark-only runs of the pruning-only arm at several sparsities, which are cheap because that arm
-  stays FP32.
+- **The frozen pair varies precision, not sparsity.** Both budgets prune 30%. The completed study
+  therefore has one non-zero sparsity and cannot estimate a sparsity–latency curve.
 - **4-bit was chosen because it is the only regime where the joint mechanism is measurably live** —
   8.86% mask divergence at W4 against 0.46% at W8. Two 8-bit budgets could not detect the effect this
   study exists to measure, and would produce a confident null that was an artefact of the design.
@@ -122,10 +116,10 @@ The aggressive budget carries a real constraint, resolved as **decision D1**:
 - **Latency and size results are not comparable if the moderate and aggressive settings use different
   runtimes or artefact formats.** The same applies across arms with more force: a 4-bit joint artefact
   measured against an INT8 sequential artefact is not a joint-gain measurement at all.
-**Resolved as D1:** PyTorch native CPU **INT8**, engine **`onednn`**, is the sole latency backend. W4
-contributes quality and checkpoint size only and **never appears in a latency table**. Research
-question 4 survives because the sparsity→latency curve comes from the pruning-only arm, whose weights
-stay FP32.
+**Resolved as D1 (the frozen INT8 fallback):** PyTorch native CPU **INT8**, engine **`onednn`**, is
+the sole latency backend. W4 contributes quality and checkpoint size only and **never appears in a
+latency table**. The CPU result is hardware-specific and secondary; it is not evidence about GPU or
+packed-sparse runtimes.
 
 One correction found by probing rather than reading documentation: every PyTorch tutorial names the
 engine `x86`, but on the pinned torch 2.13.0+cu126 `supported_engines` is **`['onednn']` only**. The
@@ -233,11 +227,10 @@ python scripts/run_scale_sweep.py --config configs/experiments/main_scale_sweep.
 python scripts/run_scale_sweep.py --config configs/experiments/main_scale_sweep.yaml
 python scripts/generate_plots.py  --results outputs/metrics --output outputs/figures
 
-# optional external validation
+# reproduce the completed external validation (not a fourth scale point)
 python scripts/run_scale_sweep.py --config configs/experiments/qwen_validation.yaml
 
-# optional extended sweep: adds pythia-1.4b. Run only after the main sweep succeeds, and only if
-# the settings can be held identical to it -- see the header of the config.
+# registered follow-up, not part of the completed study; do not mix it into the primary trend
 python scripts/run_scale_sweep.py --config configs/experiments/extended_scale_sweep.yaml
 ```
 
@@ -306,7 +299,8 @@ Full detail, including the extra items for a promoted *set*, is in
 
 ## Reproducibility notes
 
-- One seed per run, recorded in the run record; the sweep repeats each cell over several seeds.
+- Paired calibration replicates are the uncertainty axis: R = 8 at 160M and 410M, and R = 5 at 1B;
+  each pair uses the same calibration replicate in the sequential and joint arms.
 - Every record stores the git commit, hardware metadata, and resolved library versions.
 - Configurations are files, not command-line flags. Overrides are possible
   (`--override key.path=value`) but are serialised into the record, so a run is always
@@ -328,7 +322,7 @@ Details in [docs/reproducibility.md](docs/reproducibility.md).
 failures — and **no cell meets the pre-registered practical-importance bar** of ≥1.0 pp with a
 consistent sign. The one statistically significant cell, pythia-410m at 30% + W4, survives
 multiple-comparison correction at **Holm-adjusted p = 0.0469** while landing **0.065 pp short** of
-the bar: real, small, and fragile.
+the bar: statistically detectable under the sign test, sub-threshold, and fragile.
 
 | Scale | 30% + W4 | 30% + W8 |
 | --- | --- | --- |
@@ -347,7 +341,7 @@ Qwen2.5-0.5B is **external validity, not a fourth scale point** ([F-41](docs/fin
 | Area | Status |
 | --- | --- |
 | Repository layout, packaging, tooling | done |
-| CI (lint, format, fast tests) | done |
+| CI (lint, format, fast tests) | configured; verify the latest run in GitHub Actions |
 | Configuration system and validation | done |
 | Model registry and safe loader | done |
 | Data loading, chunking, calibration | done |
@@ -371,19 +365,12 @@ Qwen2.5-0.5B is **external validity, not a fourth scale point** ([F-41](docs/fin
 Unimplemented paths still raise `NotImplementedError` naming the module to edit, rather than
 silently returning plausible-looking numbers.
 
-### Open decisions requiring a human choice
+### Frozen methodological decisions
 
-Three methodological questions cannot be resolved from the code, and all three should be settled
-**before** the first main experiment — not after seeing which choice produces a nicer result:
-
-1. **The final CPU quantisation backend.** Constrains every downstream bit-width choice, so decide it
-   first. Candidates: PyTorch native `x86` / `fbgemm` (INT8 only), or an external runtime with 4-bit
-   CPU support.
-2. **The exact joint mask-scoring rule.** Rank by absolute fake-quantised weight magnitude, or by
-   absolute FP32 shadow-weight magnitude with fake quantisation active throughout?
-   [method_definition.md](docs/method_definition.md#mask-scoring) recommends the latter, with reasons;
-   confirm or override it.
-3. **Whether 4-bit stays in the main study** or the INT8 fallback is adopted. Follows from (1).
+The choices that were open during planning were frozen before confirmation and are recorded in
+[protocol_freeze.md](docs/protocol_freeze.md): D1 uses PyTorch native INT8/`onednn` for CPU latency
+and excludes W4 from latency; D2 uses damped ALS reconstruction; D3 uses activation-weighted
+magnitude scored under quantised weights. W4 remains in the quality study.
 
 ## Documentation
 
@@ -395,14 +382,14 @@ Three methodological questions cannot be resolved from the code, and all three s
 | [experiment_protocol.md](docs/experiment_protocol.md) | the run tables, execution order, pre/post-run checklists |
 | [benchmarking_protocol.md](docs/benchmarking_protocol.md) | CPU measurement rules and backend constraints |
 | [validity_threats.md](docs/validity_threats.md) | what could still make these results wrong |
-| [reproducibility.md](docs/reproducibility.md) | seeds, revision pinning, record contents, promotion checklist |
+| [reproducibility.md](docs/reproducibility.md) | replicates, revision pinning, record contents, promotion checklist |
 | [paper_outline.md](docs/paper_outline.md) | how the results become a write-up |
 
 ## Disclaimer
 
-This project is under **active research development**. Interfaces, configuration keys, and the
-result schema are expected to change without notice, and no result produced by the current state
-of this repository should be treated as a finding.
+This project remains under research development, but the promoted records and generated artefacts
+under `results/` are the frozen evidence for the completed study. Development outputs elsewhere are
+not paper findings unless they pass the promotion and audit checks.
 
 ## Licence
 

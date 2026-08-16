@@ -24,8 +24,8 @@
 > ⚠️ **Correct the significance for multiple comparisons.** Six cells were examined. 410M's raw
 > p = 0.0078 becomes **0.0469 under Holm–Bonferroni** — still below 0.05, by 0.0031. No other cell
 > survives correction (next best 0.3125). **Quote 0.0469, never 0.0078.** The same cell is both
-> marginally significant *and* 0.065 pp short of the practical bar, so the effect is **real but
-> small and fragile**, not established.
+> marginally significant *and* 0.065 pp short of the practical bar, so it is **statistically
+> detectable under this sign test but sub-threshold and fragile**, not a practically established win.
 >
 > **The motivating hypothesis is NOT SUPPORTED:** joint does not pay off *more* at scale. The
 > observed direction is the opposite — flat 160M→410M, falling at 1B — but **the cross-scale decline
@@ -35,7 +35,8 @@
 >
 > **No further tuning is permitted.** Step 10 runs once. What remains is analysis and writing.
 
-**Last updated:** 2026-08-10 · **Phases 0, 5, 6, 7 complete; A1 steps 1–10 complete.** The pipeline
+**Last updated:** 2026-08-16 · **Experiments and evidence generation complete; paper writing may begin.**
+Phases 0, 5, 6, 7 and A1 steps 1–10 are complete. The pipeline
 passes three independent correctness anchors, the budgets and both sequential orders were frozen per
 cell on validation, and the confirmatory grid has now been executed once on the test split under the
 step-9 freeze. Governed by [Protocol Amendment A1](protocol_amendment_a1.md).
@@ -83,7 +84,11 @@ is not by itself evidence the environment is stable.
 
 ---
 
-## ⚠️ Who is on what — claim a task here *before* starting it
+## Historical coordination snapshot — closed 2026-08-14
+
+The table below is retained to explain ownership and duplicate-work history. Its open-looking rows
+are stale and must not be used as the current project status: evidence export, confirmation, and the
+Qwen run are complete; the 1.4B extension was deliberately not run.
 
 On **2026-08-01** both authors independently did the same three tasks on the same day — per-block
 offload, the 1B selection config, and GPU quality evaluation. Two people, one day, one result.
@@ -108,7 +113,10 @@ decisions agreeing, joint gain inside our three-draw range. It goes in the paper
 replication. **Do not merge that branch**: it lacks the B-35 fix and the runner's GPU-evaluation
 wiring, and its `F-31`/`B-34` entries collide with different content here in an append-only log.
 
-## Where we are
+## Historical implementation checkpoint
+
+This section records the state on 2026-08-01. The submission status at the top of this document and
+the evidence inventory near the end are authoritative.
 
 Infrastructure, the Phase 0 decisions, the compression primitives and the layerwise driver are all
 done. **Every arm runs from a config to a run record on real Pythia-160M.**
@@ -822,13 +830,14 @@ analysis and writing, in this order:
 | [`results/evidence/confirmatory_report.txt`](../results/evidence/confirmatory_report.txt) | `python scripts/report_confirmatory.py` | Per-replicate gains, bootstrap CIs, sign tests, Holm correction |
 | [`results/evidence/diagnostics_report.txt`](../results/evidence/diagnostics_report.txt) | `python scripts/report_diagnostics.py` | Mechanism evidence: mask divergence, layer advantage, layer objective, additive NLL, budget realisation |
 | [`limitations.md`](limitations.md) | — | 16 items, drafted **before** any interpretation |
-| `results/evidence/*.csv` | `python scripts/export_evidence.py` | 225 cells, 56 gain rows, 99,877 window rows — recompute any interval |
+| `results/evidence/*.csv` | `python scripts/export_evidence.py` | 293 cells, 72 gain rows, 134,693 window rows, plus 8 Qwen order-selection rows — recompute any interval |
 | Gate | `python scripts/audit_confirmatory_run.py` | Must print **AUDIT PASSED** |
 
 ### ✅ Figures and tables — implemented 2026-08-11
 
 The visualisation layer was scaffold (every function raised `NotImplementedError`). It is now
-implemented and produces four figures plus two tables from the **171 test-split records**:
+implemented and defaults to three paper-facing Pythia figures plus two tables from the **171
+test-split records**:
 
 ```bash
 python scripts/generate_plots.py --output results/figures --tables-output results/tables
@@ -838,20 +847,19 @@ python scripts/generate_plots.py --output results/figures --tables-output result
 | --- | --- |
 | `joint_gain_vs_scale` | The headline. Individual replicates as faint points, means with SEM bars, zero line, and the **§6.3 bar at 1.0 pp** so the criterion is visible rather than implied |
 | `quality_vs_size` | Pareto view per scale; joint sits just above sequential at 160M and 410M |
-| `latency_vs_sparsity` | **Not a curve** — one non-zero sparsity. Cross-session series are drawn hollow/dashed and named |
 | `training_cost` | Fairness audit: every point must sit at ratio 1.0, and all six do |
 | `results/tables/joint_gain.{md,csv}` | Reproduces T1 from an independent code path |
 | `results/tables/main_results.{md,csv}` | 27 rows, every arm × scale × budget, R per row |
 
 **Two defects were caught in the figures before anything was published.**
 
-*The latency figure showed pythia-1b at **1.66× speedup, above the theoretical bound of 1.43×** —
+*The diagnostic latency figure showed pythia-1b at **1.66× speedup, above the theoretical bound of 1.43×** —
 physically impossible, since pruned weights stay FP32 and dense in storage. It is
 [B-49](findings_log.md#4-bugs-found-that-would-have-invalidated-results): the 1B dense baseline was
 measured 2026-08-05 and its sparse counterpart 2026-08-07. The figure now **detects a bound
-violation**, draws that series hollow and dashed, names it in the caption and logs an error. Only
-pythia-160m is same-session, and it shows ~1.00 — no speedup, matching
-[F-34](findings_log.md#f-34).*
+violation** and logs an error. Because the mixed-session ratios are not citable, that diagnostic is
+now explicit opt-in and its generated files are excluded from the curated `results/` directory. The
+paper uses the same-session prefill/decode table from [F-34](findings_log.md#f-34) instead.*
 
 *Arm colours were assigned by position within each subplot, so `sequential_qp` at 1B took the colour
 `sequential` held elsewhere. Colour is now keyed to the arm, and the legend is gathered across all
