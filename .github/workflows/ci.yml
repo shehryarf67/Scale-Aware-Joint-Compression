@@ -38,6 +38,10 @@ jobs:
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
+        with:
+          # The Qwen provenance test reconstructs its evidence from commit 2832914.
+          # A shallow checkout cannot verify that historical source object.
+          fetch-depth: 0
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
