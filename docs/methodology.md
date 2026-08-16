@@ -1,18 +1,18 @@
 # Methodology
 
-> # ⚠️ SUPERSEDED IN PART — read [F-37](findings_log.md#f-37) first
+> # Current corrections to the original plan
 >
-> **Updated 2026-08-11.** This document was written **before** the confirmatory run. A1 step 10 has
+> **Updated 2026-08-16.** This document was written **before** the confirmatory run. A1 step 10 has
 > since been executed once on the test split and the study has its answer:
 > **[F-37](findings_log.md#f-37)** (the result), **[F-38](findings_log.md#f-38)** (mechanism
 > diagnostics), **[limitations.md](limitations.md)** (what the result may not claim).
 >
-> **Specifically stale below, and superseded rather than corrected in place** — this file records
-> what was *planned*, which is worth keeping legible:
+> Planning language retained later in this document should be read subject to these corrections:
 >
 > - **"Three seeds" / run-seed language is withdrawn** by Amendment A1. The uncertainty axis is **paired calibration replicates**, R = 8 at 160M and 410M, **R = 5 at 1B** — and at R = 5 no significance claim is reachable at any effect size.
 > - **50% and 70% budgets were screened and rejected.** Only 30% + W8 and 30% + W4 were run.
-> - **The optional external run (Qwen2.5-0.5B) and pythia-1.4b were NOT executed.** Both remain registered and pinned; neither has a result.
+> - **Qwen2.5-0.5B was executed as exploratory external validation.** It is not a fourth scale point.
+>   `pythia-1.4b` remains registered but was not executed and is not evidence in this study.
 > - **Only the frozen sequential order was run in confirmation**, not best-of-both — see [limitations.md](limitations.md) §7 for what that costs the W8 cells.
 >
 > The authoritative statement of what the paper may and may not claim is **§6 of
@@ -20,28 +20,27 @@
 
 ## Design
 
-A controlled scale sweep within one model family, plus an optional external validation run in a
-second family.
+A three-point scale sweep within one model family, plus a completed exploratory external-validation
+run in a second family.
 
 ```
-              MAIN Pythia scale sweep (controlled)          EXTENDED (optional)
+              MAIN Pythia scale sweep                       REGISTERED, NOT RUN
     160M ────────── 410M ────────── 1B          ┊ ┈┈┈┈┈┈┈┈ 1.4B
       │               │              │          ┊            ┊
-      └── 5 arms x 2 budgets x 3 seeds ─────────┘   same, but only if the
-                                                     settings are identical
+      └── 5 arms x 2 budgets x paired replicates ───┘   excluded from this study
+          R = 8          R = 8          R = 5
 
                     External validation (not a sweep point)
                           Qwen2.5-0.5B
-                     same arms, budgets, seeds
+                 same arms/budgets, R = 8; completed
 ```
 
 ### Why the Pythia suite
 
-Model scale is only a usable independent variable if nothing else changes with it. The Pythia suite
-is trained with the same data in the same order with the same recipe at every size, which is what
-makes a like-for-like comparison across sizes possible. Comparing, say, GPT-2 to Llama-2-7B would
-vary scale, data, tokeniser, architecture, and training budget simultaneously, and no result could
-be attributed to scale.
+The Pythia suite is trained with the same data order, tokeniser, and recipe at every size, reducing
+several important cross-model confounds. It does not isolate parameter count perfectly: architecture
+and depth still change, including 24 blocks at 410M versus 16 at 1B. The analysis therefore reports
+an association across these three Pythia checkpoints, not a causal scaling law.
 
 **Main sweep: 160M, 410M, 1B.** Three points spanning roughly one order of magnitude — enough to
 establish the direction of a trend, not enough to fit a scaling law.
@@ -240,10 +239,11 @@ result.
 on mismatch by default; full hardware metadata in every record; benchmark device constrained to CPU
 by the config loader.
 
-### 7. Seed repeats before conclusions
+### 7. Paired calibration replicates before conclusions
 
-*Mechanism:* three seeds per cell; the spread is reported alongside the mean. A gain smaller than
-the spread is reported as inconclusive.
+*Mechanism:* sequential and joint runs are paired on the same calibration replicate, with R = 8 at
+160M and 410M and R = 5 at 1B. The analysis reports replicate-level differences, bootstrap intervals,
+sign consistency, and multiplicity-adjusted sign tests. At R = 5, significance is unreachable.
 
 ## Threats to validity
 
@@ -253,12 +253,12 @@ is in [validity_threats.md](validity_threats.md).
 | Threat | Mitigation | Residual risk |
 | --- | --- | --- |
 | Joint arm gets more effective training | matched step budgets, recorded per stage | equal steps is not identical optimisation difficulty |
-| Small evaluation set makes gains noisy | 512 sequences, three seeds, spread reported | perplexity differences of <1% remain hard to resolve |
-| Unstructured sparsity gives no CPU speedup | measured latency reported against the theoretical bound | a null latency result is a finding about the runtime as much as the method |
-| 4-bit may need a different backend from INT8 | one backend per table; INT8 fallback documented | **decision still open**; cross-budget latency comparison invalid if unresolved |
+| Small evaluation set makes gains noisy | 512 sequences, paired replicates and intervals reported | perplexity differences of <1% remain hard to resolve |
+| Unstructured sparsity gives no CPU speedup | same-session prefill/decode timing at the single frozen sparsity | one CPU/runtime cannot establish accelerator behaviour or a latency curve |
+| 4-bit lacks the frozen INT8 CPU backend | W4 is excluded from latency under D1 | latency conclusions apply only to W8/FP32 on the measured CPU path |
 | Only one corpus | fingerprinted and fixed; a second corpus is future work | quality findings are WikiText-2 findings |
-| Three scale points (four with the extended sweep) | trend direction only, no scaling law claimed | a non-monotone trend could be missed between points |
-| Largest model may need different training settings | 1.4B separated into the extended sweep, excluded from the trend unless settings match | discipline is documented, not enforced by code |
+| Three completed scale points | observed direction only, no scaling law claimed | a non-monotone trend could be missed between points |
+| Registered 1.4B extension was not executed | excluded from all analyses and claims | the study provides no evidence above 1B |
 | Qwen differs in more than family | only sign and magnitude of gain compared | a transfer failure has several possible causes |
 | Pruning/quantisation are standard baselines | keeps the pipeline comparison clean | a better base method could change the gap |
 | Embeddings excluded | keeps the budget comparable across scale | reported ratios are lower than whole-model ratios |

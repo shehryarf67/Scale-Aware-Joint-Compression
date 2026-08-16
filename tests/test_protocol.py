@@ -311,6 +311,21 @@ class TestTheFiguresAndTablesRefuseToMislead:
       ``sequential`` had at the other scales and a reader comparing panels was misled
     """
 
+    def test_cross_session_latency_is_not_generated_by_default(self):
+        """The known-invalid B-49 diagnostic must require an explicit opt-in."""
+        import importlib.util
+        from pathlib import Path
+
+        script = Path(__file__).parents[1] / "scripts" / "generate_plots.py"
+        spec = importlib.util.spec_from_file_location("generate_plots", script)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        assert "2" in module.FIGURE_NUMBERS
+        assert "2" not in module.DEFAULT_FIGURE_NUMBERS
+        assert module.DEFAULT_FIGURE_NUMBERS == ("1", "3", "4")
+
     def test_arm_colours_are_keyed_to_the_arm_not_its_position(self):
         """Same arm, same colour, in every panel of every figure."""
         from scale_aware_compression.visualisation.plots import METHOD_COLOURS, _method_colour

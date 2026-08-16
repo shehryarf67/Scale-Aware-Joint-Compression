@@ -3325,7 +3325,7 @@ Full reasoning in [protocol_freeze.md](protocol_freeze.md). Summarised here with
 
 ```bash
 # Environment (Omen only; see §1 for the pinned versions)
-.venv\Scripts\python.exe -m pytest -q          # 740 passing, offline, ~37 s
+.venv\Scripts\python.exe -m pytest -q          # offline; trust the count printed by this checkout
 .venv\Scripts\ruff.exe check . && .venv\Scripts\ruff.exe format --check .
 
 # Data of record
@@ -3349,9 +3349,10 @@ python scripts/run_joint.py         --config configs/experiments/pilot.yaml     
 --override compression.reconstruction.keep_benefit_saliency=true
 ```
 
-Run IDs currently collide across arms — `experiment.id` is `pilot` for every arm, so a compressed run
-overwrites the dense record it needs for retention. Pass `--override experiment.id=<name>` until §5.6's
-convention (`<family>_<size>_<method>_<sparsity>_<bits>_<seed>`) is implemented.
+The historical run-ID collision is fixed. Record filenames now preserve the evaluation split, so a
+test run cannot overwrite the validation record it depends on (B-51). Use the shipped sweep configs
+and the canonical reproduction commands in [reproducibility.md](reproducibility.md); do not reconstruct
+the confirmatory run from the older pilot overrides above.
 
 ---
 

@@ -1,19 +1,20 @@
 #!/usr/bin/env python
 """Generate figures and tables from recorded results.
 
-Reads the JSON run records written by the sweep and produces the four figures and two tables the
-write-up uses. Runs nothing and loads no model, so it is cheap to re-run after every sweep.
+Reads the JSON run records written by the sweep and produces the paper-facing figures and tables.
+Runs nothing and loads no model, so it is cheap to re-run after every sweep.
 
 Figures:
     1. joint gain vs model scale       -- the primary result
-    2. measured latency vs sparsity    -- with the theoretical bound overlaid
+    2. cross-session latency diagnostic -- explicit opt-in; not a paper figure
     3. quality retention vs size       -- the Pareto view
     4. joint gain vs training cost     -- what the gain cost to obtain
 
 Examples:
     python scripts/generate_plots.py --results outputs/metrics --output outputs/figures
     python scripts/generate_plots.py --results outputs/metrics --tables-only
-    python scripts/generate_plots.py --results outputs/metrics --figures 1 2
+    python scripts/generate_plots.py --results outputs/metrics --figures 1 3 4
+    python scripts/generate_plots.py --results outputs/metrics --figures 2  # diagnostic only
 """
 
 from __future__ import annotations
@@ -30,6 +31,8 @@ PRIMARY_MODELS = ("pythia-160m", "pythia-410m", "pythia-1b")
 """The frozen primary sweep. The scale figure is only meaningful over these three."""
 
 FIGURE_NUMBERS = ("1", "2", "3", "4", "5")
+DEFAULT_FIGURE_NUMBERS = ("1", "3", "4")
+"""Paper-safe defaults. Figure 2 mixes benchmark sessions and figure 5 needs explicit Qwen input."""
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -86,7 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--figures",
         nargs="+",
         choices=FIGURE_NUMBERS,
-        help="Generate only these figures (default: all)",
+        help="Generate only these figures (default: paper-safe figures 1, 3, and 4)",
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--tables-only", action="store_true", help="Generate tables, no figures")
@@ -272,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
     from scale_aware_compression.experiments.scale_sweep import scale_trend
     from scale_aware_compression.visualisation import plots, tables
 
-    selected = set(arguments.figures or FIGURE_NUMBERS)
+    selected = set(arguments.figures or DEFAULT_FIGURE_NUMBERS)
     figure_directory = Path(arguments.output)
     table_directory = Path(arguments.tables_output)
     formats = tuple(arguments.formats)
