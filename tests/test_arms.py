@@ -590,3 +590,65 @@ class TestFairnessBetweenArmsEndToEnd:
             model = copy.deepcopy(tiny_causal_lm)
             _, result = run_arm(arm_class, arm_config, model)
             assert result.statistics["is_converted"] is True, method.value
+
+
+class TestTheReloadSparsityGuardToleratesRowRounding:
+    """B-46. The mask budget is not exactly attainable, and the guard used to demand exactness.
+
+    ``build_mask_from_scores`` prunes ``round(in_features * sparsity)`` weights per output row -- an
+    integer count -- so the realised fraction is quantised to multiples of ``1/in_features``. The
+    reload check compared it against the nominal target with a 1e-6 tolerance, which is far tighter
+    than one row-step. Every sequential and joint cell of the confirmatory run failed on masks that
+    were exactly right.
+    """
+
+    def test_a_768_wide_row_at_30_percent_falls_short_of_target(self):
+        """The arithmetic that produced the failure, pinned so the tolerance stays justified."""
+        import torch
+
+        from scale_aware_compression.compression.masks import (
+            MaskComparisonGroup,
+            build_mask_from_scores,
+            realised_sparsity,
+        )
+
+        # pythia-160m's attention.query_key_value: in_features = hidden = 768.
+        scores = torch.rand(2304, 768)
+        mask = build_mask_from_scores(
+            scores, sparsity=0.30, comparison_group=MaskComparisonGroup.OUTPUT
+        )
+        realised = realised_sparsity(mask)
+
+        # round(768 * 0.30) = round(230.4) = 230 pruned per row.
+        assert realised == pytest.approx(230 / 768, abs=1e-12)
+        assert realised < 0.30, "the realised fraction lands *below* target, which is the whole bug"
+        assert 0.30 - realised == pytest.approx(5.2e-04, abs=1e-05)
+
+        # The shipped allowance covers it; the old 1e-6 tolerance did not.
+        assert realised >= 0.30 - 1.0 / 768
+        assert realised < 0.30 - 1e-6
+
+    def test_the_guard_still_catches_sparsity_that_was_really_lost(
+        self, arm_config, tiny_causal_lm, tmp_path
+    ):
+        """The tolerance is a row-step, not a blank cheque: a dense reload must still raise."""
+        import json
+
+        from scale_aware_compression.compression.reload import (
+            MANIFEST_NAME,
+            ReloadError,
+            load_packed_model,
+        )
+
+        arm, result = run_arm(JointArm, arm_config, copy.deepcopy(tiny_causal_lm))
+        destination = arm.save(result.model, tmp_path / "artefact")
+
+        # Claim a sparsity the artefact does not have. The shortfall is then far larger than any
+        # per-row rounding step, so the guard must still fire.
+        manifest_path = destination / MANIFEST_NAME
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["target_sparsity"] = 0.99
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+        with pytest.raises(ReloadError, match="sparsity did not survive serialisation"):
+            load_packed_model(destination, copy.deepcopy(tiny_causal_lm))

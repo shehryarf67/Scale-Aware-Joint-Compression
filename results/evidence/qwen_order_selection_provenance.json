@@ -1,0 +1,32 @@
+{
+  "purpose": "Order-selection evidence for F-40, recovered from git history after B-51 overwrote the validation records with their test-split counterparts. Not a re-run: re-running a selection step after seeing the results it feeds would be post-hoc.",
+  "source_commit": "2832914",
+  "source_files": [
+    "results/evidence/cells.csv",
+    "results/evidence/MANIFEST.json"
+  ],
+  "rows": 8,
+  "csv_sha256": "827b89bf0eec247f89d7bb61f19d16a069024a7b9fc8507a2ae0805a45fa9b87",
+  "record_sha256_at_source": {
+    "qwen2.5-0.5b_dense_moderate_s00_b32_rep0.json": "8b434f4b6a58938901d24afc73b4644b7e483ff6372e00877cbf505ae2071d64",
+    "qwen2.5-0.5b_joint_aggressive_s30_b4_rep0.json": "6a9eb060b8f70e9e035b035502216753bb8696a2ca8e0c50fc184860f1ab3b03",
+    "qwen2.5-0.5b_joint_moderate_s30_b8_rep0.json": "18194aa8d6970eb3b9f614973212c28d8ef3df109e988b3b0ba9c1bf0f843d84",
+    "qwen2.5-0.5b_sequential_aggressive_s30_b4_rep0.json": "2b9e0c493ef8614c324fa0a2418b5bf590e3aac2598acaeabd1b7af24829243c",
+    "qwen2.5-0.5b_sequential_moderate_s30_b8_rep0.json": "0731aa8d7c26f9775ded5b90a4c1c83ab905a65c22d1113c1e8188ff8c6d06a1",
+    "qwen2.5-0.5b_sequential_qp_aggressive_s30_b4_rep0.json": "9b2f5f469e5dab855499b5b7cd020892f8266af42be83f7aa5c458e948945801",
+    "qwen2.5-0.5b_sequential_qp_moderate_s30_b8_rep0.json": "88d8ae4a9b111ed586cb0584ed0142ce283aa36d4deef93de97c8f34c5bafce9",
+    "qwen_smoke_dense__qwen2.5-0.5b_dense_moderate_s00_b32_seed1234.json": "292233e60ef7e107d73e0cbac78c8c10cf8034bac70ea4baaf718d59ed2162c6"
+  },
+  "still_on_disk": [
+    "qwen2.5-0.5b_sequential_qp_aggressive_s30_b4_rep0.json",
+    "qwen2.5-0.5b_sequential_qp_moderate_s30_b8_rep0.json",
+    "qwen_smoke_dense__qwen2.5-0.5b_dense_moderate_s00_b32_seed1234.json"
+  ],
+  "destroyed_by_b51": [
+    "qwen2.5-0.5b_joint_aggressive_s30_b4_rep0.json",
+    "qwen2.5-0.5b_joint_moderate_s30_b8_rep0.json",
+    "qwen2.5-0.5b_sequential_aggressive_s30_b4_rep0.json",
+    "qwen2.5-0.5b_sequential_moderate_s30_b8_rep0.json"
+  ],
+  "note": "qwen2.5-0.5b_dense_moderate_s00_b32_rep0.json was also overwritten, but an identical run survives under the smoke experiment id qwen_smoke_dense__qwen2.5-0.5b_dense_moderate_s00_b32_seed1234.json (ppl 17.7758)."
+}

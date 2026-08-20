@@ -19,6 +19,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 
 from scale_aware_compression.config import ConfigError, load_config
 from scale_aware_compression.logging_utils import configure_logging, get_logger, log_key_values
@@ -57,8 +58,76 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dry-run", action="store_true", help="Alias for --plan-only; runs nothing"
     )
+    parser.add_argument(
+        "--isolate-cells",
+        action="store_true",
+        help=(
+            "Run every cell in its own child process, so memory is released at the cell boundary "
+            "by construction. Fixes B-48: the runner accumulates ~4 GiB of commit per 1B "
+            "compression cell and never returns it, which exhausts the commit limit on a long grid"
+        ),
+    )
+    parser.add_argument(
+        "--only-cell",
+        metavar="EXPERIMENT_ID",
+        help=(
+            "Run exactly this one cell and exit. Used by --isolate-cells to drive the children; "
+            "also useful for re-running a single failed cell by hand"
+        ),
+    )
     parser.add_argument("--log-level", default=None, help="Override runtime.log_level")
     return parser
+
+
+def _run_isolated(arguments: argparse.Namespace, executable: list) -> int:
+    """Run each cell in its own child process.
+
+    Memory is released at the cell boundary because the process exits -- which is the only reliable
+    fix for B-48 short of finding every retention inside the runner. The parent keeps no model
+    state, so its own footprint stays flat across an arbitrarily long grid.
+
+    A child that fails is reported and the sweep continues, matching ``sweep.continue_on_error``
+    semantics at the process level. Note the same caveat applies as in-process: a failed cell
+    silently removes a comparison, so check pairs against the records afterwards, not the count.
+
+    Args:
+        arguments: Parsed command line, reused verbatim for each child.
+        executable: The cells to run.
+
+    Returns:
+        0 when every child succeeded, 1 otherwise.
+    """
+    import subprocess
+    import sys
+
+    base = [sys.executable, "-u", __file__, "--config", arguments.config]
+    for override in arguments.override:
+        base += ["--override", override]
+    if arguments.models:
+        base += ["--models", *arguments.models]
+    if arguments.methods:
+        base += ["--methods", *arguments.methods]
+    if arguments.log_level:
+        base += ["--log-level", arguments.log_level]
+
+    failed: list[str] = []
+    for index, cell in enumerate(executable, start=1):
+        LOGGER.info("[%d/%d] isolated child for %s", index, len(executable), cell.experiment_id)
+        completed = subprocess.run([*base, "--only-cell", cell.experiment_id], check=False)
+        if completed.returncode != 0:
+            LOGGER.error(
+                "Child for %s exited %d, continuing", cell.experiment_id, completed.returncode
+            )
+            failed.append(cell.experiment_id)
+
+    if failed:
+        LOGGER.warning("%d isolated cell(s) failed: %s", len(failed), ", ".join(failed))
+        # Still a finished sweep. A supervisor must not relaunch on failures alone, or a cell that
+        # fails deterministically becomes an infinite loop.
+        LOGGER.info("SWEEP FINISHED: %d of %d cell(s) failed", len(failed), len(executable))
+        return 1
+    LOGGER.info("SWEEP FINISHED: %d isolated cell(s), 0 failures", len(executable))
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -92,6 +161,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from scale_aware_compression.experiments.scale_sweep import (
         build_sweep_plan,
+        executable_cells,
         find_comparison_pairs,
         run_sweep,
     )
@@ -103,19 +173,48 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     log_key_values(LOGGER, "Sweep plan", plan.summary())
+    executable = executable_cells(plan)
+    LOGGER.info("%d logical grid slot(s), %d executable cell(s)", len(plan.cells), len(executable))
     pairs = find_comparison_pairs(plan)
     LOGGER.info("%d joint/sequential pair(s) can yield a joint gain", len(pairs))
 
     if arguments.plan_only or arguments.dry_run:
-        for cell in plan.cells:
+        for cell in executable:
             LOGGER.info("  %s", cell.experiment_id)
         LOGGER.info("Plan only: nothing was executed")
         return 0
+
+    if arguments.isolate_cells and arguments.only_cell:
+        LOGGER.error("--isolate-cells and --only-cell are mutually exclusive")
+        return 2
 
     if not pairs:
         LOGGER.warning(
             "The plan contains no matched joint/sequential pair, so it cannot produce a joint "
             "gain. Include both 'sequential' and 'joint' in sweep.methods."
+        )
+
+    if arguments.isolate_cells:
+        return _run_isolated(arguments, executable)
+
+    if arguments.only_cell:
+        wanted = [cell for cell in executable if cell.experiment_id == arguments.only_cell]
+        if not wanted:
+            LOGGER.error(
+                "--only-cell %s is not in this plan. Run --plan-only to list the cell ids.",
+                arguments.only_cell,
+            )
+            return 2
+        # Narrow the plan rather than build a new one, so the grid metadata (models, methods,
+        # budgets, seeds) survives -- `_assert_grid_is_fair` reads it, and a child that dropped it
+        # would skip the fairness check the parent passed.
+        plan = dataclasses.replace(plan, cells=wanted)
+        LOGGER.info("Running one cell only: %s", arguments.only_cell)
+        # A one-cell plan has no counterpart by construction, so run_sweep's incomplete-pair
+        # warning will fire and mean nothing here. Say so, rather than let it read as a defect.
+        LOGGER.info(
+            "Single-cell mode: the 'no joint/sequential counterpart' warning below is expected "
+            "and does not indicate a missing record. Check pairs against the full plan instead."
         )
 
     try:
@@ -125,6 +224,15 @@ def main(argv: list[str] | None = None) -> int:
         return 3
 
     LOGGER.info("Completed %d run(s)", len(records))
+    # Unambiguous end-of-sweep marker for an external supervisor. "Completed N run(s)" cannot serve:
+    # under --isolate-cells every child prints it for its own single cell.
+    #
+    # Emitted ONLY by a whole-sweep invocation. A `--only-cell` child is not a sweep, and if it
+    # printed this the supervisor would see it after the first cell, conclude the grid was done, and
+    # exit -- leaving the rest of a multi-day run unsupervised, which is the failure this marker
+    # exists to prevent.
+    if not arguments.only_cell:
+        LOGGER.info("SWEEP FINISHED: %d run(s) executed", len(records))
     return 0
 
 

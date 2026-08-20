@@ -23,10 +23,13 @@ after the fact.
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
+import shutil
 import subprocess
 import time
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -555,6 +558,7 @@ class ExperimentTracker:
             ("comparison_group", reconstruction.comparison_group.value),
             ("scale_search", reconstruction.scale_search),
             ("keep_benefit_saliency", reconstruction.keep_benefit_saliency),
+            ("offload_blocks", reconstruction.offload_blocks),
         ):
             if recorded_reconstruction.get(key) != expected:
                 reasons.append(
@@ -580,6 +584,21 @@ class ExperimentTracker:
         if recorded_bits != config.compression.effective_bits:
             reasons.append(f"bits {recorded_bits} is not {config.compression.effective_bits}")
 
+        # A2 makes an independently reloadable, hashed artefact part of a completed compressed
+        # cell. Without this resume could skip an older success record that predates verification,
+        # only for the final audit to fail after the rest of the multi-day sweep had finished.
+        if config.compression.method is not CompressionMethod.DENSE:
+            checkpoint = record.get("checkpoint") or {}
+            checkpoint_path = record.get("checkpoint_path")
+            if checkpoint.get("reload_verified") is not True:
+                reasons.append("checkpoint reload was not verified")
+            if not checkpoint.get("artifact_sha256"):
+                reasons.append("checkpoint SHA-256 is absent")
+            if checkpoint.get("artifact_retained") is not True:
+                reasons.append("checkpoint is not marked retained")
+            if not checkpoint_path or not Path(checkpoint_path).is_dir():
+                reasons.append("checkpoint path is absent or missing")
+
         if reasons:
             LOGGER.info("Re-running %s: %s", experiment_id, ", ".join(reasons))
             return False
@@ -599,6 +618,7 @@ class ExperimentTracker:
         """
         self.output_dir.mkdir(parents=True, exist_ok=True)
         destination = self.record_path(record.experiment_id)
+        self._archive_if_other_split(destination, record)
         try:
             destination.write_text(
                 json.dumps(record.to_dict(), indent=2, sort_keys=False, default=str),
@@ -609,6 +629,68 @@ class ExperimentTracker:
         self.append_csv_row(record)
         LOGGER.info("Recorded %s -> %s", record.experiment_id, destination)
         return destination
+
+    def _archive_if_other_split(self, destination: Path, record: ExperimentRecord) -> None:
+        """Preserve an existing record before overwriting it with one from a different split.
+
+        B-51. A record id encodes model, arm, budget, sparsity, bits and replicate -- but **not the
+        evaluation split**. So a test-split run of a cell writes to the same filename as the
+        validation-split run of that cell and destroys it. `exists_valid` gates *reuse* on the
+        split and correctly refuses to read the wrong record; nothing gated the *write*.
+
+        It happened: the Qwen test grid overwrote the validation dense baseline that its own order
+        selection had been measured against ([F-40](../../docs/findings_log.md#f-40)). The figures
+        survived only because a smoke run had left a copy under a different experiment id and
+        because every arm record stores the retention it computed at run time.
+
+        Renaming rather than refusing, deliberately. Refusing would block the legitimate case --
+        running the same grid on the other split, which is the whole two-split design -- and an
+        error at that point would strand a completed cell. The archived file keeps the `.json`
+        suffix in the same directory, so `load_all` still finds it and every split-aware consumer
+        still filters it correctly; `_load_dense_reference` in particular recovers the reference
+        this bug used to delete.
+
+        Args:
+            destination: Where the new record is about to be written.
+            record: The record about to be written.
+        """
+        if not destination.exists():
+            return
+        try:
+            existing = json.loads(destination.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            # An unreadable record carries no split to compare and no value to preserve.
+            return
+
+        def split_of(payload: Mapping[str, Any]) -> Any:
+            return ((payload.get("config") or {}).get("data") or {}).get("eval_split")
+
+        old_split = split_of(existing)
+        new_split = split_of(record.to_dict())
+        if old_split is None or new_split is None or old_split == new_split:
+            return
+
+        archive = destination.with_name(f"{destination.stem}__split-{old_split}.json")
+        index = 1
+        while archive.exists():
+            index += 1
+            archive = destination.with_name(f"{destination.stem}__split-{old_split}-{index}.json")
+        try:
+            destination.rename(archive)
+        except OSError as error:  # pragma: no cover - filesystem refusal
+            raise ExperimentError(
+                f"Refusing to overwrite the {old_split} record at {destination} with a "
+                f"{new_split} one: it could not be archived ({error}). Move it aside by hand; "
+                "losing it would delete the reference other records were normalised against."
+            ) from error
+        LOGGER.warning(
+            "Record %s already existed for the %r split and this run is %r. Archived the old one "
+            "to %s rather than overwriting it (B-51).",
+            record.experiment_id,
+            old_split,
+            new_split,
+            archive.name,
+        )
 
     def append_csv_row(self, record: ExperimentRecord) -> Path:
         """Write one row to the aggregated CSV, **replacing** any existing row for the same run.
@@ -909,7 +991,11 @@ class ExperimentRunner:
         target: Path | None = None
         if compressor is not None:
             target = self.config.run_output_dir / "checkpoint"
-            compressor.save(model, target)
+            temporary = target.with_name("checkpoint.tmp")
+            self._clear_orphaned_checkpoint(temporary)
+            compressor.save(model, temporary)
+            max_difference = self._verify_saved_artefact(temporary, model)
+            self._promote_checkpoint(temporary, target)
         else:
             target = self._cached_snapshot_path(loaded)
 
@@ -942,6 +1028,107 @@ class ExperimentRunner:
         )
         record.checkpoint = report.to_dict()
         record.checkpoint_path = target
+        if compressor is not None:
+            record.checkpoint.update(
+                {
+                    "reload_verified": True,
+                    "reload_max_logit_difference": max_difference,
+                    "artifact_sha256": self._artifact_sha256(target),
+                    "artifact_retained": True,
+                    "artifact_deleted_after_audit": False,
+                }
+            )
+
+    def _verify_saved_artefact(self, checkpoint: Path, model: Any) -> float:
+        """Independently reload a staged checkpoint and compare one deterministic forward pass."""
+        import torch
+
+        from scale_aware_compression.compression.reload import MANIFEST_NAME, load_packed_model
+
+        model.to("cpu")
+        if (checkpoint / MANIFEST_NAME).is_file():
+            from scale_aware_compression.constants import Device
+            from scale_aware_compression.models.loader import load_model
+
+            cpu_config = replace(self.config.model, device=Device.CPU, local_files_only=True)
+            base_model, _, _ = load_model(cpu_config)
+            reloaded = load_packed_model(checkpoint, base_model)
+        else:
+            try:
+                from transformers import AutoModelForCausalLM
+
+                reloaded = AutoModelForCausalLM.from_pretrained(
+                    checkpoint,
+                    local_files_only=True,
+                    trust_remote_code=False,
+                    torch_dtype=torch.float32,
+                )
+            except Exception as error:
+                raise ExperimentError(
+                    f"Could not independently reload staged checkpoint {checkpoint}: {error}"
+                ) from error
+
+        model.eval()
+        reloaded.to("cpu").eval()
+        vocab_size = int(getattr(model.config, "vocab_size", 0))
+        if vocab_size < 2:
+            raise ExperimentError("Cannot construct fixed reload check: model has no vocabulary")
+        input_ids = (torch.arange(16, dtype=torch.long) % (vocab_size - 1) + 1).unsqueeze(0)
+        with torch.inference_mode():
+            expected = model(input_ids).logits
+            actual = reloaded(input_ids).logits
+        max_difference = float((expected - actual).abs().max().item())
+        if not torch.allclose(expected, actual, atol=1e-5, rtol=1e-5):
+            raise ExperimentError(
+                "Independently reloaded checkpoint failed fixed-input logit parity: "
+                f"max difference {max_difference:.8g}"
+            )
+        del reloaded, expected, actual
+        LOGGER.info(
+            "Independent checkpoint reload passed (max logit difference %.8g)", max_difference
+        )
+        return max_difference
+
+    def _clear_orphaned_checkpoint(self, temporary: Path) -> None:
+        """Remove only this cell's known staging directory left by an interrupted save."""
+        run_directory = self.config.run_output_dir.resolve()
+        resolved = temporary.resolve()
+        if resolved.parent != run_directory or resolved.name != "checkpoint.tmp":
+            raise ExperimentError(
+                f"Refusing to clear unexpected checkpoint staging path {resolved}"
+            )
+        if resolved.exists():
+            LOGGER.warning("Removing orphaned checkpoint staging directory %s", resolved)
+            if resolved.is_dir():
+                shutil.rmtree(resolved)
+            else:
+                resolved.unlink()
+
+    def _promote_checkpoint(self, temporary: Path, target: Path) -> None:
+        """Rename a verified staging directory into place, preserving any stale predecessor."""
+        if target.exists():
+            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            stale = target.with_name(f"checkpoint.stale.{stamp}")
+            counter = 1
+            while stale.exists():
+                stale = target.with_name(f"checkpoint.stale.{stamp}.{counter}")
+                counter += 1
+            target.rename(stale)
+            LOGGER.warning("Moved stale checkpoint aside to %s", stale)
+        temporary.rename(target)
+
+    @staticmethod
+    def _artifact_sha256(checkpoint: Path) -> str:
+        """Hash file names and bytes into one deterministic checkpoint digest."""
+        digest = hashlib.sha256()
+        for path in sorted(item for item in checkpoint.rglob("*") if item.is_file()):
+            relative = path.relative_to(checkpoint).as_posix().encode("utf-8")
+            digest.update(len(relative).to_bytes(8, "big"))
+            digest.update(relative)
+            with path.open("rb") as handle:
+                for block in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(block)
+        return digest.hexdigest()
 
     def _cached_snapshot_path(self, loaded: Any) -> Path | None:
         """Locate the cached Hub snapshot for the dense arm, without downloading."""
@@ -1003,6 +1190,17 @@ class ExperimentRunner:
         Best-effort: the fingerprint is a property of the tokenised split, so resolving it needs the
         cache. A ``None`` result weakens the dense-reference check to the window comparison rather
         than failing the run.
+
+        **It is ``None`` at the point that matters, and that was B-45.** ``_eval_fingerprint`` is set
+        *during* evaluation, while the dense reference is loaded *before* evaluation to be passed
+        into it -- so the corpus comparison in :meth:`_window_mismatch` could never fire for the
+        lookup it existed to protect. Validation and test share identical 493x512 window shapes, so
+        nothing else caught the substitution either.
+
+        The lookup now filters on ``config.data.eval_split`` directly, which *is* available then.
+        This is kept because it is a finer guard than the split -- two records on the same split but
+        different corpus revisions would differ here -- and because it does fire for the paths that
+        set the attribute first.
         """
         return getattr(self, "_eval_fingerprint", None)
 
@@ -1079,6 +1277,28 @@ class ExperimentRunner:
             if candidate.get("model_name") != config.model.name:
                 continue
             if candidate.get("seed") != config.runtime.seed:
+                continue
+            # The SPLIT, checked here from the record rather than downstream from a fingerprint.
+            #
+            # B-45. The corpus check below reads `_eval_fingerprint`, which is set *during*
+            # evaluation -- and the dense reference is loaded *before* evaluation in order to be
+            # passed into it. So the expected fingerprint was always None here, that check
+            # short-circuited, and the remaining window checks passed because validation and test
+            # share identical 493x512 shapes. A test-split cell therefore accepted a
+            # validation-split dense record, and the error only surfaced later in `add_quality`:
+            # 17 of the first 20 confirmatory records failed this way.
+            #
+            # `config.data.eval_split` is recorded in every record and is available now, so it is
+            # the check that can actually run at this point. The fingerprint comparison is kept as
+            # the finer-grained guard for when it *is* resolvable.
+            candidate_split = ((candidate.get("config") or {}).get("data") or {}).get("eval_split")
+            if candidate_split is not None and candidate_split != config.data.eval_split:
+                LOGGER.debug(
+                    "Skipping dense record %s: evaluated on the %s split, this run uses %s",
+                    candidate.get("experiment_id"),
+                    candidate_split,
+                    config.data.eval_split,
+                )
                 continue
             payload = candidate.get("quality", {}).get("perplexity")
             if not payload:

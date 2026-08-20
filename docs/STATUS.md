@@ -1,5 +1,6 @@
 # Project status
 
+<<<<<<< HEAD
 > **Current authoritative update — 2026-08-01:** Phase 7 is complete. The corrected Pythia-160M
 > screening grid and Pythia-410M confirmation froze `moderate` at 30% + W8 and `aggressive` at
 > 30% + W4. The historical handoff notes below remain for review context; where they say that
@@ -24,6 +25,48 @@ sequential orders are frozen at 160M and 410M, and the headline effect has been 
 three paired calibration draws at both scales** — it is real at 160M and shrinks with scale. An
 exploratory cell now costs ~1.3 min rather than ~9.3 min ([F-29](findings_log.md#f-29)). Governed by
 [Protocol Amendment A1](protocol_amendment_a1.md).
+=======
+> # 🔒 A1 STEP 10 IS COMPLETE. THE CONFIRMATORY RESULT IS IN.
+>
+> **2026-08-10.** All **171 cells**, **42/42 pairs**, **0 failures**, on the held-out **test** split.
+> `audit_confirmatory_run.py` prints **AUDIT PASSED**. Full record:
+> **[F-37](findings_log.md#f-37)**; regenerable report at
+> [`results/evidence/confirmatory_report.txt`](../results/evidence/confirmatory_report.txt).
+>
+> **No cell meets the pre-registered §6.3 practical-importance bar** (≥1.0 pp *and* sign-consistent
+> across all replicates). The study's answer to its primary question is **negative on practical
+> importance.**
+>
+> | Scale | 30% + W4 | positive | p | | 30% + W8 |
+> | --- | --- | --- | --- | --- | --- |
+> | **160M** | **+1.012 pp** | 7/8 | 0.0703 | | +0.038 pp |
+> | **410M** | **+0.935 pp** | **8/8** | **0.0078** | | +0.029 pp |
+> | **1B** | +0.132 pp | 4/5 | 0.3750 | | **−0.179 pp** (0/5) |
+>
+> The two W4 cells fail on **opposite** criteria: 160M clears 1.0 pp but has a negative replicate;
+> 410M is unanimous and the only significant cell in the study, yet lands **0.065 pp short**.
+> **The bar is pre-registered and is not being moved.**
+>
+> ⚠️ **Correct the significance for multiple comparisons.** Six cells were examined. 410M's raw
+> p = 0.0078 becomes **0.0469 under Holm–Bonferroni** — still below 0.05, by 0.0031. No other cell
+> survives correction (next best 0.3125). **Quote 0.0469, never 0.0078.** The same cell is both
+> marginally significant *and* 0.065 pp short of the practical bar, so it is **statistically
+> detectable under this sign test but sub-threshold and fragile**, not a practically established win.
+>
+> **The motivating hypothesis is NOT SUPPORTED:** joint does not pay off *more* at scale. The
+> observed direction is the opposite — flat 160M→410M, falling at 1B — but **the cross-scale decline
+> is not statistically established**, and the 410M→1B step is confounded with depth
+> ([F-38](findings_log.md#f-38): 1B has 16 blocks against 410M's 24). **Neither exploratory estimate replicated** — 160M fell from +1.69 to
+> +1.01, 410M rose from +0.39 to +0.93 — so the exploratory narrative is superseded.
+>
+> **No further tuning is permitted.** Step 10 runs once. What remains is analysis and writing.
+
+**Last updated:** 2026-08-16 · **Experiments and evidence generation complete; paper writing may begin.**
+Phases 0, 5, 6, 7 and A1 steps 1–10 are complete. The pipeline
+passes three independent correctness anchors, the budgets and both sequential orders were frozen per
+cell on validation, and the confirmatory grid has now been executed once on the test split under the
+step-9 freeze. Governed by [Protocol Amendment A1](protocol_amendment_a1.md).
+>>>>>>> origin/main
 
 > Read this first. It is the handoff between sessions and between machines. If it looks stale,
 > check `git log` — the truth is the commit history, this file is a summary of it.
@@ -104,7 +147,11 @@ is not by itself evidence the environment is stable.
 
 ---
 
-## ⚠️ Who is on what — claim a task here *before* starting it
+## Historical coordination snapshot — closed 2026-08-14
+
+The table below is retained to explain ownership and duplicate-work history. Its open-looking rows
+are stale and must not be used as the current project status: evidence export, confirmation, and the
+Qwen run are complete; the 1.4B extension was deliberately not run.
 
 On **2026-08-01** both authors independently did the same three tasks on the same day — per-block
 offload, the 1B selection config, and GPU quality evaluation. Two people, one day, one result.
@@ -129,7 +176,10 @@ decisions agreeing, joint gain inside our three-draw range. It goes in the paper
 replication. **Do not merge that branch**: it lacks the B-35 fix and the runner's GPU-evaluation
 wiring, and its `F-31`/`B-34` entries collide with different content here in an append-only log.
 
-## Where we are
+## Historical implementation checkpoint
+
+This section records the state on 2026-08-01. The submission status at the top of this document and
+the evidence inventory near the end are authoritative.
 
 Infrastructure, the Phase 0 decisions, the compression primitives and the layerwise driver are all
 done. **Every arm runs from a config to a run record on real Pythia-160M.**
@@ -808,11 +858,356 @@ it claims to; it says nothing about absolute quality against published work (A1 
 | — | **A4 downstream tasks** (§4.3) | ✅ **done** — [F-35](findings_log.md#f-35) |
 | — | Commit recomputable evidence artefacts | ✅ `results/evidence/`, headline verified reproducible |
 | 9 | Freeze the entire confirmatory configuration | 🔒 **DONE 2026-08-04** at `cbe2098` — [the freeze](protocol_freeze.md#-the-confirmatory-freeze--a1-step-9-executed-2026-08-04) |
-| 10 | Run test evaluation **once**, with no further tuning | ⬜ ← **next and final**; ~38 h, one-way |
+| 10 | Run test evaluation **once**, with no further tuning | ✅ **COMPLETE 2026-08-10** — 171/171 cells, 42/42 pairs, 0 failures, audit passed → [F-37](findings_log.md#f-37) |
 
 **A4 and A5 should come before step 9.** Step 10 costs ~38 h and is one-way — no tuning afterwards —
 and both A4 and A5 produce numbers that go in the same paper. Built after the freeze, they either sit
 outside it or force re-freezing.
+
+### ✅ Step 10 completed — what to do next
+
+The measurement phase of this project is over. **Nothing further may be tuned, re-run, or selected**;
+A1 step 10 runs once and the freeze forbids adjustment after inspection. The remaining work is
+analysis and writing, in this order:
+
+1. **Cross-verify [F-37](findings_log.md#f-37) independently.** Every number is regenerable:
+   `python scripts/audit_confirmatory_run.py` must print AUDIT PASSED, then
+   `python scripts/report_confirmatory.py` reproduces the tables from the records. The per-window
+   NLL needed to recompute the bootstrap intervals is committed in
+   `results/evidence/windows.csv`.
+2. **Decide how to frame a negative primary result.** The honest framing is in
+   [F-37](findings_log.md#f-37) and §6 of the findings log: a small, real, 4-bit-specific effect
+   that does not reach the pre-registered practical bar, with the motivating scale hypothesis
+   not supported. **Do not renegotiate the 1.0 pp threshold** — the 410M near-miss at 0.9348 pp is exactly
+   the case §6.3 was pre-registered to govern.
+3. **Regenerate the figures** with `scripts/generate_plots.py` against the test-split records, and
+   check it does not refuse on mixed hosts (it should not; all 171 share one `host_key`).
+4. **Write the limitations honestly** — all six joint-flattering bugs, the §6.3 loosening, R=5 at 1B,
+   the frozen-order baseline, and the two records with null `git_commit`.
+
+### 📄 Artefacts ready for the paper — all regenerable, all committed
+
+| Artefact | Command | What it gives you |
+| --- | --- | --- |
+| [`results/evidence/paper_tables.md`](../results/evidence/paper_tables.md) | `python scripts/build_paper_tables.py` | **T1–T7**: headline gains with adjusted p, every replicate, all-arm retention, budget realisation, dense baselines, latency. Captions carry the limitation each table needs |
+| [`results/evidence/confirmatory_report.txt`](../results/evidence/confirmatory_report.txt) | `python scripts/report_confirmatory.py` | Per-replicate gains, bootstrap CIs, sign tests, Holm correction |
+| [`results/evidence/diagnostics_report.txt`](../results/evidence/diagnostics_report.txt) | `python scripts/report_diagnostics.py` | Mechanism evidence: mask divergence, layer advantage, layer objective, additive NLL, budget realisation |
+| [`limitations.md`](limitations.md) | — | 16 items, drafted **before** any interpretation |
+| `results/evidence/*.csv` | `python scripts/export_evidence.py` | 293 cells, 72 gain rows, 134,693 window rows, plus 8 Qwen order-selection rows — recompute any interval |
+| Gate | `python scripts/audit_confirmatory_run.py` | Must print **AUDIT PASSED** |
+
+### ✅ Figures and tables — implemented 2026-08-11
+
+The visualisation layer was scaffold (every function raised `NotImplementedError`). It is now
+implemented and defaults to three paper-facing Pythia figures plus two tables from the **171
+test-split records**:
+
+```bash
+python scripts/generate_plots.py --output results/figures --tables-output results/tables
+```
+
+| Output | What it shows |
+| --- | --- |
+| `joint_gain_vs_scale` | The headline. Individual replicates as faint points, means with SEM bars, zero line, and the **§6.3 bar at 1.0 pp** so the criterion is visible rather than implied |
+| `quality_vs_size` | Pareto view per scale; joint sits just above sequential at 160M and 410M |
+| `training_cost` | Fairness audit: every point must sit at ratio 1.0, and all six do |
+| `results/tables/joint_gain.{md,csv}` | Reproduces T1 from an independent code path |
+| `results/tables/main_results.{md,csv}` | 27 rows, every arm × scale × budget, R per row |
+
+**Two defects were caught in the figures before anything was published.**
+
+*The diagnostic latency figure showed pythia-1b at **1.66× speedup, above the theoretical bound of 1.43×** —
+physically impossible, since pruned weights stay FP32 and dense in storage. It is
+[B-49](findings_log.md#4-bugs-found-that-would-have-invalidated-results): the 1B dense baseline was
+measured 2026-08-05 and its sparse counterpart 2026-08-07. The figure now **detects a bound
+violation** and logs an error. Because the mixed-session ratios are not citable, that diagnostic is
+now explicit opt-in and its generated files are excluded from the curated `results/` directory. The
+paper uses the same-session prefill/decode table from [F-34](findings_log.md#f-34) instead.*
+
+*Arm colours were assigned by position within each subplot, so `sequential_qp` at 1B took the colour
+`sequential` held elsewhere. Colour is now keyed to the arm, and the legend is gathered across all
+panels so the Q→P series is labelled.*
+
+**Cross-validation:** `results/tables/joint_gain.md` reproduces T1 exactly — +1.0120 (7/8), +0.9348
+(8/8), −0.1794 (0/5) — from a different code path than `report_confirmatory.py`. Two independent
+implementations agreeing is stronger evidence than either alone.
+
+### ✅ Qwen2.5-0.5B external validation — COMPLETE 2026-08-14
+
+**65 cells, 16/16 pairs, R = 8, 0 failures.** Full record: **[F-41](findings_log.md#f-41)**;
+report at
+[`results/evidence/qwen_external_validation.txt`](../results/evidence/qwen_external_validation.txt).
+Exploratory — it **cannot alter [F-37](findings_log.md#f-37)** and is **not a scale point**.
+
+| Budget | R | Mean gain | Positive | Raw *p* | Holm *p* | §6.3 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 30% + W8 | 8 | **−0.0321 pp** | 1/8 | 0.0703 | 0.1406 | NO |
+| 30% + W4 | 8 | **+0.4213 pp** | 7/8 | 0.0703 | 0.1406 | NO |
+
+**The W4/W8 structure transfers to a second family**; the verdict does not change. Neither cell
+meets §6.3, and neither is significant before or after correction. The W4 cell fails on **both**
+criteria — 0.58 pp short of the bar *and* not sign-consistent (rep4 at −0.4407 pp).
+
+Across both families every W4 cell is positive and every W8 cell is **near zero or negative** — +0.0381 and +0.0289 pp are positive but sign-inconsistent, so neither is distinguishable from zero:
+
+| | 160M | 410M | 1B | **Qwen 0.5B** |
+| --- | --- | --- | --- | --- |
+| 30% + W4 | +1.0120 | +0.9348 | +0.1316 | **+0.4213** |
+| 30% + W8 | +0.0381 | +0.0289 | −0.1794 | **−0.0321** |
+
+**The validation estimate overstated the test result for the third time** — +0.6216 → **+0.4213 pp**.
+160M fell, 410M rose, Qwen fell. The direction varies; the unreliability does not, which is the
+clearest argument available that the two-split design earned its cost. A partial reading would have
+overstated it too: at 5 of 8 draws the cell read ~+0.5 pp with 5/5 positive, and the final three
+draws removed both the magnitude and the sign consistency.
+
+**Provenance is cleaner than the primary's:** single pinned revision across all 65 records, single
+host, all CPU, uniform `method_version`, and **zero** null `git_commit` values against the primary's
+two.
+
+⚠️ **[B-51](findings_log.md#4-bugs-found-that-would-have-invalidated-results) is now safe to fix** —
+the grid is no longer mid-flight.
+
+### The optional experiments — decided 2026-08-11
+
+None of these is required. **The paper can proceed without any of them**, and none can change the
+primary result. Recorded as decisions so they are not silently reopened.
+
+| Leg | Decision | Why |
+| --- | --- | --- |
+| **qwen2.5-0.5b** — external validity | **Worthwhile if time permits** | The single strongest weakness in the write-up is that every number is one model family. Registered, pinned, Qwen2 adapter implemented; needs download + order selection. Tier 2, so it can run on any CUDA machine and need not occupy the benchmark host |
+| **pythia-1.4b** — fourth scale point | **Omit from the primary trend; exploratory appendix only** | It cannot repair the trend claim. The scale axis is already confounded with depth ([F-38](findings_log.md#f-38)) and 1.4B is the *same width* as 1B per protocol_freeze D2, so it adds depth variation at fixed width — informative in principle, but a fourth point added *after* seeing the result is not part of the pre-registered design and must not be folded into the primary analysis |
+| **1B S6 control** (40% + W8) | **Skip** | Only worth running if the mechanism becomes the paper's focus. [F-33](findings_log.md#f-33) already gives the control at 160M and 410M, and [F-38](findings_log.md#f-38) now supplies per-layer mechanism evidence at all three scales from records that already exist |
+| **Additional sparsity levels** | **Omit** | Only needed to answer the full latency-curve question (RQ4). [F-34](findings_log.md#f-34) measured one sparsity and found no speedup; a curve is a separate study, and D1 keeps W4 out of latency tables regardless |
+
+**If any of them is run, `--isolate-cells` is now available** and should be used — see B-48 below.
+
+### ✅ B-48 fixed: cells can now run in isolated child processes
+
+`scripts/run_scale_sweep.py --isolate-cells` runs every cell in its own child process, so the ~4 GiB
+of commit the runner accumulates per 1B compression cell is released at the cell boundary by
+construction. `--only-cell <id>` runs exactly one cell and is also the way to re-run a single failed
+cell by hand.
+
+Overhead is ~4 s per cell for interpreter start and config load — negligible against a ~50 min 1B
+cell. **The completed primary experiment is untouched**; this exists for the optional legs and any
+future grid.
+
+<details>
+<summary>The execution history of step 10, kept for the record — two dormant guards, a memory leak, and five pauses</summary>
+
+### 🟡 Step 10 was launched, and two dormant guards fired on the way
+
+Launched **2026-08-05 15:54**. Both stoppages were **pre-existing checks that had never been
+exercised on the test split**, and both were caught by watching the run rather than by a test.
+Neither changes a number: one selected the wrong reference, the other rejected correct work.
+
+| # | What fired | Effect if unnoticed |
+| --- | --- | --- |
+| **B-45** | `_load_dense_reference` compared splits via a fingerprint that is `None` at lookup time | A test-split cell normalising against a **validation-split** dense record. 17 of the first 20 records failed |
+| **B-46** | The reload guard demanded a sparsity per-row integer arithmetic cannot reach | **Every `sequential` and `joint` cell failed** — both arms of every comparison — while the controls stayed green |
+
+**B-46 is worth reading carefully, because the failure was in the check and not in the work.**
+`build_mask_from_scores` prunes `round(in_features × sparsity)` per output row, so the realised
+fraction is quantised to multiples of `1/in_features`. A 768-wide module at 30% prunes
+`round(230.4) = 230`, realising **0.299479** — short of target by 5.2e-04, against a tolerance of
+1e-6. The masks were exactly right; the guard rejected them, and its comment asserted the opposite
+of the truth ("the mask budget is a floor, not a target"). Verified by reloading the **real
+artefact the failing cell left behind**: all 48 modules now pass, and `query_key_value` measures
+0.299479 = 230/768 exactly.
+
+**The shape of this fault is the part to remember.** It hit `sequential` and `joint` only —
+pruning-only stays FP32 and never reaches `load_packed_model`, quantisation-only has `target = 0`
+so the check is skipped — so it removed **both arms of every comparison while leaving every control
+green**. 36 records looked healthy and 0 comparisons existed. A record count is not a progress
+measure; **`find_comparison_pairs` against the records is.**
+
+**Correction against myself, recorded because it is the same class of error the run exposed.** I
+reported "23 cells done, 0 failures" mid-run, then corrected it to "0 ok, 44 failed". Both were
+wrong: the status sentinel is `success`/`failure`, and I had tested against `ok` and then against
+the wrong field. The true state was **36 success, 8 failure**. Reading a record set is exactly as
+error-prone as producing one, and neither reading was checked before it was reported.
+
+**Cost, measured rather than extrapolated.** Dense cells came in at 160M **5.6 min**, 410M
+**15.3 min**, 1B **33.6 min** — the 1B figure against an assumed ~50 min. On measured per-cell
+times the grid is **~50–55 h**, not the ~38 h the freeze recorded.
+
+**The "intermittent stall" is still unexplained — and I briefly claimed otherwise.** Two cells ran
+long (43.6 and 52.5 min against 6.2 and 7.8 min norms), each containing a Modern Standby window
+whose arithmetic closed to the minute, so on 2026-08-06 I recorded standby as the cause and
+withdrew the [B-36](findings_log.md#f-33)/[B-41](findings_log.md#f-35) attribution. **That did not
+replicate:** later the same day an 83-minute standby window contained four 410M cells that ran at
+completely normal speed. A Win32 process is not frozen by Modern Standby as a rule. The cause is
+open again and both attributions are provisional — see
+[B-47](findings_log.md#4-bugs-found-that-would-have-invalidated-results). The per-cell estimates
+above are measured clean times, so the ~50–55 h figure holds only if the stall stays rare.
+
+**Dense test-split baselines, now measured** (these supersede nothing — they are the first
+test-split numbers this project has):
+
+| Model | Dense perplexity, test split |
+| --- | --- |
+| pythia-160m | **35.8575** |
+| pythia-410m | **21.3231** |
+| pythia-1b | **17.2564** |
+
+**The pre-flight is now honest**, which it was not: `find_comparison_pairs` keyed on
+`(model, budget, seed)` and collided every replicate, reporting **6** pairs for a 42-pair grid
+(**B-38**). With the replicate in the key it reports **210 logical slots, 171 executable cells, 42
+pairs** — matching the grid.
+
+**Before the results can be written up:** regenerate `results/evidence/` (the staleness guard fails
+until you do — that is it working), and check `find_comparison_pairs` against the **records** for
+incomplete pairs, because `continue_on_error` is on and one failed cell silently removes a whole
+comparison rather than stopping the run.
+
+#### Paused 2026-08-07 20:44, at cell 142 of 171
+
+Resumed 13:56, ran 7 h, stopped deliberately. **141 test-split records, 0 failures.**
+
+| Model | Records | Pairs |
+| --- | --- | --- |
+| **pythia-160m** | all five arms at R=8 | **16 of 16 ✅** |
+| **pythia-410m** | all five arms at R=8 | **16 of 16 ✅** |
+| pythia-1b | dense 1, **pruning 10** | 0 of 10 |
+| | | **32 of 42 overall** |
+
+**Both 160M and 410M are complete** — every arm, both budgets, all eight replicates, on the test
+split. That is the whole confirmatory comparison at the two scales the scale-trend evidence rests
+on. **Only the 1B leg remains: 29 cells** — quantisation, sequential and joint at R=5.
+
+1B pace is **29.3 min/cell** median (n=10, range 27.3–35.2), so roughly **14 h** left. Pruning is
+the *cheapest* 1B arm, though; the three remaining arms add compression work.
+
+⚠️ **Watch memory on the 1B leg.** At the pause: 0.29 GiB physical free of 13.7, **2.7 GiB commit
+free of 40.8**, sweep process at 20.6 GiB private. Nothing has failed and cell times are stable, so
+it is not thrashing — but `_verify_saved_artefact` loads a *second* full model to reload the
+checkpoint, and the remaining arms all pack. `continue_on_error` is on, so a `MemoryError` would
+drop a cell and silently remove a whole comparison. **Check pairs against the records, not the
+record count.**
+
+Resume with the same command; `skip_existing` keeps all 141 records:
+
+```bash
+.venv/Scripts/python.exe -u scripts/run_scale_sweep.py --config configs/experiments/main_scale_sweep.yaml
+```
+
+**This run cannot move to another machine.** `exists_valid` gates on a host key built from system,
+processor, core count and GPU name, so on a different host all 141 records are re-run rather than
+skipped (B-33) — and the grid carries CPU deployment measurements, which are Tier 3 and bound to
+this host regardless.
+
+#### Paused 2026-08-07 12:43, at cell 125 of 171
+
+Resumed 05:39, ran 7 h, stopped deliberately. **124 test-split records, 0 failures.**
+
+| Model | Records | Pairs |
+| --- | --- | --- |
+| **pythia-160m** | all five arms at R=8 | **16 of 16 — complete** |
+| **pythia-410m** | dense 1, pruning 16, quantisation 16, sequential 16, **joint 9** | **9 of 16** |
+| pythia-1b | dense 1 | — |
+| | | **25 of 42 overall** |
+
+**410M moderate is complete at R=8**; the aggressive budget is 1 of 8 through its joint arm. Only
+the 1B leg (41 cells) and 7 more 410M joint cells remain — **46 cells**.
+
+410M timings are very stable: sequential median **15.0 min** (n=16, range 14.4–15.5), quantisation
+uniformly 22.2 min. At ~15 min for the remaining 410M joint cells and ~34 min for 1B, that is
+roughly **25 h** left.
+
+Resume with the same command; `skip_existing` keeps all 124 records:
+
+```bash
+.venv/Scripts/python.exe -u scripts/run_scale_sweep.py --config configs/experiments/main_scale_sweep.yaml
+```
+
+**Do not spend time on host sleep.** Modern Standby cannot be prevented and does not affect the
+run — settled in [B-47](findings_log.md#4-bugs-found-that-would-have-invalidated-results) after
+three failed attempts.
+
+#### Paused 2026-08-06 22:02, at cell 97 of 171
+
+Resumed 11:00 at `f27ac2e`, ran 11 h, stopped deliberately. **96 test-split records, 0 failures.**
+
+| Model | Records | Pairs |
+| --- | --- | --- |
+| **pythia-160m** | dense 1, pruning 16, quantisation 16, sequential 16, **joint 16** | **16 of 16 — complete at R=8** |
+| pythia-410m | dense 1, pruning 16, quantisation 13 | — |
+| pythia-1b | dense 1 | — |
+| | | **16 of 42 overall** |
+
+**160M is finished** — both budgets, all five arms, all eight replicates, on the test split. That is
+the scale point carrying the strongest exploratory effect.
+
+Measured pace: 160M **7.8 min/cell**, 410M **17.1 min** median (the quantisation arm is uniformly
+22.2 min, a repeatable per-arm cost rather than an anomaly). Remaining ~74 cells put completion
+around **Sat 8 Aug** if 1B behaves like its dense cell (~34 min).
+
+Resume with the same command; `skip_existing` keeps all 96 records:
+
+```bash
+.venv/Scripts/python.exe -u scripts/run_scale_sweep.py --config configs/experiments/main_scale_sweep.yaml
+```
+
+**Start [scripts/keep_host_awake.py](../scripts/keep_host_awake.py) beside it.** Power policy alone
+did not hold — see [B-47](findings_log.md#4-bugs-found-that-would-have-invalidated-results).
+
+#### Paused 2026-08-05 23:50, at cell 55 of 171
+
+Relaunched at `f27ac2e` 21:35, ran 2 h 14 m, stopped deliberately. **54 test-split records, 0
+failures** — the three pre-fix failure records left at `b19b98a` were re-run and succeeded, so no
+stale failure remains on disk.
+
+| Arm | Records | | Complete pairs |
+| --- | --- | --- | --- |
+| dense | 3 (all scales) | | **3 of 42** |
+| pruning | 16 | | 160m/moderate rep0–rep2 |
+| quantisation | 16 | | |
+| sequential | 16 | | |
+| joint | 3 | | |
+
+Only the in-flight cell was lost. Resume with the same command — `skip_existing` keeps every record
+above and re-runs nothing:
+
+```bash
+.venv/Scripts/python.exe -u scripts/run_scale_sweep.py --config configs/experiments/main_scale_sweep.yaml
+```
+
+**Pairs are back-loaded and that matters for reading progress.** The grid runs arm by arm — dense,
+pruning, quantisation, sequential, then joint — so the pair count sat at 0 through cell 54 while
+nothing was wrong. It only becomes a useful progress signal once the joint arm is under way, which
+it now is. Until then the count to watch is records-by-arm, not pairs.
+
+160M cells are running ~7 min each. The intermittent stall did not recur in this stretch.
+
+#### How it finished — 2026-08-10
+
+Five deliberate pauses over six days. Measured per-cell times: 160M **7.8 min**, 410M **17.1 min**
+(sequential 15.0, quantisation uniformly 22.2), 1B **29.3 min** pruning rising to **~47–54 min** for
+the arms that pack. Total wall time far exceeded the frozen ~38 h estimate; the honest figure is
+roughly **60 h of compute across six days**.
+
+**Three operational faults, none of which touched a number:**
+
+| | |
+| --- | --- |
+| [B-45](findings_log.md#4-bugs-found-that-would-have-invalidated-results) | Dense reference selected across evaluation splits — caught live, 17 of the first 20 cells failed |
+| [B-46](findings_log.md#4-bugs-found-that-would-have-invalidated-results) | Reload guard demanded an unreachable sparsity — killed **every** sequential and joint cell while leaving controls green |
+| [B-47](findings_log.md#4-bugs-found-that-would-have-invalidated-results) | Modern Standby: cannot be prevented, and does not affect the run. Two of my own explanations were published and withdrawn |
+
+**A fourth, operational only:** the sweep process accumulates **~4 GiB of commit per 1B compression
+cell and never releases it** — commit free fell 20.24 → 1.03 GiB over five cells. With
+`continue_on_error` on, the resulting `MemoryError` would have *dropped* cells and silently removed
+comparisons. Handled by recycling the process on low commit, preferentially at a cell boundary;
+`skip_existing` makes a restart cost at most the in-flight cell. This is worth fixing in the runner
+before any future long grid: **memory is not released between cells.**
+
+**The lesson worth carrying:** B-46 removed both arms of every comparison while leaving every
+control green, so **36 records looked healthy and 0 comparisons existed**. A record count is not a
+progress measure — `find_comparison_pairs` against the records is. That is now enforced by
+`audit_confirmatory_run.py`, which fails closed.
+
+</details>
 
 The screening grid is re-runnable as below, and it still writes to the exploratory (validation)
 configuration. It now costs **~20 minutes** rather than 2 h 08 m ([F-29](findings_log.md#f-29)):
@@ -972,8 +1367,21 @@ solver, the mask scoring rule, the Pythia variant (**standard**), lm-eval-harnes
 the practical-importance threshold (**≥ 1.0 pp retention, consistent in sign across all paired
 calibration replicates, with R and the exact sign-test p reported per cell** — the seed-spread clause
 is *withdrawn* as vacuous, see [protocol_freeze.md](protocol_freeze.md#the-amended-practical-importance-rule)), Smart App Control, the power profile (**High
-performance**, no downclocking, never sleeps), the benchmark thread count (**4**, inside the P-core
-budget), and all five **model revision SHAs**.
+performance**, no downclocking — but **"never sleeps" was wrong**, see
+[B-47](findings_log.md#4-bugs-found-that-would-have-invalidated-results)), the benchmark thread
+count (**4**, inside the P-core budget), and all five **model revision SHAs**.
+
+> ⚠️ **The machine does sleep, and it did so during the confirmatory run.** `powercfg` reports
+> `STANDBYIDLE` on AC = **3600 s**, not 0, and Modern Standby logs Kernel-Power **506/507** rather
+> than the classic 42 — so a sleep check that greps for 42 reports a clean history while the machine
+> has been suspending all day. Set it to 0 on AC (elevated prompt) before any unattended run:
+>
+> ```
+> powercfg /change standby-timeout-ac 0
+> powercfg /change hibernate-timeout-ac 0
+> ```
+>
+> This is also the whole of the "intermittent stall" — see [B-47](findings_log.md#4-bugs-found-that-would-have-invalidated-results).
 
 ### One correction found by probing rather than reading docs
 
@@ -1136,4 +1544,14 @@ Full record in [protocol_freeze.md](protocol_freeze.md#environment). Summary:
 - [ ] **Reduced S6 control (12 runs)** ← **next**
 - [ ] **A4 downstream tasks** and **A5 prefill/decode** — both §-required, neither started
 - [x] **Freeze the confirmatory config** — 🔒 done at `cbe2098`, 210 cells, all checks passed
-- [ ] **Test evaluation once** — ~38 h, CPU, R=8/8/5. No tuning after that, and no tuning is now permitted
+- [x] **Validation-only 1B CPU timing pilot** — 2/2 succeeded; dense **25.12 min**, joint W4
+      **121.40 min**; exposed missing offload pin → [F-36](findings_log.md#f-36)
+- [x] **Re-freeze the confirmatory config** — v3 pins `offload_blocks: true`; manifest valid at
+      `e0c06ac`; B-44 closed before test evaluation
+- [x] **Test evaluation once** — ✅ **DONE 2026-08-10.** 171/171 cells, 42/42 pairs, 0 failures,
+      `AUDIT PASSED`. ~60 h of compute across six days, three operational faults en route
+      ([B-45](findings_log.md#4-bugs-found-that-would-have-invalidated-results),
+      [B-46](findings_log.md#4-bugs-found-that-would-have-invalidated-results),
+      [B-47](findings_log.md#4-bugs-found-that-would-have-invalidated-results)), none numerical.
+      Result: **[F-37](findings_log.md#f-37) — no cell meets the §6.3 bar**
+- [ ] **Write up** — cross-verify F-37, regenerate figures, draft with the §6 claim limits

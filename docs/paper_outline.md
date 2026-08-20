@@ -1,5 +1,25 @@
 # Paper outline
 
+> # Current submission outline
+>
+> **Updated 2026-08-16.** A1 step 10 was executed once on the test split and the study has its answer:
+> **[F-37](findings_log.md#f-37)** (the result), **[F-38](findings_log.md#f-38)** (mechanism
+> diagnostics), **[limitations.md](limitations.md)** (what the result may not claim).
+>
+> The outline below has been corrected to match the completed evidence. Its binding constraints are:
+>
+> - **The budget grid.** Only **30% + W8** and **30% + W4** were ever run end to end. The 50% and 70% sparsity budgets were screened and rejected as catastrophic ([F-23](findings_log.md#f-23)); no result uses them.
+> - **"Three seeds".** Withdrawn by Amendment A1 and replaced by paired calibration replicates, **R = 8 / 8 / 5**. There is no run-seed axis.
+> - **The results are in.** No cell meets the pre-registered practical-importance bar; the only significant cell is 410M/W4 at **Holm-adjusted p = 0.0469**. Any outline section that assumes a positive headline needs rewriting.
+> - **pythia-1.4b and 2:4 structured sparsity were NOT run.** Do not outline sections that report
+>   them. **Qwen2.5-0.5B WAS run** and completed 2026-08-14 ([F-41](findings_log.md#f-41)) — but
+>   it is exploratory external validity, **not a fourth scale point**, and must never appear on
+>   the Figure 1 scale axis.
+> - **There is no latency curve.** [F-34](findings_log.md#f-34) measured a single sparsity (30%) at three scales. A figure from it must not be labelled a curve.
+>
+> The authoritative statement of what the paper may and may not claim is **§6 of
+> [findings_log.md](findings_log.md)**. Where this file and that section disagree, that section wins.
+
 Working title:
 
 > **Does model scale change whether joint pruning-aware quantisation beats sequential compression?**
@@ -16,7 +36,8 @@ as the numbers.
 - Pruning and quantisation are normally applied sequentially; joint optimisation is proposed as
   better but is almost always evaluated at a single model size.
 - We measure joint gain — joint minus sequential quality retention at a matched compression budget —
-  across the Pythia suite from 160M to 1.4B parameters, at two budgets, over three seeds, with
+  across the Pythia suite from 160M to 1B parameters, at two budgets, over R = 8/8/5 paired
+  calibration replicates (1.4B was never run; there is no run-seed axis), with
   matched optimisation budgets.
 - All deployment measurements are CPU-based, so we also report whether the theoretical sparsity and
   bit-width reductions translate into measured latency.
@@ -93,10 +114,12 @@ the ones that are easy to get wrong —
 
 ### 3.4 Experimental grid
 
-**3 Pythia sizes** (160M, 410M, 1B) × 5 arms × 2 budgets × 3 seeds. WikiText-2, 512-token
+**3 Pythia sizes** (160M, 410M, 1B) × 5 arms × 2 budgets × **R = 8/8/5 paired calibration
+replicates** — not seeds, which A1 withdrew. WikiText-2, 512-token
 non-overlapping windows.
 
-State plainly that the 1.4B point is optional and reported separately unless it was run under settings
+The 1.4B point was NOT run and must not appear. (Original note, kept for context: it was optional
+and to be reported separately unless run under settings
 identical to the main sweep — and if it was excluded, say why in this section rather than burying it in
 Limitations. Full definitions of the two arms are in `docs/method_definition.md`; cite it, do not
 paraphrase it, so the paper and the code cannot disagree about what was run.
@@ -126,23 +149,31 @@ quantisation implementations behave sensibly before any joint claim is made.
 
 ### 5.2 Joint gain versus scale — the main result
 
-**Figure 1:** joint gain against parameter count, log x axis, one line per budget, error bars from
-the seed spread, horizontal line at zero. The Qwen point marked distinctly and excluded from any fit.
+**Figure 1:** joint gain against parameter count, log x axis, one line per budget, individual
+replicates as faint points with SEM error bars on the means, a horizontal line at zero **and the
+§6.3 practical-importance bar at 1.0 pp**, so the criterion is visible rather than implied.
+**Qwen does NOT appear on this figure** — not even marked distinctly. Its 358M targeted
+parameters fall between pythia-410m and pythia-1b, so any presence on a parameter-count axis
+reads as a scale point. `plot_joint_gain_vs_scale` now raises if handed it. The external leg
+goes in its own categorical W4/W8 panel (`external_validation`), which has no scale axis.
 
-Table 6. State plainly whether the gain exceeds the seed spread at each scale.
+Table 6. State the paired-replicate sign count, interval, and practical-threshold result at each scale.
 
 ### 5.3 Budget dependence
 
 Whether joint gain is a scale effect, a budget effect, or both. If it appears only at the aggressive
 budget, that changes the practical recommendation entirely and should be said in those terms.
 
-### 5.4 Does sparsity become speed?
+### 5.4 CPU deployment timing at the frozen sparsity
 
-**Figure 2:** measured latency against sparsity, normalised to each model's dense baseline, with the
-`1/(1-sparsity)` bound overlaid. Unstructured versus 2:4.
+Use the same-session prefill/decode measurements in [F-34](findings_log.md#f-34), reported as a table
+with medians and IQRs. The study measured only 30% sparsity and did not run 2:4, so it cannot estimate
+a latency curve or compare sparsity formats. Do not use the cross-session
+`plot_latency_vs_sparsity` diagnostic: its 1B ratio violates the theoretical bound because its dense
+and sparse measurements came from different sessions.
 
-If unstructured sparsity yields no measured speedup — the expected outcome — report it as a finding
-about the deployment path, not a limitation of the study.
+Frame the result as specific to this CPU, framework, thread count, and unpacked/unstructured path.
+It does not predict GPU or specialised sparse-kernel deployment.
 
 ### 5.5 Quality–size trade-off
 
@@ -178,8 +209,8 @@ State these plainly and early enough that a reader does not have to find them. D
 [validity_threats.md](validity_threats.md), which is the fuller treatment; this section is the subset a
 reader needs in the paper itself.
 
-- Three scale points (four if the extended sweep ran under comparable settings) establish a direction,
-  not a scaling law. No extrapolation beyond ~1.4B.
+- Exactly three Pythia scale points establish an observed direction, not a scaling law. The registered
+  1.4B extension was not run; do not extrapolate beyond 1B.
 - Scale in Pythia is not a perfectly isolated variable: depth, width, head counts, and the
   tokens-per-parameter ratio all change along the suite.
 - One specific sequential implementation versus one specific joint implementation. Not a claim about
@@ -189,13 +220,13 @@ reader needs in the paper itself.
 - CPU latency findings are specific to the framework, backend, thread count, and machine used. Sparsity
   yields no speedup without a kernel that exploits it, so a null latency result is a finding about the
   runtime as much as about the method.
-- If the moderate and aggressive budgets ran on different backends, their latency and size numbers are
-  not comparable with each other — say so rather than plotting them as one curve.
+- W4 has no latency result under the frozen backend, and W8/FP32 timing at one sparsity must not be
+  presented as a cross-budget latency comparison or curve.
 - Standard pruning and quantisation baselines; a stronger base method could change the gap in either
   direction.
 - Matched optimiser steps is not the same as matched optimisation difficulty.
-- Three seeds give a weak variance estimate. Report gains smaller than the seed spread as
-  inconclusive, not as small positive effects.
+- The uncertainty axis is paired calibration replicates (R = 8 / 8 / 5), not run seeds. R = 5 cannot
+  reach significance under the exact sign test, and intervals remain wide.
 - The pre-registered analysis is the trend across scale, not the maximum over cells; any cell-level
   claim is exploratory.
 - One external validation model, at one scale.
@@ -210,7 +241,7 @@ Two or three sentences: the question, the measured answer, and the recommendatio
 
 ## Appendices
 
-- **A. Full results tables** — every arm, model, budget, and seed, unaveraged.
+- **A. Full results tables** — every arm, model, budget, and calibration replicate, unaveraged.
 - **B. Configurations** — the shipped YAML, with the include structure explained.
 - **C. Hardware and software** — the benchmark machine, backend, and frozen environment.
 - **D. Reproduction instructions** — from [reproducibility.md](reproducibility.md).
@@ -226,10 +257,12 @@ Two or three sentences: the question, the measured answer, and the recommendatio
 | # | Figure | Source | Answers |
 | - | ------ | ------ | ------- |
 | 1 | Joint gain vs scale | `plot_joint_gain_vs_scale` | primary question, secondary 1 |
-| 2 | Latency vs sparsity, with bound | `plot_latency_vs_sparsity` | secondary 4 |
 | 3 | Quality vs checkpoint size | `plot_quality_vs_size` | secondary 2 |
 | 4 | Joint gain vs training cost | `plot_training_cost` | secondary 5 |
-| — | Qwen point on Figure 1 | validation records | secondary 3 |
+| 5 | External validation (categorical W4/W8) | `plot_external_validation` | secondary 3 |
+
+The numeric labels above are generator selectors, not required manuscript numbering. CPU timing is a
+table from F-34; the cross-session latency diagnostic is deliberately excluded from the inventory.
 
 ## Writing order
 

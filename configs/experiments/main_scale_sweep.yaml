@@ -76,6 +76,13 @@ data:
   eval_split: test
 >>>>>>> origin/main
 
+# Amendment A3 / F-36: the verified, bit-identical residency policy required for Pythia-1B.
+# Leaving this implicit selects the false default and made the prelaunch joint timing cell spend
+# 65.67 minutes compressing instead of F-31's 4 min 34 s offloaded path.
+compression:
+  reconstruction:
+    offload_blocks: true
+
 sweep:
   # Three scale points spanning roughly one order of magnitude. Enough to establish the direction of
   # a trend; not enough to fit a scaling law, and the write-up must not claim one.
@@ -229,9 +236,9 @@ sweep:
 
   # Resumable: an interrupted sweep re-runs only the cells with no record yet.
   skip_existing: true
-  # Fail fast while the pipeline is new. Flip to true for long unattended runs, but then check
-  # find_comparison_pairs() afterwards -- a failed joint run silently removes a whole comparison.
-  continue_on_error: false
+  # Amendment A2: this multi-day run continues after a failed cell. Failed records are never valid
+  # resume candidates, and scripts/audit_confirmatory_run.py must pass before any analysis begins.
+  continue_on_error: true
 
 benchmark:
   num_threads: 4

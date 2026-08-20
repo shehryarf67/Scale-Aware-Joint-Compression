@@ -48,8 +48,24 @@ FROZEN_SEQUENTIAL_ORDER: dict[tuple[str, str], CompressionMethod] = {
     # p = 0.25. It is on the control budget, and nothing in the headline depends on it -- but the
     # baseline is still the stronger of the two, and §6.1 requires the stronger one.
     ("pythia-1b", "moderate"): CompressionMethod.SEQUENTIAL_QP,
+    # ---------------------------------------------------------------- external validation
+    # Qwen2.5-0.5B, frozen 2026-08-11 from one validation draw (F-40). A DIFFERENT FAMILY, and this
+    # leg is exploratory: it cannot alter F-37, and nothing in the primary result depends on these
+    # two entries.
+    #
+    # W4 -- P→Q, on evidence, by **1.351 pp**. Comfortably outside single-draw noise and the same
+    # direction and rough magnitude as every Pythia W4 cell, which is what the mechanism in the
+    # comment above predicts: Q→P reuses dense-fitted scales against a post-pruning distribution,
+    # and a 4-bit grid punishes that mismatch.
+    ("qwen2.5-0.5b", "aggressive"): CompressionMethod.SEQUENTIAL,
+    # W8 -- P→Q by the pre-declared FALLBACK, not by measurement. The margin is 0.094 pp, well
+    # inside noise, and one draw cannot separate the orders at a near-lossless precision. Additional
+    # draws were deliberately NOT run, because they could not change what gets frozen: P→Q is both
+    # the single-draw winner and the declared fallback for an indistinguishable comparison, so the
+    # decision is identical either way. Recorded as ARBITRARY, exactly as the Pythia W8 cells are.
+    ("qwen2.5-0.5b", "moderate"): CompressionMethod.SEQUENTIAL,
 }
-"""The frozen sequential order per (model, budget). Evidence: findings_log F-24, F-28, F-32."""
+"""The frozen sequential order per (model, budget). Evidence: findings_log F-24, F-28, F-32, F-40."""
 
 FROZEN_ORDER_EVIDENCE: dict[tuple[str, str], str] = {
     ("pythia-160m", "aggressive"): "F-24: P→Q by +4.26 pp",
@@ -61,6 +77,11 @@ FROZEN_ORDER_EVIDENCE: dict[tuple[str, str], str] = {
     ): "F-28: indistinguishable over 5 draws, P→Q by pre-declared fallback",
     ("pythia-410m", "moderate"): "F-28: indistinguishable, P→Q by the same fallback",
     ("pythia-1b", "moderate"): "F-32: Q→P by +0.10 pp, 3/3 draws",
+    ("qwen2.5-0.5b", "aggressive"): "F-40: P→Q by +1.351 pp, one validation draw",
+    (
+        "qwen2.5-0.5b",
+        "moderate",
+    ): "F-40: indistinguishable (0.094 pp), P→Q by pre-declared fallback",
 }
 """Why each cell is frozen as it is, for the record a run writes."""
 

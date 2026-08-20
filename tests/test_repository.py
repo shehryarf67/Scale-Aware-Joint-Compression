@@ -530,11 +530,19 @@ class TestResumabilityAndRecordHygiene:
 
         return ExperimentTracker(tmp_path)
 
-    def _record(self, config, **overrides):
+    def _record(self, config, *, checkpoint_dir=None, **overrides):
         from scale_aware_compression.experiments.runner import ExperimentRecord
 
         record = ExperimentRecord.from_config(config, capture_environment=False)
         record.status = "success"
+        if checkpoint_dir is not None:
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            record.checkpoint_path = checkpoint_dir
+            record.checkpoint = {
+                "reload_verified": True,
+                "artifact_sha256": "test-digest",
+                "artifact_retained": True,
+            }
         for key, value in overrides.items():
             setattr(record, key, value)
         return record
@@ -554,9 +562,15 @@ class TestResumabilityAndRecordHygiene:
 
     def test_a_successful_matching_record_is_skippable(self, tmp_path, config):
         tracker = self._tracker(tmp_path)
-        record = self._record(config)
+        record = self._record(config, checkpoint_dir=tmp_path / "checkpoint")
         tracker.save(record)
         assert tracker.exists_valid(record.experiment_id, config) is True
+
+    def test_an_old_success_without_verified_checkpoint_is_re_run(self, tmp_path, config):
+        tracker = self._tracker(tmp_path)
+        record = self._record(config)
+        tracker.save(record)
+        assert tracker.exists_valid(record.experiment_id, config) is False
 
     def test_a_failed_record_is_re_run(self, tmp_path, config):
         """A crashed cell must not be mistaken for a completed one."""
@@ -570,7 +584,7 @@ class TestResumabilityAndRecordHygiene:
         import copy
 
         tracker = self._tracker(tmp_path)
-        record = self._record(config)
+        record = self._record(config, checkpoint_dir=tmp_path / "checkpoint")
         tracker.save(record)
 
         moved = copy.deepcopy(config)
@@ -581,7 +595,7 @@ class TestResumabilityAndRecordHygiene:
         import copy
 
         tracker = self._tracker(tmp_path)
-        record = self._record(config)
+        record = self._record(config, checkpoint_dir=tmp_path / "checkpoint")
         tracker.save(record)
 
         rebudgeted = copy.deepcopy(config)
@@ -628,7 +642,7 @@ class TestResumabilityAndRecordHygiene:
         difference is floating-point reduction order rather than anything a reader would notice.
         """
         tracker = self._tracker(tmp_path)
-        record = self._record(config)
+        record = self._record(config, checkpoint_dir=tmp_path / "checkpoint")
         record.hardware = {
             "system": "Linux",
             "cpu_model": "x86_64",
@@ -643,7 +657,7 @@ class TestResumabilityAndRecordHygiene:
         from scale_aware_compression.hardware import get_hardware_info
 
         tracker = self._tracker(tmp_path)
-        record = self._record(config)
+        record = self._record(config, checkpoint_dir=tmp_path / "checkpoint")
         record.hardware = get_hardware_info()
         tracker.save(record)
         assert tracker.exists_valid(record.experiment_id, config) is True
@@ -651,7 +665,7 @@ class TestResumabilityAndRecordHygiene:
     def test_a_record_with_no_hardware_recorded_is_not_invalidated(self, tmp_path, config):
         """Records predating the field report "unknown"; a new guard must not force a recompute."""
         tracker = self._tracker(tmp_path)
-        record = self._record(config)
+        record = self._record(config, checkpoint_dir=tmp_path / "checkpoint")
         record.hardware = {}
         tracker.save(record)
         assert tracker.exists_valid(record.experiment_id, config) is True
@@ -675,11 +689,22 @@ class TestNoRunArtefactsCommitted:
     * ``results/summaries/*.md`` -- promoted human-readable summaries, already permitted by
       `.gitignore`.
 
-    Everything else -- checkpoints, packed artefacts, logs, figures, raw metrics -- stays out.
+    * ``results/figures/*.{png,pdf}`` and ``results/tables/*.{md,csv}`` -- the paper's figures and
+      tables. Same reasoning as the evidence set, one step further along: a reviewer cannot approve
+      a plot that exists only on the machine that produced it. Small, plain outputs of
+      `scripts/generate_plots.py` and `scripts/build_paper_tables.py`.
+
+    Everything else -- checkpoints, packed artefacts, logs, raw metrics -- stays out. The extension
+    lists matter: they are what stops a stray `.npy` or a 4 GB checkpoint riding along in a
+    directory that is otherwise permitted.
     """
 
     ALLOWED_PREFIXES = ("results/evidence/",)
     ALLOWED_SUFFIXES = (".gitkeep",)
+    ALLOWED_BY_DIRECTORY = {
+        "results/figures/": (".png", ".pdf"),
+        "results/tables/": (".md", ".csv"),
+    }
 
     def _is_permitted(self, path: str) -> bool:
         """Whether a tracked path under these directories is a declared exception."""
@@ -687,6 +712,9 @@ class TestNoRunArtefactsCommitted:
             return True
         if path.startswith(self.ALLOWED_PREFIXES):
             return True
+        for prefix, suffixes in self.ALLOWED_BY_DIRECTORY.items():
+            if path.startswith(prefix):
+                return path.endswith(suffixes)
         return path.startswith("results/summaries/") and path.endswith(".md")
 
     @pytest.mark.parametrize("directory", ["outputs", "results", "data"])
@@ -922,7 +950,9 @@ class TestTheCommittedEvidenceSetIsCurrent:
         """§6.1 requires best-of {P→Q, Q→P}. B-30 was measuring against the weaker order.
 
         Making the chosen order an explicit column is what lets a reader check it rather than
-        assume it.
+        assume it. B-52 added the RULE alongside the order: on the test split the baseline is the
+        frozen order, not a maximum, because only one order was ever run there and maximising over
+        whatever else is present is how a validation record leaked into a test comparison.
         """
         import csv
 
@@ -932,10 +962,34 @@ class TestTheCommittedEvidenceSetIsCurrent:
         with path.open(encoding="utf-8", newline="") as handle:
             rows = list(csv.DictReader(handle))
         assert rows, "joint_gains.csv is empty"
-        assert "best_of_order" in rows[0]
-        assert "orders_available" in rows[0]
+        for column in ("baseline_order", "baseline_rule", "orders_available", "eval_split"):
+            assert column in rows[0], f"joint_gains.csv must export {column!r}"
         for row in rows:
-            assert row["best_of_order"] in {"sequential", "sequential_qp"}
+            assert row["baseline_order"] in {"sequential", "sequential_qp"}
+            assert row["baseline_rule"] in {"frozen", "best-of"}
+            # B-52: a test-split gain must never be taken against a maximum.
+            if row["eval_split"] == "test":
+                assert row["baseline_rule"] == "frozen"
+
+    def test_joint_gains_never_pair_across_evaluation_splits(self, evidence_dir: Path):
+        """B-52. Both splits produce the same experiment ids, so this cannot be eyeballed.
+
+        The exported table once carried -0.2143 pp for qwen2.5-0.5b/moderate/rep0, formed from a
+        validation Q→P record and a test joint record. The frozen-order test gain is -0.0357 pp.
+        """
+        import csv
+
+        path = evidence_dir / "joint_gains.csv"
+        if not path.exists():
+            pytest.skip("evidence set not present")
+        with path.open(encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        for row in rows:
+            assert row.get("eval_split"), "every gain row must name the split it came from"
+            assert row.get("dataset_fingerprint"), (
+                "every gain row must name the evaluated data; a shared split label is not proof "
+                "the same corpus and window were used"
+            )
 
     def test_the_manifest_hashes_every_source_record(self, evidence_dir: Path):
         """The substitute for committing excluded artefacts: they stay identifiable."""
@@ -1019,6 +1073,42 @@ class TestTheConfirmatoryManifest:
         assert manifest["evaluation"]["device"] == "cpu", "reported quality must come from CPU"
         assert manifest["benchmark"]["device"] == "cpu", "§4.6 deployment measurements are CPU-only"
 
+    def test_a2_builder_freezes_the_executable_policy(self, project_root: Path):
+        """A2 keeps logical coverage explicit while listing only records that can exist."""
+        source = (project_root / "scripts" / "build_confirmatory_manifest.py").read_text(
+            encoding="utf-8"
+        )
+        for field in (
+            "logical_grid_cell_count",
+            "executable_cell_count",
+            "deduplicated_dense_slots",
+            "dense_policy",
+        ):
+            assert field in source
+        assert "executable_cells(plan)" in source
+
+    def test_a2_has_a_validation_only_timing_pilot(self, project_root: Path):
+        from scale_aware_compression.config import load_config
+
+        config = load_config(project_root / "configs/experiments/confirmatory_timing_pilot.yaml")
+        assert config.data.eval_split == "validation"
+        assert config.runtime.output_dir.as_posix().endswith("outputs/timing_pilot")
+        assert config.sweep.models == ["pythia-1b"]
+        assert [method.value for method in config.sweep.methods] == ["dense", "joint"]
+        assert config.sweep.budgets == ["aggressive"]
+        assert config.compression.reconstruction.offload_blocks is True
+
+    def test_a3_freezes_the_verified_offload_path(self, project_root: Path):
+        from scale_aware_compression.config import load_config
+
+        config = load_config(project_root / "configs/experiments/main_scale_sweep.yaml")
+        assert config.compression.reconstruction.offload_blocks is True
+        builder = (project_root / "scripts/build_confirmatory_manifest.py").read_text(
+            encoding="utf-8"
+        )
+        assert "Amendment A3 requires" in builder
+        assert '"residency_policy"' in builder
+
     def test_every_model_revision_is_a_full_sha(self, manifest):
         """§2.7. B-13 was a sweep inheriting one model's revision for every cell."""
         if manifest is None:
@@ -1052,3 +1142,62 @@ class TestTheConfirmatoryManifest:
             pytest.skip("manifest not generated on this machine")
         for key in ("latency", "downstream", "1b_significance", "extended_models"):
             assert key in manifest["exclusion_rules"], f"exclusion {key!r} is not stated"
+
+
+class TestTheRecoveredQwenOrderSelectionEvidence:
+    """B-51 destroyed the validation records that F-40's sequential-order freeze rests on.
+
+    Four were lost from disk -- `sequential` (P→Q) and `joint` at both budgets -- because the test
+    grid wrote to the same filenames. They are recoverable from the evidence set committed at
+    2832914, before the test grid ran, and are extracted to a dedicated artefact so the freeze does
+    not depend on a reader knowing which commit to look in.
+    """
+
+    def test_the_recovered_artefact_matches_history(self, project_root: Path):
+        """Guards against the artefact drifting from the commit it claims to come from."""
+        completed = subprocess.run(
+            [sys.executable, "scripts/recover_qwen_order_selection.py", "--check"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if "no qwen2.5-0.5b validation rows" in completed.stderr:
+            pytest.skip("source commit not present in this clone")
+        assert completed.returncode == 0, completed.stderr
+
+    def test_the_provenance_names_what_was_destroyed(self, project_root: Path):
+        """A recovery without provenance is just a file someone typed."""
+        path = project_root / "results" / "evidence" / "qwen_order_selection_provenance.json"
+        if not path.exists():
+            pytest.skip("recovered artefact not present")
+        provenance = json.loads(path.read_text(encoding="utf-8"))
+        assert provenance["source_commit"], "the source commit must be recorded"
+        assert provenance["record_sha256_at_source"], "per-record hashes must be recorded"
+        destroyed = set(provenance["destroyed_by_b51"])
+        assert any("sequential_" in name and "_qp" not in name for name in destroyed), (
+            "the P→Q records were destroyed and the provenance must say so"
+        )
+        assert any("joint" in name for name in destroyed), (
+            "the joint records were destroyed and the provenance must say so"
+        )
+
+    def test_the_recovered_values_reproduce_the_frozen_order(self, project_root: Path):
+        """The whole point: F-40's margins must be recomputable from the recovered file."""
+        import csv
+
+        path = project_root / "results" / "evidence" / "qwen_order_selection.csv"
+        if not path.exists():
+            pytest.skip("recovered artefact not present")
+        with path.open(encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        by_cell = {
+            (row["budget_label"], row["compression_method"]): float(row["perplexity_retention"])
+            for row in rows
+        }
+        for budget in ("moderate", "aggressive"):
+            pq = by_cell[(budget, "sequential")]
+            qp = by_cell[(budget, "sequential_qp")]
+            assert pq > qp, (
+                f"F-40 froze P→Q at {budget}; the recovered evidence must still show it winning"
+            )

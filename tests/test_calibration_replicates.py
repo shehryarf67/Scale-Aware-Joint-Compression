@@ -396,7 +396,10 @@ class TestDenseIsNotReplicated:
     @staticmethod
     def _ordered(replicates: int):
         from scale_aware_compression.config import ExperimentConfig
-        from scale_aware_compression.experiments.scale_sweep import _dense_first, build_sweep_plan
+        from scale_aware_compression.experiments.scale_sweep import (
+            build_sweep_plan,
+            executable_cells,
+        )
 
         config = ExperimentConfig.from_mapping(
             {
@@ -411,7 +414,24 @@ class TestDenseIsNotReplicated:
                 },
             }
         )
-        return _dense_first(build_sweep_plan(config).cells)
+        return executable_cells(build_sweep_plan(config))
+
+    def test_public_execution_policy_matches_the_frozen_scope(self, project_root):
+        """Manifest and audit consume the same 171-cell policy as the runner."""
+        from scale_aware_compression.config import load_config
+        from scale_aware_compression.experiments.scale_sweep import (
+            build_sweep_plan,
+            executable_cells,
+            find_comparison_pairs,
+        )
+
+        config = load_config(project_root / "configs/experiments/main_scale_sweep.yaml")
+        plan = build_sweep_plan(config)
+        executable = executable_cells(plan)
+        assert len(plan.cells) == 210
+        assert len(executable) == 171
+        assert len(find_comparison_pairs(plan)) == 42
+        assert sum(cell.method is CompressionMethod.DENSE for cell in executable) == 3
 
     def test_one_dense_run_per_model_regardless_of_replicate_count(self):
         for replicates in (1, 5, 8):

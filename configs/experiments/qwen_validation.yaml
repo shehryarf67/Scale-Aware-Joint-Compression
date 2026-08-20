@@ -21,10 +21,18 @@ experiment:
   id: qwen_validation
   name: Qwen2.5-0.5B external validation
   description: >-
+<<<<<<< HEAD
     The same five arms, budgets, and paired calibration replicates as the main sweep, applied to a
     different model family.
     Compared against the Pythia trend interpolated at 0.5B parameters -- which falls between
     pythia-410m and pythia-1b.
+=======
+    The same five arms, budgets, and seeds as the main sweep, applied to a different model family.
+    NOT compared by interpolating the Pythia trend at its parameter count. Its 358M targeted
+    parameters do fall between pythia-410m and pythia-1b, which makes that tempting and wrong: a
+    different family, tokeniser and corpus is not a point on the Pythia scale axis. Only retention
+    ratios and the SIGN of the joint gain transfer. See findings_log.md §6.
+>>>>>>> origin/main
   tags:
     - validation
     - external
@@ -88,9 +96,10 @@ sweep:
   # Identical to main_scale_sweep.yaml. Keep the two in step: a budget that differs between the
   # sweep and the validation makes the transfer check meaningless.
   # Identical to the Pythia sweep's frozen budgets, and that is a requirement rather than a
-  # convenience: §2.4 compares Qwen's joint gain against the Pythia trend interpolated at its
-  # parameter count, which is meaningless if the two ran at different compression budgets. A test
-  # asserts the two configs agree.
+  # convenience: the whole comparison is between Qwen's joint gain and Pythia's AT THE SAME
+  # BUDGET, which is meaningless if the two ran at different ones. A test asserts the two configs
+  # agree. (This comment previously described interpolating the Pythia trend at Qwen's parameter
+  # count; that is forbidden -- see findings_log.md §6 and the description above.)
   #
   # Frozen 2026-07-31 after corrected Phase 7 screening on Pythia-160M and confirmation on
   # Pythia-410M. See results/summaries/phase7_screening.md.

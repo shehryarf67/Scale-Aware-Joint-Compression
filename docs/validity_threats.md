@@ -7,6 +7,64 @@ to fit whatever came out.
 Each section states the threat, what the design does about it, and what risk remains. **Residual risk
 that cannot be mitigated belongs in the paper's Limitations section**, not in a footnote.
 
+---
+
+## What the confirmatory run settled, and what it did not
+
+**Added 2026-08-10, after [F-37](findings_log.md#f-37).** The sections below were written before any
+result existed — deliberately, so the limitations could not be chosen to fit the outcome. This
+section says which of them the confirmatory run actually resolved. It does **not** rewrite them.
+
+### Resolved
+
+| Threat | Outcome |
+| --- | --- |
+| **Solver slack could exceed the effect** | Bounded, and the sign is safe: across 96 rows the sweep never inverted which mask was better ([F-21](findings_log.md#f-21)). Magnitude remains unquantifiable for the quantised problem |
+| **The mask might be wrong** | Bit-identical to an independent Wanda implementation over 84,934,656 weights ([F-19](findings_log.md#f-19)) |
+| **Absolute quality might be uncompetitive** | Credible against unmodified SparseGPT once the comparison group is matched ([F-22](findings_log.md#f-22)) |
+| **The joint mechanism may be inert at moderate precision** | **Confirmed inert at W8** on the test split: +0.04, +0.03, −0.18 pp at the three scales, sign inconsistent at two of them. The mechanism is real only at W4 |
+| **Selection on the validation split** | Real and measurable. **Neither exploratory estimate replicated** — 160M fell +1.69 → +1.01, 410M rose +0.39 → +0.93. The two-split design did its job; had the study reported the validation numbers it would have published two wrong point estimates |
+
+### Not resolved, and now load-bearing
+
+**Multiple comparisons — the one threat the result actually turns on.** This section warned that
+"examining six joint-gain values and reporting the largest as *the* result inflates the false-positive
+rate." That is exactly the situation: six cells were examined, and **one** reached significance
+(410M/aggressive, exact two-sided sign test p = 0.0078). Corrected honestly:
+
+| Correction | Adjusted p for 410M/aggressive | Verdict |
+| --- | --- | --- |
+| None (raw) | 0.0078 | significant |
+| **Holm–Bonferroni over all 6 cells** | **0.0469** | **significant, but only just** |
+| Bonferroni over 6 | 0.0469 | significant, marginally |
+
+**No other cell survives correction** — the next smallest adjusted p is 0.3125. So the study has
+**exactly one** statistically significant cell, and it clears the 0.05 line by 0.0031 after
+correction. The paper must report the corrected value, not the raw one, and must not describe the
+result as "significant at 410M" without it.
+
+**This compounds with the §6.3 near-miss.** The same cell that is marginally significant after
+correction is also **0.065 pp short** of the pre-registered practical-importance threshold. Two
+independent criteria, both missed or barely met, on the same cell. The honest summary is that the
+410M effect is **real but small and fragile**, not that it is established.
+
+**Also unresolved:**
+
+- **Three points still cannot fit a scaling law**, and this is now *worse* than the design
+  anticipated: 160M and 410M came out within 0.08 pp of each other, so the trend rests on one
+  descending step to 1B rather than three ordered points.
+- **R = 5 at 1B cannot reach significance at any effect size** (best attainable two-sided
+  p = 0.0625). The 1B leg contributes effect sizes and sign consistency only — including its
+  unanimous 0/5 negative at W8, which is the strongest possible outcome at that R and still not
+  significant.
+- **The confirmatory baseline is the frozen order, not best-of-both.** Where the freeze was recorded
+  as arbitrary — the W8 cells, [F-28](findings_log.md#f-28) — the baseline carries an uncertainty
+  (~0.18 pp at 160M/W8) **comparable to the W8 effects themselves**. No W8 conclusion should rest on
+  the sign alone.
+- **Every implementation fault found in this project flattered the joint arm** — six in a row, none
+  in the other direction. The final effect is small and was reached by removing biases that all
+  pointed one way. Whether any remain is unknowable; the anchors bound it, they do not eliminate it.
+
 ## Construct Validity
 
 *Does "joint gain" actually measure the benefit being claimed?*

@@ -1,0 +1,127 @@
+# Sequential ORDER SELECTION for Qwen2.5-0.5B -- validation split, exploratory by construction.
+#
+# WHY THIS EXISTS
+#
+# `qwen_validation.yaml` sets `use_frozen_order: true` and therefore REFUSES to build a plan until
+# an order is frozen for this model. That refusal is correct and deliberate (B-42): §6.1 requires
+# joint gain measured against best-of {P->Q, Q->P}, and defaulting to P->Q is exactly the fault that
+# would inflate a joint gain. This config produces the evidence that lets the freeze happen.
+#
+# It mirrors `order_selection.yaml` for Pythia. The only differences are the model and the module
+# exclusions, and both are forced by the architecture rather than chosen.
+#
+# WHAT IS HELD IDENTICAL TO THE PYTHIA SWEEP
+#
+# Budgets, calibration sample count, sequence length, evaluation window, solver, local steps, joint
+# iterations, comparison group. A difference in outcome can only be attributed to the model family
+# if nothing else moved.
+#
+# WHY `joint` IS IN THE METHOD LIST
+#
+# Order selection strictly needs only the two sequential orders. Joint is included because the same
+# run then yields a validation joint gain for free, which is the cheapest possible check that the
+# arm behaves at all on this family before ~10 hours are spent on the test grid. It is a SCREENING
+# number on a selection surface and must never be reported as a result.
+#
+# TIED EMBEDDINGS
+#
+# Qwen2.5 ties lm_head to model.embed_tokens. Both stay excluded, or pruning the head silently
+# prunes the input embedding and the arm stops matching Pythia's coverage.
+
+include:
+  - ../models/qwen2_5_0_5b.yaml
+  - ../compression/sequential.yaml
+  - ../evaluation/quality.yaml
+  - ../evaluation/cpu_benchmark.yaml
+
+experiment:
+  id: qwen_order_selection
+  name: Qwen2.5-0.5B sequential order selection (P->Q vs Q->P)
+  description: >-
+    Both sequential orderings plus joint at the two frozen budgets, on the validation split, so the
+    stronger sequential baseline can be frozen per budget before any test evaluation. Exploratory:
+    this is a selection surface, not a reported result.
+  tags:
+    - exploratory
+    - order-selection
+    - external-validation
+    - qwen
+    - not-a-result
+
+runtime:
+  seed: 1234
+  deterministic: true
+  output_dir: outputs
+  log_level: INFO
+
+# VALIDATION. Selection happens here so the test split stays untouched by the choice.
+data:
+  eval_split: validation
+  calibration_samples: 128
+  calibration_split: train
+  sequence_length: 512
+  max_eval_samples: 512
+  batch_size: 4
+
+compression:
+  reconstruction:
+    solver: sweep
+    local_steps: 1
+    joint_iterations: 2
+    comparison_group: output
+    scale_search: false
+    keep_benefit_saliency: false
+  pruning:
+    exclude_patterns:
+      - embed_tokens
+      - lm_head
+  quantisation:
+    exclude_patterns:
+      - embed_tokens
+      - lm_head
+
+sweep:
+  models:
+    - qwen2.5-0.5b
+  methods:
+    - dense
+    - sequential
+    - sequential_qp
+    - joint
+  budgets:
+    - moderate
+    - aggressive
+  # Staged exactly as the Pythia selection was: ONE draw first. If the two orders separate clearly,
+  # one draw settles it. If they land within noise, a choice made on one draw is a coin flip and
+  # replicates get added before anything is frozen. That call belongs to the measured gap.
+  replicates: 1
+
+  budget_overrides:
+    moderate:
+      compression:
+        budget_label: moderate
+        pruning:
+          sparsity: 0.3
+        quantisation:
+          bits: 8
+    aggressive:
+      compression:
+        budget_label: aggressive
+        pruning:
+          sparsity: 0.3
+        quantisation:
+          bits: 4
+
+  # Both orders are being MEASURED here, so there is nothing frozen to honour yet.
+  use_frozen_order: false
+  skip_existing: true
+  # A failed cell must stop this run. With only one draw there is no redundancy, and a silently
+  # dropped order would leave the freeze resting on a single arm.
+  continue_on_error: false
+
+benchmark:
+  num_threads: 4
+  warmup_runs: 5
+  measured_runs: 30
+  batch_size: 1
+  sequence_length: 128

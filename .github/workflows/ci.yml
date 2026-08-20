@@ -38,6 +38,10 @@ jobs:
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
+        with:
+          # The Qwen provenance test reconstructs its evidence from commit 2832914.
+          # A shallow checkout cannot verify that historical source object.
+          fetch-depth: 0
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -90,14 +94,21 @@ jobs:
             -m "not slow and not requires_model and not requires_torch"
 
       - name: Verify no run artefacts were produced
-        # The scaffold must not write checkpoints, metrics, or figures as an import or
-        # test side effect. If any appear, something ran that should not have.
+        # The suite must not write checkpoints, metrics, or figures as an import or test side
+        # effect. If any appear, something ran that should not have.
+        #
+        # Asks git what CHANGED rather than listing every file present. The original form --
+        # `find outputs results -type f ! -name '.gitkeep'` -- was written when nothing under
+        # those directories was tracked. The committed evidence set, figures and tables are now
+        # deliberately in the repository, so a bare find reports ~30 legitimate files and fails
+        # every run. What matters is whether the suite CREATED or MODIFIED anything, which is
+        # exactly what `git status --porcelain` answers.
         run: |
           set -euo pipefail
-          unexpected=$(find outputs results -type f ! -name '.gitkeep' -print)
+          unexpected=$(git status --porcelain -- outputs results)
           if [ -n "$unexpected" ]; then
-            echo "CI produced unexpected run artefacts:"
+            echo "CI created or modified files under outputs/ or results/:"
             echo "$unexpected"
             exit 1
           fi
-          echo "outputs/ and results/ contain only .gitkeep, as expected."
+          echo "No run artefacts were created or modified, as expected."

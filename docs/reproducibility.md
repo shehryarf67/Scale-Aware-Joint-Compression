@@ -1,5 +1,23 @@
 # Reproducibility
 
+> # ⚠️ SUPERSEDED IN PART — read [F-37](findings_log.md#f-37) first
+>
+> **Updated 2026-08-11.** This document was written **before** the confirmatory run. A1 step 10 has
+> since been executed once on the test split and the study has its answer:
+> **[F-37](findings_log.md#f-37)** (the result), **[F-38](findings_log.md#f-38)** (mechanism
+> diagnostics), **[limitations.md](limitations.md)** (what the result may not claim).
+>
+> **Specifically stale below, and superseded rather than corrected in place** — this file records
+> what was *planned*, which is worth keeping legible:
+>
+> - **"Three seeds" is withdrawn**; reproduction is per calibration replicate, R = 8 / 8 / 5.
+> - **Reproduce the result with**: `python scripts/audit_confirmatory_run.py` (must print AUDIT PASSED), then `python scripts/report_confirmatory.py` and `python scripts/report_diagnostics.py`. The committed evidence set under `results/evidence/` carries per-window NLL so the bootstrap intervals recompute without the run records.
+> - **Two of 171 records carry a null `git_commit`** and are therefore not fully traceable to a SHA; see [limitations.md](limitations.md) §11.
+> - **Use `--isolate-cells`** for any future long sweep (B-48): the runner does not release memory between cells.
+>
+> The authoritative statement of what the paper may and may not claim is **§6 of
+> [findings_log.md](findings_log.md)**. Where this file and that section disagree, that section wins.
+
 The goal is that any row in the results table can be traced back to the exact code, configuration,
 data, and machine that produced it, and re-run.
 

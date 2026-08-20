@@ -1,0 +1,59 @@
+# Validation-only timing pilot for the two ends of Pythia-1B cell cost.
+#
+# This is operational evidence, not a scientific result. Do not inspect or report its quality
+# metrics. Its separate output directory prevents a pilot record from satisfying the confirmatory
+# sweep's resume checks.
+
+include:
+  # These are the same base includes as the main sweep. Including main_scale_sweep.yaml directly
+  # would retain its unused `moderate` budget override, which SweepConfig correctly rejects when
+  # this pilot narrows the live budget list to `aggressive`.
+  - ../models/pythia_160m.yaml
+  - ../compression/sequential.yaml
+  - ../evaluation/quality.yaml
+  - ../evaluation/cpu_benchmark.yaml
+
+experiment:
+  id: confirmatory_timing_pilot
+  name: Confirmatory runtime pilot
+  tags:
+    - exploratory
+    - timing-pilot
+    - not-a-result
+
+runtime:
+  seed: 1234
+  deterministic: true
+  output_dir: outputs/timing_pilot
+  log_level: INFO
+
+data:
+  eval_split: validation
+
+compression:
+  reconstruction:
+    # Match Amendment A3 and the verified 1B path from F-31.
+    offload_blocks: true
+
+sweep:
+  models:
+    - pythia-1b
+  methods:
+    - dense
+    - joint
+  budgets:
+    - aggressive
+  replicates: 1
+  replicates_by_model:
+    pythia-1b: 1
+  use_frozen_order: true
+  skip_existing: false
+  continue_on_error: false
+  budget_overrides:
+    aggressive:
+      compression:
+        budget_label: aggressive
+        pruning:
+          sparsity: 0.3
+        quantisation:
+          bits: 4

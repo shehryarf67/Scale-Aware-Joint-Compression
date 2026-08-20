@@ -101,6 +101,7 @@ which is what the arm comparison needs.
 
 ## 2. Findings
 
+<<<<<<< HEAD
 ### F-31 — Provisional Pythia-1B validation values were produced in Colab, but the Task 2 run is not yet admissible {#f-31}
 
 *2026-08-01 — Pythia-1B, revision `f73d7dcc545c8bd326d8559c8ef84ffe92fea6b2` — WikiText-2 validation, 493 × 512 — exploratory GPU evaluation on Tesla T4 — Python 3.12.13, torch 2.11.0+cu128 — repository commit `7ecaa28fb91c273890de54dce32d9ffa46244039` with uncommitted notebook changes*
@@ -125,6 +126,627 @@ used an uncommitted state and GPU quality evaluation, which is allowed for explo
 reported as such. Rerun Task 2 from the clean committed Task 1 state, verify the full test suite and
 offload gates, and then record the trusted 1B order decision.
 
+=======
+### F-41 — External validation on Qwen2.5-0.5B: the W4/W8 structure transfers, the verdict does not change {#f-41}
+
+**Date:** 2026-08-14 · **65 cells, 16/16 pairs, 0 failures, R = 8 at both budgets, test split.**
+**Exploratory. This leg cannot alter [F-37](#f-37)** and is not a fourth scale point. Report:
+[`results/evidence/qwen_external_validation.txt`](../results/evidence/qwen_external_validation.txt),
+regenerable with `python scripts/report_confirmatory.py --models qwen2.5-0.5b`.
+
+#### The result
+
+| Budget | R | Mean gain | sd | Positive | Raw *p* | Holm *p* | §6.3 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| moderate, 30% + W8 | 8 | **−0.0321 pp** | 0.022 | 1/8 | 0.0703 | 0.1406 | **NO** |
+| aggressive, 30% + W4 | 8 | **+0.4213 pp** | 0.413 | 7/8 | 0.0703 | 0.1406 | **NO** |
+
+**Neither cell meets §6.3**, and neither reaches significance before or after correction. The W4
+cell fails on **both** criteria — 0.58 pp short of the 1.0 pp bar *and* not sign-consistent, with
+rep4 at −0.4407 pp.
+
+#### What transfers, and what that is worth
+
+**The W4/W8 structure reproduces on a second model family.** W4 positive (+0.42 pp, 7/8), W8
+negative (−0.03 pp, 1/8). That is the one structural claim which survived the freeze on Pythia
+([F-37](#f-37) §6), and it now holds across two families, two tokenisers and two training corpora.
+
+Across both families the picture is consistent:
+
+| | 160M | 410M | 1B | **Qwen 0.5B** |
+| --- | --- | --- | --- | --- |
+| 30% + W4 | +1.0120 | +0.9348 | +0.1316 | **+0.4213** |
+| 30% + W8 | +0.0381 | +0.0289 | −0.1794 | **−0.0321** |
+
+**Every W4 cell is positive; every W8 cell is near zero or negative.** Two W8 cells carry a
+small positive mean (+0.0381 at 160M, +0.0289 at 410M) but neither is sign-consistent, so
+neither is distinguishable from zero -- "at or below zero" would overstate it. **And no cell
+in either family meets the practical-importance bar.**
+
+**Qwen is not a scale point and must not be plotted as one.** Different tokeniser, vocabulary
+(151,936) and corpus mean absolute perplexity is incomparable; only retention ratios and the sign
+transfer. Its 358M targeted parameters happen to sit between 410M and 1B, which makes the
+temptation to interpolate obvious and wrong.
+
+#### The validation estimate overstated the test result, again
+
+| | Validation (1 draw) | Test (R=8) | Movement |
+| --- | --- | --- | --- |
+| W4 | +0.6216 pp | **+0.4213 pp** | **−0.20 pp** |
+| W8 | −0.0144 pp | **−0.0321 pp** | −0.02 pp |
+
+**Third time this project has seen a validation figure fail to hold on test** — 160M fell
++1.69 → +1.01, 410M rose +0.39 → +0.93 ([F-37](#f-37)), and now Qwen falls +0.62 → +0.42. The
+direction varies; the unreliability does not. It is the clearest available argument that the
+two-split design earned its cost.
+
+**A partial reading would also have overstated it.** At 5 of 8 draws this cell read ~+0.5 pp with
+5/5 positive; the last three draws included rep4's −0.4407 pp, which removed both the magnitude and
+the sign consistency. Logged at the time as *"not to be read as final"* — and it was not.
+
+#### Conditions
+
+| | |
+| --- | --- |
+| Revision | `060db6499f32faf8b98477b0a26969ef7d8b9987`, single value across all 65 records |
+| Host / split / device | single host · all `test` · all CPU evaluation |
+| `method_version` | **4**, uniform |
+| Null `git_commit` | **0** — cleaner provenance than the primary, which has two ([F-37](#f-37)) |
+| Frozen order | **P→Q at both budgets** ([F-40](#f-40)); no `sequential_qp` cell exists on this leg, so [B-50](#4-bugs-found-that-would-have-invalidated-results)'s dropped-pair mode cannot arise |
+| Mean retention | pruning 95.11% · quantisation 99.87% (W8) / 79.56% (W4) · sequential 76.94% (W4) · joint 77.36% (W4) |
+
+#### What the paper may say from this
+
+**May claim:** the W4-specific structure of the primary result appears in a second model family, at
+a magnitude that also fails the pre-registered practical bar; and that the joint advantage at 8 bits
+is absent or slightly negative in both families.
+
+**May not claim:** that Qwen is a scale point, that its perplexity is comparable to Pythia's, that
+anything here is statistically significant (nothing is, corrected or not), or that this leg
+strengthens the primary result. It is external *validity* evidence for a structural pattern, not
+additional evidence for an effect size.
+
+---
+
+### F-40 — Qwen2.5-0.5B sequential order frozen: P→Q at both budgets {#f-40}
+
+**Date:** 2026-08-11 · **Validation split, one calibration draw, seven cells, all `success`.**
+Exploratory and outside the frozen primary result. Config:
+`configs/experiments/qwen_order_selection.yaml`. Dense validation perplexity **17.7758**.
+
+#### The measurement
+
+| Budget | P→Q | Q→P | Margin (Q→P − P→Q) | Frozen | Basis |
+| --- | --- | --- | --- | --- | --- |
+| moderate, 30% + W8 | **95.2854%** | 95.1916% | **−0.0937 pp** | **P→Q** | pre-declared **fallback** |
+| aggressive, 30% + W4 | **77.3993%** | 76.0485% | **−1.3507 pp** | **P→Q** | **measured** |
+
+#### Why the two budgets are frozen on different grounds
+
+**Aggressive is measured.** 1.351 pp is far outside single-draw noise, and it is the same direction
+and rough magnitude as every Pythia W4 cell (+4.26, +6.82, +2.15 pp). The mechanism recorded in
+`protocol.py` predicts it: Q→P reuses dense-fitted scales against a post-pruning distribution, which
+is nearly free at 8 bits and punishing at 4. **The staged rule in the config — one draw first, more
+only if the orders fail to separate — takes its measured branch here.**
+
+**Moderate is a fallback, not a measurement.** 0.094 pp is well inside noise; one draw cannot
+separate two orders at a near-lossless precision. **Additional draws were deliberately not run**,
+and the reasoning is worth recording because it could look like a shortcut:
+
+> P→Q is *both* the single-draw winner *and* the pre-declared fallback for an indistinguishable
+> comparison. No replicate count can change what gets frozen — only the confidence with which the
+> indistinguishability is stated. Four more W8 cells (~2 h) could flip the sign of a 0.094 pp margin
+> without flipping the decision.
+
+This is [F-28](#f-28) repeating on a new family: there, five paired draws at W8 produced a mean
+margin of 0.18 pp with an inconsistent sign, and the same fallback fired. The cost of that
+thoroughness bought a sentence, not a different baseline. **Recorded as ARBITRARY**, exactly as the
+Pythia W8 cells are, and it carries the same caveat as [limitations §7](limitations.md): the order
+uncertainty at W8 is comparable to the W8 effect itself.
+
+#### Screening joint gain — selection surface, NOT a result
+
+| Budget | Best-of sequential | Joint | Gain |
+| --- | --- | --- | --- |
+| moderate, W8 | 95.2854% | 95.2710% | **−0.0144 pp** |
+| aggressive, W4 | 77.3993% | 78.0208% | **+0.6216 pp** |
+
+**The W4/W8 structure transfers to a different model family.** W8 is inert-to-slightly-negative and
+W4 is positive, which is the one structural claim that looked the same before and after the freeze
+on Pythia ([F-37](#f-37) §6). One draw on a selection surface, so it is a screening signal and
+nothing more — but it is the signal the confirmatory grid will either replicate or not.
+
+**Qwen tolerates the recipe far better than the small Pythias:** 77.4% retention at 30% + W4 against
+55.8% (160M) and 57.6% (410M). Its screening gain, +0.62 pp, sits below both. That is what the
+headroom explanation in [limitations §6](limitations.md) predicts — a baseline that loses less leaves
+less for a better layer solution to recover — and it makes the confirmatory outcome predictable in
+advance rather than after, which is the honest order.
+
+#### What was frozen, mechanically
+
+`FROZEN_SEQUENTIAL_ORDER` now carries `("qwen2.5-0.5b", "aggressive")` and
+`("qwen2.5-0.5b", "moderate")`, both `SEQUENTIAL` (P→Q), with the margins recorded in
+`FROZEN_ORDER_EVIDENCE`. `qwen_validation.yaml` previously refused to build a plan and now builds
+**65 executable cells, 16 pairs**. Two tests were updated: one asserted exactly six frozen cells,
+the other used Qwen as its example of an *unfrozen* cell. Both assumptions were true until this
+finding and are now stale; the guards are preserved with genuinely unfrozen cells.
+
+---
+
+### F-39 — Qwen2.5-0.5B external-validation leg: setup verified, arms run correctly {#f-39}
+
+**Date:** 2026-08-11 · **Exploratory, validation split, and outside the frozen primary result.** This
+leg cannot alter [F-37](#f-37); it exists to test whether the Pythia finding is a property of
+transformer compression or of Pythia specifically.
+
+#### Checkpoint and adapter
+
+| | |
+| --- | --- |
+| Revision | `060db6499f32faf8b98477b0a26969ef7d8b9987`, matching the config pin; verified on disk |
+| Architecture | `Qwen2ForCausalLM`, **24 blocks**, hidden 896, GQA 14 heads / **2 KV heads**, gated MLP, **tied embeddings** |
+| Targeted modules | **168** = 24 × 7 (separate q/k/v, plus gate/up/down), against Pythia's 4 per block |
+| Targeted parameters | **357,826,560** — 99.98% of non-embedding |
+| Exclusions | `embed_tokens`, `lm_head` — **0 targeted**, verified empirically |
+
+**The exclusions are load-bearing here in a way they are not for Pythia.** Qwen ties `lm_head` to
+`model.embed_tokens`, so targeting the head would silently prune the input embedding and the arm
+would stop matching Pythia's coverage. Both patterns are excluded in the model config and the
+experiment config, and the selection confirms neither is targeted.
+
+**Scale placement worth noting for the write-up:** 358M targeted parameters with **24 blocks** —
+the same depth as pythia-410m. Qwen therefore sits between 410M and 1B on the parameter axis
+*without* the depth confound that makes pythia-1b the shallow outlier ([F-38](#f-38)).
+
+#### Dense baseline (validation split)
+
+**Perplexity 17.7758** over 261,632 tokens (512 × 512), CPU. Generation diagnostics healthy —
+repetition 0.15, distinct-token ratio 0.49. CPU benchmark: median **594.94 ms**, 215.1 tok/s at 4
+threads, batch 1, seq 128.
+
+**This perplexity is not comparable to any Pythia number.** Different tokeniser, vocabulary (151,936
+against ~50,000) and training corpus. Only retention ratios and the sign of the joint gain transfer.
+
+#### Budget realisation at 30% + W4 — and the B-46 arithmetic flips direction
+
+| | Qwen2.5-0.5B | Pythia |
+| --- | --- | --- |
+| Mask sparsity | **0.300146** (*above* target) | 0.2997–0.2999 (*below*) |
+| Numeric zero fraction | 0.338618 | 0.3171–0.3217 |
+| Effective bits per weight | **4.0272** | 4.0117–4.0312 |
+| Modules converted | 168 | 48–96 |
+| Reload verified | **True**, max logit difference **0** | True |
+| Joint updates | **168 accepted, 0 rejected** | 310–384 accepted |
+
+**The realised sparsity lands *above* target here, where on Pythia it landed below**, and that is the
+same integer arithmetic reported in [B-46](#4-bugs-found-that-would-have-invalidated-results) seen
+from the other side: rows are 896 wide, `round(896 × 0.3) = 269`, and `269/896 = 0.300223`. Pythia's
+768-wide rows gave `230/768 = 0.299479`. The B-46 fix guards only the shortfall, so both directions
+pass — which is the first evidence that the fix generalises beyond the width it was written for.
+
+**Packing is bit-exact on a new architecture**: the independent reload reproduced logits with a
+maximum difference of **0**, on a model with grouped-query attention and a gated MLP that the packing
+path had never seen.
+
+#### Operational note
+
+The first attempt failed on a transient `RemoteProtocolError` fetching the calibration corpus, even
+though the raw dataset was already cached. Re-run with `HF_DATASETS_OFFLINE=1 HF_HUB_OFFLINE=1` and
+it proceeded. **Use offline mode for the long grid** — a network refresh failure mid-grid would drop
+cells under `continue_on_error`.
+
+#### Status
+
+Order selection (both sequential orders plus joint, one draw, validation) is running. **No order is
+frozen for this model yet, and `qwen_validation.yaml` refuses to build a test-split plan until one
+is** — verified: it raises `ProtocolError` naming the missing cell.
+
+---
+
+### F-38 — The mechanism does not weaken with scale; its translation into quality does {#f-38}
+
+**Date:** 2026-08-10 · **Computed entirely from the committed confirmatory records — nothing was
+re-run.** Regenerate with `python scripts/report_diagnostics.py`; committed output at
+[`results/evidence/diagnostics_report.txt`](../results/evidence/diagnostics_report.txt).
+
+These are the mechanism diagnostics behind [F-37](#f-37). The headline says *whether* joint wins;
+these say *where* the difference is created and where it is lost.
+
+#### 1. Mask disagreement is W4-specific, and flat across scale
+
+Fraction of mask positions the joint refinement moves away from the sequential choice
+(`joint_trace[].mask_divergence`, mean over layers then replicates):
+
+| Scale | 30% + W8 | 30% + W4 | max layer at W4 |
+| --- | --- | --- | --- |
+| 160M | 0.0036% | **3.6896%** | 11.21% |
+| 410M | 0.0009% | **2.9241%** | 9.63% |
+| 1B | 0.0019% | **3.4063%** | 10.16% |
+
+**Three orders of magnitude between W8 and W4**, confirming [F-05](#f-05)'s prediction at all three
+scales on the test split rather than on six hand-picked 160M layers. And it is **flat with scale** —
+1B diverges as much as 160M.
+
+#### 2. The layerwise joint advantage is also flat across scale
+
+| Scale | W8 layer gain | W4 layer gain | accepted | rejected |
+| --- | --- | --- | --- | --- |
+| 160M | 0.0120% | **1.5295%** | 384 | 0 |
+| 410M | 0.0103% | **1.3898%** | 760 | 8 |
+| 1B | 0.0097% | **1.4914%** | 310 | 10 |
+
+The incumbent guard rejects more often at W8, which is the guard working: at 8 bits the joint
+proposal usually is not better, so the layer keeps its sequential value.
+
+#### 3. Final layer objective, matched layer by layer — joint wins locally at every scale
+
+| Scale | W8 | W4 | layers joint wins at W4 |
+| --- | --- | --- | --- |
+| 160M | +0.0039% | **+2.1647%** | 367 / 384 |
+| 410M | −0.4911% | **+2.2826%** | 752 / 768 |
+| 1B | +0.1668% | **+2.3214%** | 317 / 320 |
+
+> **A correction worth recording, because the first version of this table was wrong.**
+> `relative_improvement` is **not comparable across arms** and must never be used for one. Each arm
+> divides by its own naive baseline and the arms do not share one: Q→P quantises first, so at
+> 1B/moderate its `naive_loss` is **9,548** where the joint arm's is **1,635,000** — same layer,
+> references three orders of magnitude apart. Averaging that ratio produced an apparent **−6921%
+> "solver efficiency"** for sequential, which is an artefact of the denominator. `final_loss` is the
+> comparable quantity and is what the table uses.
+
+#### The central mechanistic finding
+
+**At W4 the local mechanism is undiminished at 1B — mask divergence 3.41%, layer gain 1.49%, layer
+objective advantage +2.32%, all at or above the 160M values — while the end-to-end gain collapses
+from +1.01 pp to +0.13 pp.** The joint step keeps finding better layer solutions at scale; those
+solutions stop translating into model-level quality.
+
+That is a dissociation, not an explanation, and this log does not have the evidence to close it.
+Two candidates, neither tested:
+
+- **Depth.** See the confound below. Layerwise error compensation is applied block by block, and 1B
+  has *fewer* blocks than 410M.
+- **Headroom.** The 1B aggressive cell retains 89.5% against 160M's 55.8%. A baseline that already
+  loses little leaves little for a better layer solution to recover, so the same local advantage
+  buys less end-to-end.
+
+#### ⚠️ The scale axis is confounded with depth, and 1B is the shallow point
+
+| Model | Blocks | Targeted parameters | Modules |
+| --- | --- | --- | --- |
+| pythia-160m | **12** | 84,934,656 | 48 |
+| pythia-410m | **24** | 301,989,888 | 96 |
+| pythia-1b | **16** | 805,306,368 | 64 |
+
+**Pythia-1B is shallower than Pythia-410M** — 16 blocks against 24 — while being 2.7× wider in
+targeted parameters. Depth is therefore **not monotone across the sweep**: 12 → 24 → 16.
+
+This matters because the method is layerwise. Activations are captured through the already-compressed
+prefix, so reconstruction error compounds with depth, and the number of blocks is the number of
+opportunities for a joint step to help. **The drop in joint gain at 1B coincides with a drop in
+depth**, and this design cannot separate the two. It is a property of the Pythia suite, not a choice
+made here — but it was not accounted for when the scale axis was defined as targeted parameters
+(§2.6), and it is a live alternative explanation for the only large movement in the trend.
+
+#### 4. The retention metric is not doing the work
+
+Per-token NLL is additive where retention is a ratio; if they disagreed on sign the headline would
+be a metric artefact. They agree in **all six cells**:
+
+| Scale | Budget | Mean NLL advantage (nats/token) | Positive | Retention pp | Agree |
+| --- | --- | --- | --- | --- | --- |
+| 160M | W8 | +0.000479 | 5/8 | +0.0381 | yes |
+| 160M | W4 | +0.017990 | 7/8 | +1.0120 | yes |
+| 410M | W8 | +0.000380 | 5/8 | +0.0289 | yes |
+| 410M | W4 | +0.016100 | 8/8 | +0.9348 | yes |
+| 1B | W8 | −0.001861 | 0/5 | −0.1794 | yes |
+| 1B | W4 | +0.001466 | 4/5 | +0.1316 | yes |
+
+#### 5. The budgets are matched, and it is now checkable rather than asserted
+
+Within every cell all arms share target sparsity, mask sparsity, effective bits, module count and
+targeted-parameter count. §3.11's matched-conditions requirement holds on the test split:
+
+| Scale | Mask sparsity | Effective bits, W8 | Effective bits, W4 | Modules | Targeted params |
+| --- | --- | --- | --- | --- | --- |
+| 160M | 0.2997 | 8.0312 | 4.0312 | 48 | 84,934,656 |
+| 410M | 0.2999 | 8.0234 | 4.0234 | 96 | 301,989,888 |
+| 1B | 0.2999 | 8.0117 | 4.0117 | 64 | 805,306,368 |
+
+Mask sparsity sits just below 0.30 because the per-row prune count is an integer — the arithmetic of
+[B-46](#4-bugs-found-that-would-have-invalidated-results). Effective bits exceed the nominal width by
+the fp32 scale overhead, which shrinks with width because the group count per weight falls.
+
+**Realised zero fraction is higher than mask sparsity at W4 only** — 0.3171–0.3217 against 0.2997 —
+because 4-bit rounding sends surviving weights to zero. The quantisation-only arm shows this cleanly:
+**0.2183 / 0.2165 / 0.2321** of weights become zero at W4 with **no pruning at all**. That is a large
+uncontrolled sparsity the W4 comparison carries in both arms, and it is why `mask_sparsity` rather
+than the zero count is the budget of record.
+
+---
+
+### F-37 — THE CONFIRMATORY RESULT: no cell meets the pre-registered practical-importance bar {#f-37}
+
+**Date:** 2026-08-10 · **A1 step 10, run once on the held-out test split, no tuning afterwards**
+
+This is the result the study exists to produce. Everything above it is exploratory by A1's own
+declaration; this is the only entry on the **test** split.
+
+#### Conditions
+
+| | |
+| --- | --- |
+| Split | **test** (all 171 records; the validation split is a declared selection surface and appears nowhere here) |
+| Replicates | **R = 8** at 160M and 410M, **R = 5** at 1B, as frozen |
+| Evaluation | **CPU**, 512 sequences × 512 tokens |
+| Deployment benchmark | **CPU**, this host only |
+| Machine | HP Omen, single host — verified identical `host_key` across all 171 records |
+| `method_version` | **4**, uniform |
+| Commits | the run spanned `b19b98a` … `ecaf8c7`; all intervening commits are documentation, scripts, or the two numerically inert guard fixes ([B-45](#4-bugs-found-that-would-have-invalidated-results), [B-46](#4-bugs-found-that-would-have-invalidated-results)). `METHOD_VERSION` never moved, which is the guard that compression behaviour did not change |
+| Gate | `scripts/audit_confirmatory_run.py` — **171/171 cells valid, 42/42 pairs complete, 0 failures, 0 stale, 0 missing** |
+| Baseline | the **frozen** sequential order per cell, not best-of-both — A1 §3 froze it on validation before test, so only that order was run. Q→P at 1B/moderate, P→Q everywhere else |
+| Full report | [`results/evidence/confirmatory_report.txt`](../results/evidence/confirmatory_report.txt), regenerable with `python scripts/report_confirmatory.py` |
+
+#### The headline
+
+**No cell is practically important under §6.3**, which requires mean gain **≥ 1.0 pp *and* a
+consistent sign across every paired replicate.**
+
+| Scale | Budget | R | Mean gain | sd | Positive | Sign-test p | ≥1.0 pp | Sign-consistent | **§6.3** |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 160M | 30% + W4 | 8 | **+1.0120 pp** | 0.781 | 7/8 | 0.0703 | ✅ | ❌ | **NO** |
+| 410M | 30% + W4 | 8 | **+0.9348 pp** | 0.623 | **8/8** | **0.0078** | ❌ | ✅ | **NO** |
+| 1B | 30% + W4 | 5 | +0.1316 pp | 0.186 | 4/5 | 0.3750 | ❌ | ❌ | **NO** |
+| 160M | 30% + W8 | 8 | +0.0381 pp | 0.085 | 5/8 | 0.7266 | ❌ | ❌ | NO |
+| 410M | 30% + W8 | 8 | +0.0289 pp | 0.052 | 5/8 | 0.7266 | ❌ | ❌ | NO |
+| 1B | 30% + W8 | 5 | **−0.1794 pp** | 0.073 | **0/5** | 0.0625 | ❌ | ❌ | NO |
+
+**The two W4 cells fail on opposite criteria, and both by a hair.** 160M clears the effect-size bar
+and has one negative replicate. 410M is unanimous — the only cell in the study reaching
+significance, p = 0.0078 — and lands **0.065 pp short** of the threshold. Recorded explicitly
+because that is exactly the configuration in which a threshold gets quietly renegotiated, and §6.3
+was pre-registered to prevent it. **The bar is not moved.**
+
+#### The significance must be corrected for multiple comparisons, and it barely survives
+
+Six cells were examined and the largest is being reported, which is precisely the inflation
+[validity_threats.md](validity_threats.md) warned about before any result existed. Corrected:
+
+| Cell | Raw p | Holm–Bonferroni adjusted |
+| --- | --- | --- |
+| **410M / W4** | **0.0078** | **0.0469** ← the only cell below 0.05 |
+| 1B / W8 | 0.0625 | 0.3125 |
+| 160M / W4 | 0.0703 | 0.3125 |
+| 1B / W4 | 0.3750 | 1.0000 |
+| 160M / W8 | 0.7266 | 1.0000 |
+| 410M / W8 | 0.7266 | 1.0000 |
+
+**The study has exactly one significant cell, and after correction it clears 0.05 by 0.0031.** The
+paper must quote **0.0469**, not 0.0078, and must not say "significant at 410M" without the
+correction attached.
+
+**This compounds with the §6.3 near-miss on the same cell**: marginally significant after correction
+*and* 0.065 pp short of the practical bar. Two independent criteria, both barely missed or barely
+met, on one cell out of six. The honest summary is that the 410M effect is **real but small and
+fragile** — not that it is established.
+
+#### Every replicate, individually (A1 §5.1)
+
+Retention is `100 × dense_ppl / compressed_ppl`. The CI is a paired block bootstrap over whole
+evaluation windows, 10 000 resamples, one index draw applied to both arms, on per-token NLL
+advantage.
+
+**pythia-160m / aggressive (30% + W4), order P→Q**
+
+| rep | sequential % | joint % | gain pp | 95% CI (nats/token) |
+| --- | --- | --- | --- | --- |
+| 0 | 56.4467 | 57.4827 | +1.0359 | [+0.01267, +0.02376] excludes 0 |
+| 1 | 55.9025 | 56.3163 | +0.4138 | [+0.00169, +0.01295] excludes 0 |
+| 2 | 55.1392 | 57.2509 | +2.1117 | [+0.03222, +0.04315] excludes 0 |
+| 3 | 56.7151 | 56.4003 | **−0.3148** | [−0.01107, +0.00012] includes 0 |
+| 4 | 55.8483 | 56.6375 | +0.7893 | [+0.00745, +0.02037] excludes 0 |
+| 5 | 56.2995 | 57.7733 | +1.4739 | [+0.02025, +0.03154] excludes 0 |
+| 6 | 54.6818 | 56.4863 | +1.8046 | [+0.02672, +0.03838] excludes 0 |
+| 7 | 55.4459 | 56.2275 | +0.7816 | [+0.00833, +0.01955] excludes 0 |
+
+**pythia-410m / aggressive (30% + W4), order P→Q** — the strongest cell in the study
+
+| rep | sequential % | joint % | gain pp | 95% CI (nats/token) |
+| --- | --- | --- | --- | --- |
+| 0 | 57.6153 | 59.0904 | +1.4751 | [+0.02016, +0.03071] excludes 0 |
+| 1 | 57.6845 | 58.2020 | +0.5174 | [+0.00351, +0.01434] excludes 0 |
+| 2 | 57.5442 | 58.8484 | +1.3042 | [+0.01676, +0.02813] excludes 0 |
+| 3 | 57.3335 | 58.4299 | +1.0964 | [+0.01351, +0.02442] excludes 0 |
+| 4 | 57.0057 | 58.9802 | +1.9745 | [+0.02869, +0.03938] excludes 0 |
+| 5 | 58.0092 | 58.4586 | +0.4495 | [+0.00170, +0.01377] excludes 0 |
+| 6 | 57.2530 | 57.7330 | +0.4800 | [+0.00286, +0.01383] excludes 0 |
+| 7 | 58.0401 | 58.2216 | +0.1814 | [−0.00226, +0.00843] includes 0 |
+
+**pythia-1b / aggressive (30% + W4), order P→Q**
+
+| rep | sequential % | joint % | gain pp | 95% CI (nats/token) |
+| --- | --- | --- | --- | --- |
+| 0 | 89.7111 | 90.0441 | +0.3330 | [+0.00183, +0.00553] excludes 0 |
+| 1 | 89.6524 | 89.7436 | +0.0913 | [−0.00063, +0.00266] includes 0 |
+| 2 | 89.4832 | 89.7806 | +0.2974 | [+0.00163, +0.00497] excludes 0 |
+| 3 | 89.7740 | 89.6558 | −0.1182 | [−0.00332, +0.00053] includes 0 |
+| 4 | 89.6521 | 89.7064 | +0.0543 | [−0.00106, +0.00223] includes 0 |
+
+**pythia-1b / moderate (30% + W8), order Q→P** — joint is reliably *worse*
+
+| rep | sequential % | joint % | gain pp | 95% CI (nats/token) |
+| --- | --- | --- | --- | --- |
+| 0 | 96.5362 | 96.3887 | −0.1475 | [−0.00187, −0.00120] excludes 0 |
+| 1 | 96.4681 | 96.3535 | −0.1146 | [−0.00156, −0.00083] excludes 0 |
+| 2 | 96.4702 | 96.2333 | −0.2369 | [−0.00283, −0.00209] excludes 0 |
+| 3 | 96.5359 | 96.4137 | −0.1222 | [−0.00161, −0.00092] excludes 0 |
+| 4 | 96.5866 | 96.3105 | −0.2761 | [−0.00323, −0.00250] excludes 0 |
+
+All five intervals exclude zero on the negative side. This is a **small, reliable disadvantage**,
+not noise.
+
+The two W8 control cells at 160M and 410M are in
+[`results/evidence/confirmatory_report.txt`](../results/evidence/confirmatory_report.txt) in the
+same form; both straddle zero (5/8 positive, p = 0.7266).
+
+#### Neither exploratory point estimate replicated
+
+| Cell | Exploratory (validation, R=3) | Confirmatory (test, R=8) | Movement |
+| --- | --- | --- | --- |
+| 160M / W4 | +1.69 pp, 3/3, "robust" ([F-27](#f-27)) | **+1.0120 pp, 7/8** | **down 0.68 pp**, lost unanimity |
+| 410M / W4 | +0.39 pp, 2/3, "indistinguishable from zero" ([F-27](#f-27)) | **+0.9348 pp, 8/8, p = 0.0078** | **up 0.54 pp**, gained unanimity |
+| 1B / W4 | +0.20 pp, 3/3 ([F-32](#f-32)) | +0.1316 pp, 4/5 | roughly held |
+
+**The 410M reversal is the most consequential.** The scale point the exploratory work wrote off as
+null is the one cell that reaches significance. The two larger estimates moved *toward each other*,
+which is the signature of regression from a selection surface — and it substantially weakens the
+160M→410M half of the "shrinks with scale" story.
+
+#### The scale trend, restated honestly
+
+| Budget | 160M | 410M | 1B |
+| --- | --- | --- | --- |
+| 30% + W4 | +1.0120 | +0.9348 | +0.1316 |
+| 30% + W8 | +0.0381 | +0.0289 | −0.1794 |
+
+**The motivating hypothesis is NOT SUPPORTED, and that is the strongest wording the evidence
+carries.** The study asked whether joint pays off *more* at scale. The observed direction is the
+**opposite** — it pays off less, on the test split, at both budgets. But **the cross-scale decline is
+not statistically established**, and three things stop it being called a refutation:
+
+1. **The shape is not the monotone decline [F-32](#f-32) reported.** 160M and 410M are within
+   0.08 pp of each other; effectively all of the movement sits in the 410M→1B step. Two points at
+   one level and one below them is a weaker basis for a trend than three ordered points.
+2. **No test compares the scales.** Every p-value here is within-cell. The differences *between*
+   cells carry no significance test at all, and with three points none is available.
+3. **The one large step is confounded with depth.** pythia-1b has **16 blocks against
+   pythia-410m's 24** ([F-38](#f-38)) — depth is not monotone across the sweep — and the method is
+   layerwise. The decline at 1B and the drop in depth cannot be separated by this design.
+
+The defensible claim is: *the advantage did not increase with scale, and the observed direction was
+opposite, but the decline is not established.*
+
+**The W4/W8 split survives confirmation.** Every W8 cell is near zero or negative; every W4 cell is above
+it. That is consistent with [F-05](#f-05)'s mechanism prediction (8.86% mask divergence at W4
+against 0.46% at W8) and with the [F-33](#f-33) control, and it is the one structural claim that
+looks the same before and after the freeze.
+
+#### What the paper may claim, and may not
+
+**May claim:**
+
+- On the test split, at 30% sparsity and 4-bit, joint compression gives a **small positive gain over
+  the frozen sequential baseline at 160M and 410M** — +1.01 pp and +0.93 pp — with the 410M cell
+  **unanimous across 8 paired calibration replicates (exact two-sided sign test p = 0.0078)**.
+- **No cell meets the pre-registered practical-importance threshold** of ≥1.0 pp with a consistent
+  sign, so the study reports **no practically important joint gain**.
+- At 8 bits the mechanism produces **nothing** at 160M and 410M and a **small reliable
+  disadvantage** at 1B.
+- The joint advantage **does not grow with scale**; it is flat from 160M to 410M and falls at 1B.
+
+**May not claim:**
+
+- That joint compression is practically important at any scale. The bar was pre-registered and is
+  not met anywhere.
+- A scaling law, or a monotone decline, from three points — and less so now that two of them
+  coincide.
+- That the 1B cells carry a significance claim in either direction: at R = 5 the best attainable
+  two-sided p is 0.0625, so 1B/moderate's unanimous 0/5 is the **strongest possible** outcome at
+  that R and still does not reach 0.05. That is a design limit, not a finding.
+
+#### Limitations specific to this run
+
+- **R = 5 at 1B cannot reach significance at any effect size.** Accepted at freeze time to fit the
+  schedule; it means the 1B leg contributes effect sizes and sign consistency only.
+- **Only the frozen sequential order was run**, so the confirmatory gain is measured against that
+  order rather than best-of-both. Where the frozen choice was recorded as arbitrary — the W8 cells,
+  per [F-28](#f-28) — the baseline could differ by up to the order margin measured there (~0.18 pp
+  at 160M/W8), which is larger than the W8 gains themselves. **The W8 cells therefore carry an
+  uncertainty comparable to their effect**, and no W8 conclusion should rest on the sign alone.
+- **Two of 171 records carry a null `git_commit`** — `pythia-410m_pruning_aggressive_s30_b32_rep0`
+  and `pythia-1b_joint_aggressive_s30_b4_rep3`. Their configs match their siblings field for field
+  (modulo the intended `calibration_replicate`) and both carry `method_version 4`, and their
+  timestamps fall between documentation-only commits, so the code that produced them is bounded.
+  Provenance is nonetheless weaker for those two than for the other 169, and one of them is a joint
+  cell inside a reported pair.
+- **The 1B leg required the sweep process to be recycled** roughly every three cells: it accumulates
+  ~4 GiB of commit per 1B compression cell and never releases it (commit free fell 20.24 → 1.03 GiB
+  over five cells). Recycling is numerically inert — `skip_existing` re-runs nothing and each record
+  is written whole — but it is the reason the run spans many process lifetimes rather than one.
+
+#### Reproduction
+
+```bash
+python scripts/audit_confirmatory_run.py     # gate: must print AUDIT PASSED
+python scripts/report_confirmatory.py        # every number above
+python scripts/export_evidence.py --check    # the committed evidence set is current
+```
+
+---
+
+### F-36 — The CPU timing pilot caught an unfrozen 1B offload setting before confirmation {#f-36}
+
+**Date:** 2026-08-05
+
+**Commit:** `0f05b9e` (`confirmatory-freeze-v2`)
+
+**Config:** `configs/experiments/confirmatory_timing_pilot.yaml`
+
+**Surface:** validation only, 493 × 512; quality values deliberately not used or reported
+
+**Machine:** HP Omen, CPU evaluation and benchmark; RTX 4050 compression
+
+The two-cell prelaunch timing pilot completed successfully:
+
+| Cell | Total | Relevant decomposition |
+| --- | ---: | --- |
+| Pythia-1B dense | **25.12 min** | CPU quality 23.98 min; CPU benchmark 0.62 min |
+| Pythia-1B joint, 30% + W4, replicate 0 | **121.40 min** | compression **65.67 min**; checkpoint save/reload/hash 0.42 min; CPU quality 55.13 min |
+
+The compressed checkpoint independently reloaded with **0.0 maximum logit difference**, occupied
+**1.145 GiB**, and recorded SHA-256
+`6ea850eac1d66caf7c127b9c95577a331eb8cdac8b2166f2eff79bdf5d9ee665`.
+
+The 121-minute figure is **not** the cost to extrapolate across the confirmatory grid. The record
+resolved `compression.reconstruction.offload_blocks: false`. The 1B screening config explicitly
+sets it true, and F-31 measured that path at 4 min 34 s without spilling. The main confirmatory
+config never carried the setting, so its manifest froze the default false path. In this pilot the
+joint apply stage alone took 65 min 24 s: **14.3× the verified offloaded compression time**.
+
+This is B-44. It was caught before any test-split result existed. Confirmation remains blocked until
+the main config explicitly freezes `offload_blocks: true`, the manifest checks it, and a new freeze
+is recorded. Because F-31 proved the resident and offloaded paths bit-identical, this is an
+operational correction rather than a scientific-condition change. The validation quality numbers
+from this pilot remain excluded from evidence and from budget/order decisions.
+
+**Runtime consequence.** The dense CPU measurement replaces the old extrapolation with 25.12 min.
+The compressed measurement separates two real costs — roughly 55 min for the packed W4 CPU quality
+path and an accidental 65.67 min for non-offloaded compression — but does not yet support a new
+whole-grid total. Re-run only the joint timing cell after freezing offload; do not multiply 121.40
+minutes by every compressed arm.
+
+**Follow-up, 2026-08-05, commit `e0c06ac` (`confirmatory-freeze-v3`).** Amendment A3 pinned
+`offload_blocks: true`, made both manifest generation and resume validation enforce it, and rebuilt a
+clean valid manifest. The corrected joint-only timing cell then completed successfully:
+
+| | Non-offloaded v2 pilot | Corrected offloaded v3 pilot |
+| --- | ---: | ---: |
+| joint apply | 65.40 min | **11.55 min** |
+| full compression | 65.67 min | **11.70 min** |
+| checkpoint verification | 0.42 min | **0.37 min** |
+| CPU quality | 55.13 min | **40.98 min** |
+| total | 121.40 min | **53.51 min** |
+
+The independently reloaded artefact again had maximum logit difference **0.0** and the same SHA-256,
+which is direct run-level confirmation that the residency correction did not change the checkpoint.
+B-44 is closed before test evaluation.
+
+The revised planning estimate is approximately **65.3 hours** before retries: 65 executable 160M
+cells at the measured 7.5 min/cell (8.1 h), 65 executable 410M cells at 19.5 min/cell (21.1 h), plus
+one 25.12-minute dense 1B cell and 40 compressed 1B cells conservatively costed at the corrected
+joint/W4 total (36.1 h). This is an operational estimate, not a coverage change: the logical grid is
+still 210 slots and the executable manifest still contains 171 records.
+>>>>>>> origin/main
 
 ### F-01 — Smart App Control silently broke the environment 30 minutes after install {#f-01}
 
@@ -2513,6 +3135,12 @@ the arm comparison.
 
 ## 3. All end-to-end perplexities in one table
 
+> **The confirmatory numbers are NOT in this table.** They are on the **test** split at a different
+> evaluation window (512 × 512) and live in [F-37](#f-37) and
+> [`results/evidence/confirmatory_report.txt`](../results/evidence/confirmatory_report.txt). Do not
+> read them beside the pilot rows below. The test-split dense baselines, for reference:
+> **pythia-160m 35.8575 · pythia-410m 21.3231 · pythia-1b 17.2564.**
+
 **Pilot window only.** Pythia-160M at `50f5173d`, `Salesforce/wikitext` validation, **64 sequences ×
 256 tokens (16,320 tokens)**, seed 1234, calibration `20bf57e6b08ed60d`, CPU evaluation, one seed each.
 The Phase 7 screening numbers are in [F-10](#f-10) and belong to a different window — do not read the
@@ -2546,6 +3174,15 @@ recording.
 
 | # | Bug | What it would have done |
 | --- | --- | --- |
+| B-52 | **The exported joint-gain table paired arms ACROSS evaluation splits**, putting a wrong number in a committed artefact ([F-41](#f-41)) | `_joint_gain_rows` keyed on `(model, budget, replicate)` and not on the split, and the two splits produce the same experiment ids by construction -- so nothing looked wrong. At `qwen2.5-0.5b/moderate/rep0` the **validation** Q→P record was selected as best-of against the **test** joint record, exporting **−0.2143 pp** where the frozen-order test gain is **−0.0357 pp**. Same root cause as [B-51](#4-bugs-found-that-would-have-invalidated-results), seen from the analysis side rather than the write side. The aggressive rep0 row was correct only by luck: P→Q happened to beat the stray validation Q→P value, so best-of picked the right record while still exporting a contaminated `sequential_qp_retention` column. **The reports were never wrong** -- `report_confirmatory.py` pairs independently and always filtered on split -- so F-37 and F-41 stand, but `joint_gains.csv` is the file a reviewer recomputes from, and it disagreed with them. Fixed by adding **`eval_split` and `dataset_fingerprint`** to the pairing key and exporting both, and by taking the baseline on the test split from the **frozen order** rather than best-of: A1 §3 freezes the order before test, so only one order exists there, and maximising over whatever else happens to be present is precisely how a validation record leaked in. Best-of is retained on validation, where both orders genuinely ran. A cell with no frozen order, or missing its frozen arm, now emits **nothing** rather than substituting another order. Three regression tests, one pinned to the exact numbers. After the fix every CSV cell mean matches its report to four decimals |
+| B-51 | **A record id does not encode the evaluation split, so a test-split run silently OVERWRITES the validation record of the same cell** ([F-40](#f-40)) | Caught on the Qwen leg, and **the blast radius is larger than first recorded**: the test grid overwrote **five** validation records, not one -- the dense baseline, **both `sequential` (P→Q) records**, and **both `joint` records**. Only the two `sequential_qp` records survived on disk, because no test-split cell shares their id (the frozen order is P→Q at both budgets, so `sequential_qp` was never re-run). `qwen2.5-0.5b_dense_moderate_s00_b32_rep0.json` held the **validation** dense baseline (ppl 17.7758) used as the retention reference for order selection. The test grid planned the same cell, `exists_valid` correctly refused to reuse a validation record for a test run -- and then wrote the test result **to the same filename**, destroying the validation one (now ppl 17.0962, split `test`). **[F-40](#f-40) survives only by luck:** the dense smoke happened to run under a distinct `experiment.id`, so a copy exists as `qwen_smoke_dense__...`, and every arm record stores the retention it computed at run time, so the reported figures remain checkable. Had neither been true, F-40 would cite retention numbers whose denominator no longer existed. **The class is the dangerous part**: `exists_valid` gates *reuse* on the split but nothing gates *overwrite*, so the guard that prevents reading the wrong record does not prevent destroying the right one. Same family as [B-45](#4-bugs-found-that-would-have-invalidated-results) (split confusion) and [B-50](#4-bugs-found-that-would-have-invalidated-results) (silent loss that leaves the count looking healthy). **FIXED 2026-08-14**, once the Qwen grid was no longer mid-flight. `ExperimentTracker.save` now ARCHIVES an existing record to `<id>__split-<old>.json` when the incoming record carries a different `eval_split`, rather than overwriting it. Renaming rather than refusing, deliberately: refusing would block the legitimate case -- running the same grid on the other split, which is the entire two-split design -- and an error there would strand a completed cell. The archive keeps its `.json` suffix in the same directory, so `load_all` still finds it and every split-aware consumer still filters correctly; `_load_dense_reference` in particular recovers the reference this bug used to delete. Two tests: one reproduces the exact Qwen failure and asserts BOTH splits survive, the other asserts a same-split re-run still overwrites, so the archive path cannot fire on the ordinary case and litter the directory. **The destroyed records are RECOVERED from git history, not re-run.** The evidence set committed at **`2832914`** -- the [F-40](#f-40) commit, made *before* the test grid ran -- contains all eight Qwen validation rows with a sha256 per source record. `scripts/recover_qwen_order_selection.py` extracts them to `results/evidence/qwen_order_selection.csv` with a provenance file naming the source commit, the per-record hashes, which records were destroyed and which survive; `--check` verifies the artefact still matches history. The recovered values reproduce F-40 exactly (P→Q 95.2854 against Q→P 95.1916 at W8; 77.3993 against 76.0485 at W4). **Order selection was deliberately NOT re-run**: the test results are known now, and repeating a selection step after seeing the outcome it feeds is post-hoc by definition and would invalidate the freeze it exists to document. The dense record is additionally still on disk under its smoke experiment id (`qwen_smoke_dense__...`, ppl 17.7758); no file is manufactured under the canonical name, which would create a record whose filename and internal id disagree. The Pythia primary was never affected: its 171 test and 54 validation records coexist under distinct experiment ids |
+| B-50 | **`scale_trend` dropped every Q→P cell**, so 5 of 42 pairs vanished from figures and record-level analysis -- and they were the pairs *against* joint ([F-37](#f-37)) | The record-level pairing filtered on `SEQUENTIAL` and `JOINT` and never learned about `SEQUENTIAL_QP`. `find_comparison_pairs` **was** fixed for this ([B-42](#4-bugs-found-that-would-have-invalidated-results)) and carries a comment explaining why; this function was missed, so the same fault survived in a second place. The consequence: the one cell whose frozen order is Q→P -- **pythia-1b/moderate** -- was silently excluded from every trend and every figure built from records. `generate_plots.py` reported "**37 comparable pairs of 37**", which reads as complete: the denominator was computed from the same filtered set, so nothing looked missing. **The direction is what makes it serious.** The dropped cell is the *only* one where joint is consistently worse than sequential (−0.179 pp, 0/5, every bootstrap interval excluding zero), so omitting it removed the strongest evidence against joint -- the **seventh** fault in this project to run in joint's favour, and none has ever run the other way. **Caught while generating the paper figures**, before any figure was published; [F-37](#f-37) and [F-38](#f-38) are unaffected because `report_confirmatory.py` and `report_diagnostics.py` pair on their own and always accepted both orders. Fixed by treating whichever order was frozen as the comparator, with two regression tests. After the fix: **42 comparable pairs of 42** |
+| B-49 | **Per-cell deployment measurements are not comparable across arms**, and read as a 40% speedup from sparsity ([F-37](#f-37)) | The sweep benchmarks every cell inside its own run, so each latency is taken at whatever moment that cell happened to execute. The confirmatory grid spanned **six days**, across which the host saw commit exhaustion, roughly a dozen process recycles ([B-48](#4-bugs-found-that-would-have-invalidated-results)) and repeated Modern Standby ([B-47](#4-bugs-found-that-would-have-invalidated-results)). Comparing two such numbers compares machine states, not models. **Caught while building the paper tables:** pythia-1b dense read **1041 ms** against pythia-1b pruning **630 ms**, an apparent **40% speedup from masking weights** -- impossible, because pruned weights stay FP32 and dense in storage so the GEMM does identical work, and flatly contradicting [F-34](#f-34)'s finding that 30% unstructured sparsity buys no CPU latency. The cause is the dates: the dense figure was measured **2026-08-05** and all ten pruning figures **2026-08-07**, where they are tightly self-consistent (627-650 ms, IQR 10-33 ms). Both benchmarks used identical settings -- 4 threads, seq 128, batch 1, 30 runs, 5 warmup -- so the difference is not configuration. **Nothing published is wrong**, because [F-34](#f-34) is a dedicated §4.7 study with model-order rotation, which exists precisely to control this drift, and it is the authoritative latency result. The risk was forward-looking: a paper table built from these incidental numbers would have claimed a large sparsity speedup the study elsewhere reports as absent. `build_paper_tables.py` now prints the measurement **date** in every latency row and refuses the comparison in the caption |
+| B-48 | **The runner does not release memory between cells**, and at 1B that exhausts the commit limit ([F-37](#f-37)) | Measured on the confirmatory 1B leg: commit free fell **20.24 → 1.03 GiB over five `sequential` cells**, about **4 GiB per cell**, and stopping the process returned all of it at once — so it is the sweep accumulating, not system pressure. Pruning cells leak less (~1.6 GiB) than the arms that pack, which is consistent with `convert` plus `_verify_saved_artefact` loading a **second** full model to reload the checkpoint. **The consequence is the dangerous part:** `continue_on_error` is on, so the resulting `MemoryError` would not stop the run — it would *drop a cell and continue*, and a dropped `sequential` or `joint` cell silently removes an entire comparison. That is [B-46](#4-bugs-found-that-would-have-invalidated-results)'s failure shape again, arriving by a different route. **Worked around, not fixed:** the sweep was recycled whenever commit free fell below a threshold, preferentially within the first minutes of a cell so the loss is bounded by one in-flight cell (`skip_existing` re-runs nothing and each record is written whole, so recycling is numerically inert — the 171 records were produced across roughly a dozen process lifetimes). **No number is affected.** But any future long grid must either fix the release or supervise the process, and the naive fix — restarting on a threshold alone — thrashes once the recycle interval approaches the cell duration, which at 1B it did (~55 min against ~54 min). **Fixed 2026-08-11, after the confirmatory run and therefore without touching it:** `scripts/run_scale_sweep.py --isolate-cells` runs every cell in a child process, so memory is released at the boundary by construction rather than by hunting every retention inside the runner. Overhead is ~4 s per cell for interpreter start and config load, negligible against a ~50 min 1B cell. `--only-cell` drives the children and is also the way to re-run a single failed cell by hand. **Use it for any future long grid**; the completed primary experiment is untouched |
+| B-47 | The benchmark host **enters Modern Standby mid-run**, and `duration_seconds` counts the suspended time as compute | STATUS recorded the power profile as "High performance, no downclocking, never sleeps". Measured rather than trusted: `powercfg` reports `STANDBYIDLE` on **AC** = 0x0e10 = **3600 s**, not 0, and the System log shows six Modern Standby exits on 2026-08-05 alone. Modern Standby is S0 low-power idle, so it logs Kernel-Power **506/507**, *not* the classic 42 that a sleep check greps for -- which is why the sleep history looked clean while the machine had been suspending all day. A busy CPU does not prevent it; a process must assert `SetThreadExecutionState`, and this one does not. **A first reading of this -- that standby explains the "intermittent stall" -- was published here on 2026-08-06 and is now WITHDRAWN as unsupported.** The correlation looked decisive: both slow cells of 2026-08-05 contain a standby window, 43.6 min containing 37.6 leaving **6.0 min** of work against a 6.2 min norm, and 52.5 containing 44.7 leaving **7.8** against 7.8, arithmetic closing to the minute on two cells. **It does not replicate.** On 2026-08-06 an 83-minute standby window (14:46:36-16:09:38, same `506 Idle Timeout` -> `507` structure, no power-source change in between) contained **four** 410M cells that ran at completely normal speed -- quality stages 15.7-15.8 min against a 15.8 norm, benchmark stages 16-17 s. A Win32 process is not frozen by Modern Standby as a rule, which is what those four cells show. So the stall mechanism is **unknown again**, the withdrawal of the [B-36](#f-33)/[B-41](#f-35) attribution is itself only provisional, and two matching cells were simply not enough evidence for a causal claim I stated as settled. Recorded in full because the error is instructive: an exact-looking arithmetic fit on n=2 persuaded me to close an open question, and the next four observations falsified it. **Consequence for quality numbers: none** -- suspension is not arithmetic, and the cells either side reproduce. **Consequence for §4.6 deployment measurements: real** -- a latency or throughput benchmark that spans a standby entry records the suspended interval inside its timing, and while the median survives one such sample the p95 and IQR need not. **Modern Standby entry could not be prevented, and on the evidence it does not need to be. Stop trying.** Three methods were applied and all three failed to stop entry: `standby-timeout-ac 0` (applied 10:59 on 2026-08-06, host suspended twice afterwards, both `Reason: Idle Timeout`, verifiably on AC with `STANDBYIDLE` reading 0); then `monitor-timeout-ac 0` plus `UNATTENDSLEEP 0`; then `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)` held by `scripts/keep_host_awake.py` for the whole run -- the host entered standby again at 09:36 on 2026-08-07 with the request verifiably held by a live process. That flag blocks classic **S3** sleep; it does not block **S0** low-power idle, which is a different state, and no user-mode setting reliably does. **It also does not matter.** Every cell measured across a standby window ran at normal speed: four 410M cells through the 83-minute window of 2026-08-06 (quality 15.7-15.8 min against a 15.8 norm), and two more through the 13.6-minute window of 2026-08-07 at 15.2 and 14.4 min against a **median of 15.0 over all 16** 410M sequential cells -- the cell containing the suspend was the fastest of the sixteen. A Win32 process keeps running through Modern Standby. The setting changes above are harmless and were left in place, but they bought nothing, and the ~65 cells run since have shown no stall at all. **Audited, and the result is clean:** all 73 suspend windows since 2026-07-14 -- the full span of the System log, which predates every deployment record -- were paired 506/507 and 42/107 and intersected against the 24 records carrying deployment data. Exactly one cell overlaps, `pythia-160m_pruning_aggressive_s30_b32_rep3`, and its suspend fell wholly inside the **quality evaluation** stage (17:02:56-17:45:56) while its `benchmark (CPU)` stage ran 17:45:56-17:46:02, after the wake. **No deployment figure in this project is contaminated.** The exposure is structurally small: the benchmark stage is ~6 s against a 6-40 min cell, so it is ~1% of the window -- which is luck rather than design, and is the reason the check was worth running rather than assuming. One methodological note from the audit itself: a record's `timestamp` is the cell **start**, not the end; reading it as the end inverts every window by one cell length and manufactures false overlaps |
+| B-46 | The reload guard demanded a sparsity the mask arithmetic cannot reach | `_verify_reloaded` compared the reloaded zero fraction against the **nominal** `target_sparsity` with a `1e-6` tolerance. But `build_mask_from_scores` prunes `round(in_features * sparsity)` weights **per output row** -- an integer count -- so the realised fraction is quantised to multiples of `1/in_features` and lands up to `0.5/in_features` either side of target. pythia-160m's `attention.query_key_value` is 768 wide: `round(768 x 0.30) = 230`, realising `230/768 = 0.299479`, short of 0.30 by **5.2e-04**, or 520x the tolerance. The guard therefore rejected masks that were exactly right, and the comment above it asserted the opposite of the truth ("the mask budget is a floor, not a target"). **Caught live on the confirmatory run: every `sequential` cell failed at `measure checkpoint`.** It hits `sequential` and `joint` only -- pruning-only stays FP32 so never enters `load_packed_model`, and quantisation-only has `target = 0` so the check is skipped -- which is to say it removed **both arms of every comparison** while leaving the controls green, so a casual read of the record count would have looked healthy. Fixed by deriving the allowance from the row width the manifest already records, keeping it three orders of magnitude below any real serialisation loss. **Numerically inert:** it only decides whether a verification raises, so the 36 records already written stay valid and `METHOD_VERSION` is not bumped |
+| B-45 | The dense reference was chosen **before** the fingerprint that guards it exists | `_load_dense_reference` filtered candidates with `_window_mismatch`, whose corpus check reads `self._eval_fingerprint` -- an attribute set *during* evaluation, while the dense reference is loaded *before* evaluation to be passed into it. The expected fingerprint was therefore always `None` there, that check short-circuited, and the remaining window checks passed because validation and test share identical 493x512 shapes. A test-split cell silently accepted a **validation-split** dense record and the error surfaced later in `add_quality`. Caught live on the confirmatory run: **17 of the first 20 test-split records failed**, and with `continue_on_error` on it would have spent ~78 h producing dense records and nothing else. Fixed by filtering on `config.data.eval_split`, which every record carries and which *is* available at lookup time. Note against myself: [B-37](#f-33) added the **device** to this same guard earlier and did not notice the fingerprint half was already dead -- adding a check beside a broken one is not the same as checking it |
+| B-44 | The confirmatory config never enabled the verified 1B per-block offload path ([F-36](#f-36)) | `offload_blocks` defaults false. The prelaunch pilot therefore spent 65.67 min in joint compression instead of F-31's 4 min 34 s offloaded measurement, a 14.3× regression that would add many hours and risk shared-memory spill across the 1B grid. The paths are bit-identical, so quality is not changed; feasibility and the frozen runtime are. Caught before test evaluation. |
 | B-01 | `method_definition.md` specified full-model QAT while the plan specifies layerwise PTQ | The normative document described a method nobody was building; decision D3 was a direct casualty |
 | B-02 | D3 recommended ranking masks on FP32 shadow weights | Would have failed §3.8's definition of joint — the joint arm would not have been joint |
 | B-03 | `backend: x86` in shipped configs | Conversion fails *after* the compression compute is spent ([F-02](#f-02)) |
@@ -2616,30 +3253,98 @@ Full reasoning in [protocol_freeze.md](protocol_freeze.md). Summarised here with
 
 ## 6. What the paper may and may not claim from this log
 
-**May claim, with the conditions attached:**
+> **Rewritten 2026-08-10, after [F-37](#f-37).** The previous version of this section was written
+> when the log held one model and no confirmatory comparison; it said "anything about scale" and
+> "that joint beats sequential, or does not" were both off-limits. The confirmatory run has since
+> been executed and both are now answerable. The old text is superseded rather than deleted — it is
+> in the git history at `ecaf8c7` — because it governed nothing that was published.
+
+**The primary claim, from [F-37](#f-37) — the only test-split evidence:**
+
+- **No cell meets the pre-registered §6.3 practical-importance bar** (≥ 1.0 pp mean gain *and* a
+  consistent sign across every paired replicate). The study's answer to its own primary question is
+  therefore **negative on practical importance**.
+- Joint compression gives a **small positive gain at 4 bits** over the frozen sequential baseline:
+  **+1.01 pp at 160M** (7/8 replicates positive, p = 0.0703) and **+0.93 pp at 410M** (**8/8**,
+  raw p = 0.0078, **Holm–Bonferroni-adjusted p = 0.0469 over the six cells examined**). The 410M
+  cell is the only statistically significant result in the study, and it survives correction by
+  0.0031. **Always quote the adjusted value.**
+- At **8 bits** the mechanism yields nothing at 160M and 410M (+0.04, +0.03 pp, sign inconsistent)
+  and a **small reliable disadvantage at 1B** (−0.18 pp, 0/5, every bootstrap interval excluding
+  zero on the negative side).
+- **The W4/W8 structure holds in a second model family.** Qwen2.5-0.5B, run under the same protocol
+  at R = 8, gives **+0.4213 pp at W4** (7/8) and **−0.0321 pp at W8** (1/8)
+  ([F-41](#f-41)). Neither cell meets §6.3 and neither is significant, so this is evidence for the
+  **structural** claim only — W4-specific, small, sub-threshold — not for any effect size.
+- **The joint advantage does not grow with scale.** It is flat from 160M to 410M (+1.01, +0.93) and
+  falls at 1B (+0.13). The study's motivating hypothesis — that joint compression would pay off
+  more as models grow — is therefore **not supported**. It must **not** be described as refuted:
+  no test compares the scales, and the 410M→1B step is confounded with depth ([F-38](#f-38)).
+
+**May also claim, with the conditions attached:**
 
 - The pipeline hits its budgets exactly and the precision is real, verified on a converted, reloaded
   artefact ([F-09](#f-09)).
 - Reconstruction improves the layer objective on every layer measured, and improves end-to-end
   perplexity by 41% over mask-only ([F-07](#f-07)).
+- The mask is **bit-identical** to an independent Wanda implementation over 84,934,656 weights
+  ([F-19](#f-19)); the reconstruction sweep never falls below the provable optimum of its own
+  objective ([F-20](#f-20)); and absolute retention is credible against unmodified SparseGPT once
+  the comparison group is matched ([F-22](#f-22)).
 - Weight-only INT8 quantisation is essentially free at this scale (99.8% retention).
 - The comparison group is a first-order design choice for activation-weighted pruning, worth 6.7×
-  perplexity at 50% sparsity on a 160M model.
+  perplexity at 50% sparsity on a 160M model ([F-07](#f-07)).
 - Two quantisation-aware refinements — clipping scale search and keep-benefit scoring — measurably
-  *hurt* under error-compensating reconstruction, with a mechanism for why.
+  *hurt* under error-compensating reconstruction, with a mechanism for why ([F-06](#f-06)).
+- 30% unstructured sparsity buys **no** CPU latency at any of the three scales ([F-34](#f-34)), and
+  no downstream-task difference between arms is resolvable at this evaluation size
+  ([F-35](#f-35)).
 
 **May not claim:**
 
-- Anything about absolute quality relative to published results. The evaluation window is 64
-  sequences at 256 tokens, not a full test set at 2048 ([§1](#1-environment-of-record)).
-- Anything about scale. Every number here is Pythia-160M. One model is not a trend.
-- Anything with uncertainty. **Every end-to-end number in §3 is a single seed.** §5.5 requires three
-  confirmatory seeds for the central comparison, and none of these are confirmatory runs.
-- That joint beats sequential, or does not. No matched joint-vs-sequential comparison at a frozen
-  budget has been run yet — that is Phase 7 onward. The +1.12% in [F-06](#f-06) is a *layer*
-  objective on six layers, not a model-level result.
-- Any latency claim. No benchmark in this log was collected under the §4.7 protocol (20–30
-  repetitions, prefill/decode split, model-order rotation).
+- **That joint compression is practically important at any scale.** The threshold was pre-registered
+  and is not met anywhere. In particular the 410M cell's +0.9348 pp must not be rounded, restated
+  as "≈1 pp", or compared against a relaxed bar: it fails §6.3 by 0.065 pp and the paper must say so.
+- **"Significant at 410M" without the multiple-comparison correction.** Six cells were examined; the
+  raw p = 0.0078 becomes **0.0469** under Holm–Bonferroni, which clears 0.05 by 0.0031. Quoting the
+  raw value while reporting the largest of six cells is the inflation
+  [validity_threats.md](validity_threats.md) warned about before any result existed.
+- **A scaling law, or a monotone decline.** Three points cannot fit one, and two of the three now
+  coincide within 0.08 pp. [F-32](#f-32)'s "monotone decline" reading was exploratory and does not
+  survive the test split.
+- **Any significance claim at 1B.** At R = 5 the best attainable two-sided sign-test p is 0.0625, so
+  even a unanimous 1B cell cannot reach 0.05. This is a design limit accepted at freeze time.
+- **That the exploratory point estimates were reliable.** Neither replicated: 160M fell from +1.69
+  to +1.01 and 410M rose from +0.39 to +0.93 ([F-27](#f-27) vs [F-37](#f-37)). Any narrative built
+  on the exploratory numbers is superseded.
+- **That Qwen2.5-0.5B is a scale point, or that its perplexity is comparable to Pythia's.**
+  Different tokeniser, vocabulary and corpus. Its 358M targeted parameters fall between pythia-410m
+  and pythia-1b, so plotting it on the scale axis would look natural and be wrong
+  ([F-41](#f-41)).
+- **That the external leg strengthens the primary result.** Nothing in it is significant, and no
+  cell meets §6.3. It corroborates a structural pattern; it adds no evidence for an effect size.
+- **Anything about absolute quality against published results at the exploratory evaluation window.**
+  The screening numbers used 64 sequences at 256 tokens; the confirmatory run used 512 × 512, and
+  only the latter is comparable across cells here.
+- **Anything with uncertainty from the §3 pilot table.** Every end-to-end number in
+  [§3](#3-all-end-to-end-perplexities-in-one-table) is a **single seed** at a single model and a
+  single window, and none of those rows is a confirmatory run. Uncertainty exists only for the
+  test-split cells in [F-37](#f-37), where it comes from R paired calibration replicates plus a
+  paired block bootstrap over evaluation windows — never from the pilot rows.
+- **Any latency claim beyond [F-34](#f-34)**, which measured one sparsity (30%) at three scales
+  under the §4.7 protocol. RQ4's *curve* needs several sparsities and was not run.
+
+**Must disclose:**
+
+- **Every implementation fault found in this project flattered the joint arm** — B-14, B-17, B-22,
+  B-23, B-30, B-34, six in a row, none in the other direction. The final effect is small and was
+  reached by removing biases that all pointed the same way; that belongs in Limitations regardless
+  of where the number landed.
+- **§6.3 was amended by A1 before the confirmatory run**, and the amendment *loosened* a
+  pre-registered rule whose original binding clause was unmeasurable. The paper must state that the
+  bar it failed is already the weaker of the two.
+- The two records with null `git_commit`, and the R = 5 / frozen-order limitations, per
+  [F-37](#f-37).
 
 ---
 
@@ -2647,7 +3352,7 @@ Full reasoning in [protocol_freeze.md](protocol_freeze.md). Summarised here with
 
 ```bash
 # Environment (Omen only; see §1 for the pinned versions)
-.venv\Scripts\python.exe -m pytest -q          # 740 passing, offline, ~37 s
+.venv\Scripts\python.exe -m pytest -q          # offline; trust the count printed by this checkout
 .venv\Scripts\ruff.exe check . && .venv\Scripts\ruff.exe format --check .
 
 # Data of record
@@ -2671,9 +3376,10 @@ python scripts/run_joint.py         --config configs/experiments/pilot.yaml     
 --override compression.reconstruction.keep_benefit_saliency=true
 ```
 
-Run IDs currently collide across arms — `experiment.id` is `pilot` for every arm, so a compressed run
-overwrites the dense record it needs for retention. Pass `--override experiment.id=<name>` until §5.6's
-convention (`<family>_<size>_<method>_<sparsity>_<bits>_<seed>`) is implemented.
+The historical run-ID collision is fixed. Record filenames now preserve the evaluation split, so a
+test run cannot overwrite the validation record it depends on (B-51). Use the shipped sweep configs
+and the canonical reproduction commands in [reproducibility.md](reproducibility.md); do not reconstruct
+the confirmatory run from the older pilot overrides above.
 
 ---
 
