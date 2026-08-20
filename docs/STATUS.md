@@ -1,31 +1,5 @@
 # Project status
 
-<<<<<<< HEAD
-> **Current authoritative update — 2026-08-01:** Phase 7 is complete. The corrected Pythia-160M
-> screening grid and Pythia-410M confirmation froze `moderate` at 30% + W8 and `aggressive` at
-> 30% + W4. The historical handoff notes below remain for review context; where they say that
-> screening is paused or empty, this update supersedes them. See
-> [phase7_screening.md](../results/summaries/phase7_screening.md) for the curated audit.
-
-## Current state
-
-| Item | State |
-| --- | --- |
-| Phase 7 | **Complete.** Both selected budgets are eligible at 160M and 410M. |
-| Raw evidence | Retained in `outputs/metrics/`; a curated audit is tracked in `results/summaries/`. |
-| Phase 8 configuration | Three paired calibration-subset replicates; final quality evaluation on WikiText-2 `test`. |
-| Task 1 | Exact-optimum anchor passed in Colab; clean offload gates still need to be preserved in the rerun state. |
-| Task 2 | Provisional Pythia-1B validation values exist, but a clean rerun is required before freezing the 1B order. |
-| Next action | Rerun Task 2 from a clean committed state, then proceed to S6, A4/A5, and confirmation. |
-
-**Last updated:** 2026-07-31 · third session on the HP Omen · **Phases 0, 5 and 6 complete**;
-**Phase 7 has replicated results.** The pipeline passes three independent correctness anchors, the
-screening grid has been re-run on that anchored code, the frozen budgets survived a third time, both
-sequential orders are frozen at 160M and 410M, and the headline effect has been **replicated across
-three paired calibration draws at both scales** — it is real at 160M and shrinks with scale. An
-exploratory cell now costs ~1.3 min rather than ~9.3 min ([F-29](findings_log.md#f-29)). Governed by
-[Protocol Amendment A1](protocol_amendment_a1.md).
-=======
 > # 🔒 A1 STEP 10 IS COMPLETE. THE CONFIRMATORY RESULT IS IN.
 >
 > **2026-08-10.** All **171 cells**, **42/42 pairs**, **0 failures**, on the held-out **test** split.
@@ -66,7 +40,6 @@ Phases 0, 5, 6, 7 and A1 steps 1–10 are complete. The pipeline
 passes three independent correctness anchors, the budgets and both sequential orders were frozen per
 cell on validation, and the confirmatory grid has now been executed once on the test split under the
 step-9 freeze. Governed by [Protocol Amendment A1](protocol_amendment_a1.md).
->>>>>>> origin/main
 
 > Read this first. It is the handoff between sessions and between machines. If it looks stale,
 > check `git log` — the truth is the commit history, this file is a summary of it.
