@@ -155,11 +155,41 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - a linear expe
         tokenizer = loaded.tokenizer
 
         calibration = load_calibration_set(config.data, tokenizer)
-        recovery_batches = [
-            (batch["input_ids"] if isinstance(batch, dict) else batch[0]).clone()
-            for batch in calibration.loader
-        ]
         calibration_fingerprint = calibration.summary.token_fingerprint
+
+        # RECOVERY DATA IS DISJOINT FROM CALIBRATION, deliberately.
+        #
+        # The arms are FITTED on the calibration sequences, so recovering on those same tokens
+        # would partly be re-fitting on seen data: the absolute improvements would be optimistic
+        # and the comparison would measure memorisation as much as recovery. It would still be
+        # fair -- both arms see identical data -- but it would answer a weaker question.
+        #
+        # Drawn from the same train split, excluding every calibration index, with a fixed
+        # generator so the two arms and any re-run get byte-identical batches in identical order.
+        used = {int(index) for index in calibration.indices}
+        available = [index for index in range(len(calibration.dataset)) if index not in used]
+        generator = torch.Generator().manual_seed(recovery.seed + replicate)
+        order = torch.randperm(len(available), generator=generator).tolist()
+        needed = budget_sequences = (
+            recovery.max_steps * recovery.batch_size * recovery.gradient_accumulation_steps
+        )
+        chosen = [available[order[i % len(order)]] for i in range(needed)]
+        recovery_batches = []
+        micro = recovery.batch_size
+        for start in range(0, len(chosen), micro):
+            block = chosen[start : start + micro]
+            if len(block) < micro:
+                break
+            recovery_batches.append(
+                torch.stack([calibration.dataset[index]["input_ids"] for index in block])
+            )
+        LOGGER.info(
+            "Recovery slice: %d sequence(s) from train, DISJOINT from the %d calibration "
+            "sequences (overlap 0 by construction)",
+            len(chosen),
+            len(used),
+        )
+        del budget_sequences
         LOGGER.info(
             "Recovery data: %d batch(es) of shape %s, fingerprint %s -- shared by both arms",
             len(recovery_batches),

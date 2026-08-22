@@ -54,6 +54,22 @@ first, so scales are fitted to what survives rather than to values about to be d
 the final weights — freezing stale ones would optimise against a grid the evaluated model does not
 use.
 
+## Recovery data is disjoint from calibration
+
+The arms are **fitted** on the calibration sequences, so recovering on those same tokens would
+partly be re-fitting on seen data: the absolute improvements would be optimistic and the comparison
+would measure memorisation as much as recovery. It would still be *fair* -- both arms see identical
+data -- but it would answer a weaker question.
+
+The recovery slice is therefore drawn from the same `train` split with **every calibration index
+excluded**, so overlap is zero by construction rather than merely unlikely. A fixed generator
+(`recovery.seed + replicate`) makes the batches and their order byte-identical across the two arms
+and across re-runs. The run logs the disjointness explicitly:
+
+```
+Recovery slice: N sequence(s) from train, DISJOINT from the 128 calibration sequences (overlap 0 by construction)
+```
+
 ## Recovery objective
 
 Standard causal-language-model cross-entropy over the **whole decoder**. Deliberately *not* the
