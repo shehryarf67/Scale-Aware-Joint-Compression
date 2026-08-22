@@ -48,6 +48,7 @@ arms get it here, and the fairness assertions enforce it.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -187,6 +188,7 @@ class RecoveryOutcome:
     fake_quant_forward_calls: int
     bits: int
     losses: list[float] = field(default_factory=list)
+    trajectory: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Return a serialisable mapping."""
@@ -206,6 +208,7 @@ class RecoveryOutcome:
             "fake_quant_forward_calls": self.fake_quant_forward_calls,
             "bits": self.bits,
             "losses": self.losses,
+            "trajectory": self.trajectory,
         }
 
 
@@ -408,6 +411,7 @@ def run_end_to_end_recovery(
     config: ExperimentConfig,
     budget: RecoveryBudget,
     device: torch.device | str,
+    probe: Callable[[int], dict[str, float]] | None = None,
 ) -> RecoveryOutcome:
     """Run the short global recovery phase under a causal-language-model loss.
 
@@ -423,6 +427,10 @@ def run_end_to_end_recovery(
         config: The full experiment config.
         budget: The resolved budget, identical across arms.
         device: Where to train.
+        probe: Optional evaluation callback, invoked with the completed step count every
+            ``recovery.probe_every_steps`` steps. Whatever it returns is recorded verbatim in
+            the trajectory. It must not mutate the model; the loop restores training mode
+            afterwards regardless.
 
     Returns:
         The outcome, including the exact steps and tokens consumed.
@@ -461,6 +469,7 @@ def run_end_to_end_recovery(
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimiser, learning_rate_at)
 
     losses: list[float] = []
+    trajectory: list[dict[str, Any]] = []
     started = time.perf_counter()
     cursor = 0
     for step in range(budget.optimiser_steps):
@@ -486,6 +495,14 @@ def run_end_to_end_recovery(
                 step_loss,
                 optimiser.param_groups[0]["lr"],
             )
+        every = recovery.probe_every_steps or 0
+        if probe is not None and every > 0 and (step + 1) % every == 0:
+            model.eval()
+            with torch.no_grad():
+                measured = probe(step + 1)
+            model.train()
+            trajectory.append({"step": step + 1, "loss": step_loss, **measured})
+            LOGGER.info("Recovery probe at step %d: %s", step + 1, measured)
 
     duration = time.perf_counter() - started
     model.eval()
@@ -513,4 +530,5 @@ def run_end_to_end_recovery(
         fake_quant_forward_calls=forward_calls,
         bits=config.compression.quantisation.bits,
         losses=losses,
+        trajectory=trajectory,
     )

@@ -407,6 +407,11 @@ class TestShippedConfigs:
             # translate into perplexity (F-38). Validation split, separate output tree, cannot
             # touch the confirmatory grid.
             "recovery_ablation_160m_w4.yaml",
+            # F-42 follow-up, INSTRUMENT CHECK not a result: F-42 degraded both arms, so this
+            # asks whether a non-destructive recovery phase exists at all. lr 1e-5 rather than
+            # 5e-5, everything else held, plus mid-recovery evaluation for a trajectory. One
+            # paired draw, validation split, same separate output tree.
+            "recovery_ablation_160m_w4_gentle.yaml",
             # A1 step 7: re-checks the W8 order across paired draws, because it was frozen on a
             # +0.43 pp single-draw margin and the sign of that budget's joint gain depends on it.
             "order_selection_w8_replicates.yaml",

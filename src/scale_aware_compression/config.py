@@ -336,6 +336,17 @@ class RecoveryConfig:
     device: Device = Device.AUTO
     log_every_steps: int = 20
     eval_every_steps: int | None = None
+    # None or 0 disables. When positive, quality is evaluated every N optimiser steps during
+    # end-to-end recovery, turning a before/after pair into a trajectory -- which is what separates
+    # "the learning rate is too high throughout" (monotone decline) from "it overfits after N
+    # steps" (rises then falls). One evaluation pass per checkpoint, identical in both arms.
+    #
+    # Deliberately NOT `eval_every_steps`: that field predates the layerwise rewrite, belongs to
+    # the superseded fine-tuning vocabulary, and is already set to 100 in configs/compression/
+    # pruning.yaml -- so every config that includes it, including recovery_ablation_160m_w4.yaml,
+    # would silently have acquired a probe schedule and stopped being comparable to the run that
+    # produced F-42.
+    probe_every_steps: int | None = None
 
     def __post_init__(self) -> None:
         """Validate the optimisation budget."""
@@ -352,6 +363,8 @@ class RecoveryConfig:
             self.gradient_accumulation_steps,
         )
         _require_positive("compression.recovery.log_every_steps", self.log_every_steps)
+        if self.probe_every_steps is not None and self.probe_every_steps < 0:
+            raise ConfigError("compression.recovery.probe_every_steps must not be negative")
         if self.sequence_length is not None:
             _require_positive("compression.recovery.sequence_length", self.sequence_length)
         if self.end_to_end and self.max_steps is None:

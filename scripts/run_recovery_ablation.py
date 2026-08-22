@@ -130,6 +130,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - a linear expe
         replicates = 1
         recovery.max_steps = 4
         config.evaluation.max_samples = 16
+        # Scale the probe schedule too, or a 50-step schedule never fires against 4 steps and the
+        # smoke run silently exercises everything EXCEPT the path it was added to check.
+        if recovery.probe_every_steps:
+            recovery.probe_every_steps = 2
         LOGGER.warning(
             "SMOKE: 1 replicate, %d recovery steps, %d evaluation sequences. Numbers from this "
             "mode are meaningless and are written with smoke=true in the record.",
@@ -259,6 +263,33 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - a linear expe
             )
             budgets[arm_name] = budget
 
+            # Mid-recovery probe. Runs on the TRAINING device, not CPU: at ~15 s against ~6 min
+            # it makes a trajectory affordable, and F-29 measured GPU-vs-CPU quality agreement at
+            # 8.3e-06 relative. The authoritative before/after numbers below stay on CPU, and the
+            # trajectory records its own device so the two can never be confused.
+            def probe(
+                step: int,
+                *,
+                probed=model,
+                loader=evaluation_loader,
+                fingerprint=dataset_fingerprint,
+                dense_perplexity=dense.perplexity,
+                probe_device=str(device),
+            ) -> dict[str, float]:
+                """Evaluate quality mid-recovery, for trajectory shape only.
+
+                Everything is bound as a default argument rather than closed over: this is defined
+                inside the arm loop, and late binding would silently probe the *next* arm's model.
+                """
+                measured = compute_perplexity(
+                    probed, loader, config.evaluation, dataset_fingerprint=fingerprint
+                )
+                return {
+                    "perplexity": measured.perplexity,
+                    "retention": _retention(dense_perplexity, measured.perplexity),
+                    "device": probe_device,
+                }
+
             outcome = run_end_to_end_recovery(
                 model,
                 recovery_batches,
@@ -266,6 +297,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - a linear expe
                 config=config,
                 budget=budget,
                 device=device,
+                probe=probe if (recovery.probe_every_steps or 0) > 0 else None,
             )
             bake_recovery_modules(model, installed)
 
