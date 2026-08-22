@@ -402,6 +402,11 @@ class TestShippedConfigs:
             # `use_frozen_order: true` and refuses to build a plan until an order is frozen for that
             # model, so this config produces the evidence that permits the freeze.
             "qwen_order_selection.yaml",
+            # POST-HOC exploratory ablation: identical short end-to-end recovery after each arm,
+            # to test whether the joint solution holds structure the layerwise objective cannot
+            # translate into perplexity (F-38). Validation split, separate output tree, cannot
+            # touch the confirmatory grid.
+            "recovery_ablation_160m_w4.yaml",
             # A1 step 7: re-checks the W8 order across paired draws, because it was frozen on a
             # +0.43 pp single-draw margin and the sign of that budget's joint gain depends on it.
             "order_selection_w8_replicates.yaml",
