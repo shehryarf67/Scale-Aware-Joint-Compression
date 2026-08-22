@@ -101,6 +101,121 @@ which is what the arm comparison needs.
 
 ## 2. Findings
 
+### F-42 — The recovery ablation closes the gap, but it degraded both arms, so it does not answer the question it was built to ask {#f-42}
+
+**2026-08-22 · `0ddb139` · POST-HOC EXPLORATORY · validation split · NOT CONFIRMATORY.** Cannot
+alter, replace or reinterpret [F-37](#f-37). Config
+`configs/experiments/recovery_ablation_160m_w4.yaml`; records in `outputs/recovery_ablation/`
+(a separate tree, invisible to `audit_confirmatory_run.py` and to the confirmatory resume logic).
+
+Pythia-160M at revision `50f5173d`, the frozen headline budget (30% unstructured + W4 symmetric
+per-output-channel), dense perplexity **36.9741**, 3 paired calibration replicates, 6 cells,
+**4.26 h** of recovery compute. Both arms then received an **identical** short global recovery
+phase: 200 AdamW steps, **819,200 tokens**, lr 5e-5, linear warmup + cosine decay, seed 1234,
+pruning mask frozen, W4 fake quantisation live through a straight-through estimator.
+
+#### What happened
+
+| rep | seq before | seq after | joint before | joint after | gain before | gain after |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 | 56.1181 | 53.7044 | 57.5629 | 53.6680 | **+1.4448** | −0.0364 |
+| 1 | 57.0458 | 53.4488 | 58.2798 | 53.1176 | **+1.2340** | −0.3312 |
+| 2 | 56.3043 | 53.5849 | 57.4573 | 52.7000 | **+1.1530** | −0.8849 |
+| **mean** | 56.4894 | **53.5794** | 57.7667 | **53.1619** | **+1.2772** | **−0.4175** |
+| sd | | 0.1279 | | 0.4855 | 0.1507 | 0.4308 |
+
+**The joint gain went from +1.2772 pp (3/3 positive) to −0.4175 pp (0/3 positive)**, a shift of
+−1.6947 pp, and it shrank in **3/3** replicates. Literally, that is the third pre-registered
+outcome: *the gap closes*.
+
+**But recovery degraded both arms, which is the finding that governs how the rest may be read:**
+
+| | mean change | sd | direction |
+| --- | --- | --- | --- |
+| sequential | **−2.9100 pp** | 0.6143 | worse in 3/3 |
+| joint | **−4.6048 pp** | 0.6473 | worse in 3/3 |
+
+A phase called *recovery* that costs both arms 2.9 and 4.6 pp of retention did not recover
+anything. The pre-registered reading of "the gap closes" — *joint's initialisation is not a durable
+advantage under equal global recovery* — presumes a recovery phase that at least holds quality
+steady. This one did not, so the premise it rests on is not satisfied.
+
+#### The instrument, diagnosed
+
+Three things say the probe is mis-specified rather than revealing:
+
+1. **Training loss fell while validation quality fell.** Mean loss over the run was 3.14–3.28 and
+   final loss 2.89–2.95 in every cell, so the objective was being minimised throughout, while
+   evaluated retention dropped. The phase moved weights toward the 819k-token recovery slice at the
+   expense of general language-model quality. At this budget that is consistent with either
+   overfitting to the slice or a learning rate too large for the compressed initialisation, and
+   **these six cells cannot distinguish those two.**
+2. **Four distinct starting points converge on a narrow band.** Pre-recovery retention spans
+   56.12–58.28; post-recovery it sits at 53.5794 ± 0.1279 (sequential) and 53.1619 ± 0.4855
+   (joint). The perturbation is large enough to overwrite where each arm started.
+3. **The direction of the degradation is systematic, not noise.** Joint degraded *more* than
+   sequential in **3/3** replicates and ends with ~4× the spread.
+
+Point 3 is the one that stops this being purely an instrument failure. If the perturbation merely
+erased the initialisation, the arms would land together with no consistent ordering; instead joint
+lands **consistently below** sequential (0/3 positive) and less stably. **That is a real, consistent
+directional signal that the joint solution is more fragile to global gradient perturbation** — but
+"more fragile under an over-strong probe" is a weaker and different claim than "its advantage is not
+durable under fair recovery", and only the first is supported here.
+
+#### What this does and does not license
+
+- **Supported:** before recovery, joint leads sequential by **+1.2772 pp** at 160M/W4 on
+  validation, 3/3 positive — consistent with [F-37](#f-37)'s **+1.0120 pp** on test, so the
+  compression half of the pipeline reproduces.
+- **Supported:** under this specific 200-step lr-5e-5 phase, joint's advantage does not survive,
+  and joint degrades more than sequential in 3/3 replicates.
+- **NOT supported:** that joint's advantage is not durable under recovery in general. That requires
+  a recovery phase which does not itself destroy 3–5 pp of retention.
+- **NOT supported:** any statistical claim. Three paired draws reach at best **p = 0.25** on a
+  two-sided sign test. This is an effect size and a direction.
+- **The [F-38](#f-38) hypothesis that motivated the ablation did NOT occur.** F-38 found the local
+  objective improving where the global one does not, raising the possibility that the joint solution
+  holds structure the layerwise objective cannot translate into quality — which would have shown up
+  as the *gap growing*. It did not grow in any replicate. This is evidence **against** that reading,
+  at this scale and budget, with the instrument caveat above attached.
+- **[F-37](#f-37) is untouched.** This is post-hoc, exploratory, validation-only, and F-37 already
+  reports that no cell meets the §6.3 bar. The ablation neither rescues joint nor further damages
+  it.
+
+#### Provenance and guards
+
+Every fairness guard fired clean, which is why the numbers above are comparable at all:
+
+| Guard | Result |
+| --- | --- |
+| `mask_sparsity` before vs after | **0.2996961805555556, identical in all 6 cells** — no regrowth, no drift |
+| `fake_quant_forward_calls` | **38,400 in all 6 cells** — W4 stayed live; recovery never silently became FP32 |
+| `assert_budgets_match` | passed — 200 steps × 2 × 4 × 512 in both arms |
+| Recovery data | **disjoint from calibration by construction** — all 128 calibration indices excluded, 1600 candidate sequences, overlap 0 |
+| Identical between arms | data, order, budget, optimiser, schedule, precision, clipping, device, seed |
+
+The realised sparsity **0.299696** is the per-output-row integer quantisation from
+[B-46](#4-bugs-found-that-would-have-invalidated-results), not a budget miss.
+
+**Recovery data was made disjoint from calibration deliberately**, and the choice is worth
+recording: both arms are *fitted* on the calibration sequences, so recovering on the same
+sequences would partly be re-fitting on seen data and would flatter whichever arm had underfitted
+them.
+
+⚠️ **Provenance gap in these records.** The ablation writer does not stamp `git_commit`,
+`method_version` or `hardware`, unlike `ExperimentTracker`. The run was made at **`0ddb139`** on the
+Omen with GPU compression and GPU evaluation, recorded here because the records do not carry it.
+Fixed in the writer for any future run; these six are not re-run to backfill a field.
+
+#### If this question is worth pursuing
+
+A gentler probe first — lr 1e-5, or 50 steps, or an early stop monitored on held-out data — chosen
+to produce a phase that **improves or holds** both arms. Only then does "does joint's advantage
+survive recovery?" have a fair test. Until such a phase exists, the durability question is **open**,
+not answered negatively. Sizing note: at 3 draws nothing statistical is reachable, so a serious
+attempt needs R=8 and roughly 11 h of recovery compute at this budget.
+
 ### F-41 — External validation on Qwen2.5-0.5B: the W4/W8 structure transfers, the verdict does not change {#f-41}
 
 **Date:** 2026-08-14 · **65 cells, 16/16 pairs, 0 failures, R = 8 at both budgets, test split.**

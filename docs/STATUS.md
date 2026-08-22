@@ -35,7 +35,7 @@
 >
 > **No further tuning is permitted.** Step 10 runs once. What remains is analysis and writing.
 
-**Last updated:** 2026-08-16 · **Experiments and evidence generation complete; paper writing may begin.**
+**Last updated:** 2026-08-22 · **Experiments and evidence generation complete; paper writing may begin.**
 Phases 0, 5, 6, 7 and A1 steps 1–10 are complete. The pipeline
 passes three independent correctness anchors, the budgets and both sequential orders were frozen per
 cell on validation, and the confirmatory grid has now been executed once on the test split under the
@@ -904,6 +904,52 @@ two.
 
 ⚠️ **[B-51](findings_log.md#4-bugs-found-that-would-have-invalidated-results) is now safe to fix** —
 the grid is no longer mid-flight.
+
+### 🟡 Recovery ablation — COMPLETE 2026-08-22, and the instrument is the finding
+
+**6 cells, 3 paired replicates, 0 failures, 4.26 h of recovery compute.** Full record:
+**[F-42](findings_log.md#f-42)**. Post-hoc, exploratory, **validation split only** — it cannot alter
+[F-37](findings_log.md#f-37) and does not.
+
+Pythia-160M, 30% + W4, both arms given an identical 200-step / 819,200-token global recovery phase
+(AdamW, lr 5e-5, mask frozen, W4 fake quantisation live through a straight-through estimator).
+
+| | before | after | change |
+| --- | --- | --- | --- |
+| sequential retention | 56.4894 | **53.5794** | **−2.9100 pp** |
+| joint retention | 57.7667 | **53.1619** | **−4.6048 pp** |
+| **joint gain** | **+1.2772 pp** (3/3) | **−0.4175 pp** (0/3) | **−1.6947 pp** |
+
+**Literally this is the third pre-registered outcome — the gap closes.** But **recovery degraded
+both arms**, so the premise that reading rests on ("equal global recovery") is not satisfied. A phase
+that costs 2.9 and 4.6 pp of retention did not recover anything.
+
+**Why the instrument is suspect:** training loss fell throughout (mean 3.14–3.28, final 2.89–2.95)
+while validation retention fell — the phase moved weights toward the 819k-token recovery slice at the
+expense of general quality; and four distinct starting points (56.12–58.28) converged into a narrow
+band. Whether that is overfitting to the slice or too large a learning rate **cannot be separated
+from these six cells.**
+
+**What survives anyway:** joint degraded *more* than sequential in **3/3** replicates and ends with
+~4× the spread. If the perturbation merely erased the initialisation the arms would land together
+with no consistent ordering, so this is a real directional signal that **the joint solution is more
+fragile to global gradient perturbation** — a weaker and different claim than "its advantage is not
+durable under fair recovery".
+
+**The [F-38](findings_log.md#f-38) hypothesis that motivated the ablation did not occur.** Had joint
+held structure the layerwise objective could not translate into quality, the gap would have *grown*.
+It grew in no replicate. Evidence against that reading, at this scale and budget.
+
+**Do not quote a p-value.** Three paired draws reach at best p = 0.25 on a two-sided sign test.
+
+**Every fairness guard fired clean** — mask sparsity identical before and after in all 6 cells
+(0.299696, the [B-46](findings_log.md#4-bugs-found-that-would-have-invalidated-results) per-row
+integer quantisation), `fake_quant_forward_calls` 38,400 in all 6, budgets matched, and the recovery
+slice **disjoint from calibration by construction**.
+
+**If pursued:** a gentler probe first (lr 1e-5, or 50 steps, or held-out early stopping) chosen to
+produce a phase that improves or holds both arms. Until one exists the durability question is
+**open, not answered negatively**. A serious attempt needs R=8 and ~11 h of recovery compute.
 
 ### The optional experiments — decided 2026-08-11
 

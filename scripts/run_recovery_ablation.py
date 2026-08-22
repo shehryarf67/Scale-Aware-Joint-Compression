@@ -108,10 +108,12 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - a linear expe
     import torch
 
     from scale_aware_compression.compression import COMPRESSOR_REGISTRY
-    from scale_aware_compression.constants import CompressionMethod
+    from scale_aware_compression.constants import METHOD_VERSION, CompressionMethod
     from scale_aware_compression.data.calibration import load_calibration_set
     from scale_aware_compression.data.loaders import build_evaluation_dataloader
     from scale_aware_compression.evaluation.perplexity import compute_perplexity
+    from scale_aware_compression.experiments.runner import get_git_commit
+    from scale_aware_compression.hardware import get_hardware_info
     from scale_aware_compression.models.loader import load_model_and_tokenizer
     from scale_aware_compression.training.end_to_end import (
         assert_budgets_match,
@@ -277,6 +279,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - a linear expe
                 "experiment_id": f"{config.experiment.id}__{arm_name}_rep{replicate}",
                 "kind": "recovery-ablation",
                 "confirmatory": False,
+                "git_commit": get_git_commit(),
+                "method_version": METHOD_VERSION,
+                "hardware": get_hardware_info(),
                 "smoke": bool(arguments.smoke),
                 "tags": list(config.experiment.tags),
                 "model_name": config.model.name,
