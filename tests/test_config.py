@@ -412,6 +412,10 @@ class TestShippedConfigs:
             # 5e-5, everything else held, plus mid-recovery evaluation for a trajectory. One
             # paired draw, validation split, same separate output tree.
             "recovery_ablation_160m_w4_gentle.yaml",
+            # F-43 follow-up at R=8: the durability question at the recovery setting F-43
+            # established as non-destructive and near-peak (lr 1e-5, 50 steps). Eight paired
+            # draws, validation split, same separate output tree, third distinct id.
+            "recovery_ablation_160m_w4_r8.yaml",
             # A1 step 7: re-checks the W8 order across paired draws, because it was frozen on a
             # +0.43 pp single-draw margin and the sign of that budget's joint gain depends on it.
             "order_selection_w8_replicates.yaml",

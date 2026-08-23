@@ -1,0 +1,143 @@
+# POST-HOC EXPLORATORY ABLATION -- the durability question at R=8. NOT CONFIRMATORY.
+#
+# Cannot alter, replace or reinterpret F-37, F-41, F-42, F-43, the confirmatory manifest, or any
+# frozen protocol decision. Validation split only; the test split is never touched here.
+#
+# THE QUESTION, AND WHY IT IS WORTH 8 DRAWS
+#
+# F-37 answers the primary question on MAGNITUDE: the joint gain is ~1 pp at 4 bits, fails the §6.3
+# practical bar, and does not grow with scale. The remaining defence of joint is about SIGN: perhaps
+# the direct gain is small but joint is a better STARTING POINT, since anyone deploying would follow
+# compression with a short recovery phase.
+#
+# F-43 says no -- sequential starts lower (56.1181 against 57.5629) and ends HIGHER (63.3266 against
+# 62.2890) -- but on ONE paired draw that is a hypothesis, not an answer. R=8 makes it an exploratory
+# result with a sign test: 8 unanimous draws reach p = 0.0078, where 1 draw reaches nothing and 3
+# reach only p = 0.25.
+#
+# WHAT F-42 AND F-43 SETTLED, SO THIS RUN NEED NOT RE-ASK IT
+#
+#   F-42  lr 5e-5, 200 steps -> DEGRADED both arms (-2.9100 / -4.6048 pp). Instrument mis-specified.
+#   F-43  lr 1e-5, 200 steps -> IMPROVED both arms (+7.2086 / +4.7262 pp). Instrument works.
+#         Both arms peak at step 50 (+12.3994 / +9.8464) then decline in parallel to step 200.
+#         The gap sits at -1.1082, -1.1000, -1.0314, -1.0376 across the four checkpoints.
+#
+# THE TWO CHANGES FROM F-43, BOTH FOLLOWING FROM ITS TRAJECTORY
+#
+# 1. max_steps 200 -> 50. F-43 found both arms peak there, so 50 is the FAIRER test as well as the
+#    cheaper one: it compares the arms at their best recovered quality rather than 150 steps into a
+#    shared decline. The gap was insensitive to step count over 50-200 (-1.03 to -1.11 pp), so the
+#    answer does not hinge on the exact choice -- which is what makes cutting the budget safe rather
+#    than convenient. Note the token budget falls with it, to 204,800.
+#
+# 2. Probes OFF. Measured at ~3.7 min each, so at 8 replicates x 2 arms one probe schedule point
+#    costs about an hour of wall clock. F-43 already supplies the trajectory SHAPE; R=8 needs the
+#    ENDPOINT. Spending hours re-measuring a curve that is already recorded, instead of on
+#    replicates, would be the wrong trade.
+#
+# WHAT THIS RUN STILL CANNOT DO
+#
+# It is post-hoc and on the validation split, so it is exploratory whatever it finds, and it cannot
+# alter F-37. It also cannot be pooled with F-42 or F-43 into one test: the learning rates and step
+# counts differ, so those draws are not exchangeable with these.
+#
+# EVALUATION STAYS ON CPU. Slower, and deliberately so: this may reach the write-up, and the rule is
+# that any reported number is produced on CPU. It also keeps the absolute retentions directly
+# comparable to F-42 and F-43 rather than only internally consistent.
+#
+# THE MASKS STAY FROZEN, for the reason given in the gentle config: unfreezing lets both arms
+# reselect under one gradient signal and converge on whatever mask the recovery dynamics prefer,
+# overwriting the initialisation difference rather than testing it.
+
+include:
+  - ../models/pythia_160m.yaml
+  - ../compression/sequential.yaml
+  - ../evaluation/quality.yaml
+
+experiment:
+  id: recovery_ablation_160m_w4_r8
+  name: Pythia-160M W4 recovery durability at R=8 (lr 1e-5, 50 steps)
+  description: >-
+    Post-hoc exploratory ablation at eight paired calibration replicates. Sequential (P->Q, the
+    frozen 160M/W4 order) and joint, each followed by an identical 50-step end-to-end recovery phase
+    at lr 1e-5 -- the configuration F-43 established as non-destructive and near-peak. Tests whether
+    joint's advantage survives a recovery phase that helps. Validation split. Not confirmatory and
+    not a protocol change.
+  tags:
+    - exploratory
+    - post-hoc
+    - recovery-ablation
+    - not-confirmatory
+    - not-a-result
+
+runtime:
+  seed: 1234
+  deterministic: true
+  # Separate tree, and a third distinct id, so none of the three recovery runs can overwrite another.
+  output_dir: outputs/recovery_ablation
+  log_level: INFO
+
+data:
+  eval_split: validation
+  calibration_samples: 128
+  calibration_split: train
+  sequence_length: 512
+  max_eval_samples: 512
+  batch_size: 4
+
+compression:
+  # The frozen headline budget, unchanged from F-37, F-42 and F-43.
+  budget_label: aggressive
+  pruning:
+    sparsity: 0.3
+  quantisation:
+    bits: 4
+
+  reconstruction:
+    solver: sweep
+    local_steps: 1
+    joint_iterations: 2
+    comparison_group: output
+    scale_search: false
+    keep_benefit_saliency: false
+
+  recovery:
+    end_to_end: true
+    enabled: true
+
+    # F-43's peak. 50 x 2 x 4 x 512 = 204,800 recovery tokens.
+    max_steps: 50
+    batch_size: 2
+    gradient_accumulation_steps: 4
+
+    # F-43's rate, the one that improves both arms rather than destroying them.
+    learning_rate: 1.0e-5
+
+    weight_decay: 0.0
+    warmup_ratio: 0.05
+    max_grad_norm: 1.0
+    mixed_precision: false
+    gradient_checkpointing: false
+
+    seed: 1234
+    log_every_steps: 10
+    # OFF. ~3.7 min per probe x 16 cells is an hour per schedule point, and F-43 already recorded
+    # the shape. The endpoint is what R=8 buys.
+    probe_every_steps: 0
+    device: auto
+
+sweep:
+  models:
+    - pythia-160m
+  methods:
+    - sequential
+    - joint
+  budgets:
+    - aggressive
+  # EIGHT paired draws, matching the confirmatory R at this scale, and the point of the run: eight
+  # unanimous draws reach p = 0.0078 on a two-sided sign test. Reused from
+  # CALIBRATION_REPLICATE_SEEDS, so replicates 0-2 share their draws with F-42.
+  replicates: 8
+  use_frozen_order: true
+  skip_existing: true
+  continue_on_error: false
