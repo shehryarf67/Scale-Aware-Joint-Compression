@@ -101,6 +101,104 @@ which is what the arm comparison needs.
 
 ## 2. Findings
 
+### F-43 — A recovery phase that works: F-42's instrument is exonerated, and joint's advantage still does not survive {#f-43}
+
+**2026-08-23 · sequential at `b680e09`, joint at `e9bf9af` · POST-HOC EXPLORATORY · validation split
+· ONE PAIRED DRAW · NOT CONFIRMATORY.** Cannot alter, replace or reinterpret
+[F-37](#f-37). Config `configs/experiments/recovery_ablation_160m_w4_gentle.yaml`; records in
+`outputs/recovery_ablation/` under the `_gentle` id.
+
+[F-42](#f-42) degraded both arms, so it could not test durability and could not separate
+"overfitting to the slice" from "learning rate too large". This changes **one** variable —
+lr 5e-5 → **1e-5** — holding steps, tokens, optimiser, schedule, clipping, precision, seed, budget
+and data at F-42's values, and adds mid-recovery evaluation every 50 steps.
+
+#### The trajectory
+
+Pythia-160M, 30% + W4, dense perplexity 36.9741, masks frozen, W4 fake quantisation live.
+
+| step | sequential | joint | gap |
+| --- | --- | --- | --- |
+| 0 | 56.1181 | 57.5629 | **+1.4448** |
+| 50 | **68.5175** | **67.4093** | −1.1082 |
+| 100 | 64.9433 | 63.8432 | −1.1000 |
+| 150 | 63.5475 | 62.5161 | −1.0314 |
+| 200 | 63.3258 | 62.2882 | −1.0376 |
+| **after (CPU)** | **63.3266** | **62.2890** | **−1.0376** |
+
+Three things follow, in decreasing order of how much weight they can carry.
+
+**1. A non-destructive recovery phase exists — F-42's failure was the learning rate, not the
+concept.** At lr 1e-5 recovery *adds* quality: **+7.2086 pp** (sequential) and **+4.7262 pp**
+(joint), against F-42's −2.9100 and −4.6048 pp at 5e-5. The prerequisite question the gentle probe
+was built to ask is answered **yes**, and F-42's suspicion of its own instrument was correct.
+
+**2. Two hundred steps badly overshoots, for both arms.** Both peak at step 50 — +12.3994 pp
+(sequential) and +9.8464 pp (joint) — then decline in parallel, giving back 5.19 and 5.12 pp by step
+200. **The optimum is at or before step 50, and this run cannot locate it more precisely**: with
+probes only every 50 steps, the true peak could be at 50, 25 or 10. Any follow-up needs finer early
+probes.
+
+**3. The gap inverts by step 50 and then barely moves.** Joint starts +1.4448 pp ahead and ends
+**1.0376 pp behind**, and the offset sits between −1.03 and −1.11 pp at all four checkpoints. So in
+this draw, joint's advantage does not survive a recovery phase that *helps* — which is the fair
+version of the test F-42 could not run.
+
+#### What this does to F-42's reading
+
+F-42 recorded two candidate readings and could not separate them. This narrows them.
+
+F-42 found joint degrading **more** under a destructive phase (−4.6048 against −2.9100 pp). This
+finds joint improving **less** under a beneficial one (+4.7262 against +7.2086 pp). **Two opposite
+perturbation regimes, the same direction**: the joint solution responds worse to end-to-end gradient
+recovery. That is no longer attributable to an over-strong probe, because one of the two regimes is
+not over-strong.
+
+So F-42's "the joint solution is more fragile to global gradient perturbation" survives and
+generalises to "the joint solution responds worse to global gradient recovery, beneficial or
+destructive". Its stronger sibling — *joint's advantage is not durable under fair recovery* — now has
+**one** draw of direct support where before it had none.
+
+#### What may NOT be claimed
+
+- **This is one paired draw. It is not an effect size**, and −1.0376 pp must not be quoted as one.
+- **The four checkpoints are not four replicates.** They are autocorrelated points on a single
+  trajectory from a single draw. Their agreement shows the offset is stable *within* this run; it is
+  not evidence it would recur in another.
+- **Do not pool this with F-42 into one sign test.** F-42's three draws ran at 5e-5 and this one at
+  1e-5; they are not exchangeable, so 4/4 in the same direction is not a p = 0.125 result. The
+  honest statement is *two regimes, consistent direction, one draw in the regime that matters.*
+- **[F-37](#f-37) is untouched.** Post-hoc, exploratory, validation-only.
+
+#### A practical implication, flagged as a hypothesis
+
+If end-to-end recovery is available after compression, **sequential appears to be the better
+starting point** — it both starts lower and ends higher. That would weaken the case for joint beyond
+what F-37 already reports, since F-37's negative verdict is about magnitude while this would be about
+sign. **From one draw this is a hypothesis, not a finding**, and it is exactly the claim that needs
+R=8 before it goes in a paper.
+
+#### Guards and provenance
+
+| Guard | Result |
+| --- | --- |
+| `mask_sparsity` before vs after | **0.2996961805555556, identical in both arms** ([B-46](#4-bugs-found-that-would-have-invalidated-results) per-row quantisation) |
+| `fake_quant_forward_calls` | **62,208 in both arms** — W4 live throughout; the count exceeds F-42's 38,400 because the probes add forward passes, equally in both arms |
+| `assert_budgets_match` | passed — 200 × 2 × 4 × 512 = 819,200 tokens in both arms, **restored from the record across the resume** so the gate still fired |
+| Recovery slice | disjoint from calibration by construction, 1600 candidates, overlap 0 |
+| Mean / final loss | sequential 3.4980 / 3.4393; joint 3.5199 / 3.4673 |
+| GPU probe vs CPU evaluation | step-200 probe against the baked CPU number: **0.0008 pp** (sequential), **0.0008 pp** (joint) — also confirms `bake_recovery_modules` preserves the effective weight |
+
+⚠️ **The two arms were produced at different commits** — sequential at `b680e09`, joint at
+`e9bf9af`, because the run was paused and resumed. The diff between them touches only
+`scripts/run_recovery_ablation.py` resume bookkeeping and its tests; **no compression, recovery or
+evaluation code changed**, so the pair is numerically comparable. Recorded rather than glossed
+because a comparison spanning two commits is the kind of thing that has to be checkable.
+
+⚠️ **The joint record carries `git_commit: null`.** Diagnosed rather than shrugged at, and the cause
+matters beyond this run — see [B-53](#4-bugs-found-that-would-have-invalidated-results). The joint
+arm ran at `e9bf9af`.
+
 ### F-42 — The recovery ablation closes the gap, but it degraded both arms, so it does not answer the question it was built to ask {#f-42}
 
 **2026-08-22 · `0ddb139` · POST-HOC EXPLORATORY · validation split · NOT CONFIRMATORY.** Cannot
@@ -3262,6 +3360,7 @@ recording.
 
 | # | Bug | What it would have done |
 | --- | --- | --- |
+| B-53 | **A record's `git_commit` can be silently null, and this is the mechanism behind the two null commits in the confirmatory run** ([F-43](#f-43)) | Found on the gentle recovery probe: the joint arm's record carries `git_commit: null` while the sequential arm's carries `b680e09`, on the same host, same script, ~3 hours apart. `get_git_commit` shells out to `git rev-parse HEAD` with a **5-second timeout** and returns `None` on `OSError` or any `subprocess.SubprocessError` — which includes `TimeoutExpired` — logging the reason at **DEBUG**. Every run in this project logs at INFO, so **the failure left no trace whatsoever**: a null looked like a field nobody had populated rather than an event that happened and was swallowed. Five seconds is not generous on a host running a 200-step GPU training loop with a CPU-bound evaluation alongside, which is exactly the condition under which the confirmatory grid produced **its** two null commits — [F-37](#f-37) records them as an unexplained limitation, and this is very likely the explanation. **No number is affected**: the commit is provenance, not input, and the run's code is identifiable from the surrounding records and the log timestamps. But it defeats the one rule the reproducibility policy rests on — *run from a clean tree at a committed SHA* — because a record that cannot name its SHA cannot be checked against that rule, and the project's single unusable result came from precisely a provenance failure (`aec5099-dirty`). **FIXED 2026-08-23**: both git subprocess timeouts raised 5 s → 30 s, and both failure paths now log at **WARNING** rather than DEBUG, so a null commit is loud at the level runs actually use. Deliberately *not* made fatal — aborting a 78-minute compression cell because `git` was slow would trade a provenance gap for a lost measurement, which is the worse failure. The affected records are **not** re-run to backfill the field; the SHA is recorded in [F-43](#f-43) instead, and the two confirmatory nulls stay as they are because step 10 runs once. Worth carrying: this is the third fault in this family (**[B-50](#4-bugs-found-that-would-have-invalidated-results)**, **[B-51](#4-bugs-found-that-would-have-invalidated-results)**) where a silent-loss path left the *count* of records healthy and something inside them missing or wrong |
 | B-52 | **The exported joint-gain table paired arms ACROSS evaluation splits**, putting a wrong number in a committed artefact ([F-41](#f-41)) | `_joint_gain_rows` keyed on `(model, budget, replicate)` and not on the split, and the two splits produce the same experiment ids by construction -- so nothing looked wrong. At `qwen2.5-0.5b/moderate/rep0` the **validation** Q→P record was selected as best-of against the **test** joint record, exporting **−0.2143 pp** where the frozen-order test gain is **−0.0357 pp**. Same root cause as [B-51](#4-bugs-found-that-would-have-invalidated-results), seen from the analysis side rather than the write side. The aggressive rep0 row was correct only by luck: P→Q happened to beat the stray validation Q→P value, so best-of picked the right record while still exporting a contaminated `sequential_qp_retention` column. **The reports were never wrong** -- `report_confirmatory.py` pairs independently and always filtered on split -- so F-37 and F-41 stand, but `joint_gains.csv` is the file a reviewer recomputes from, and it disagreed with them. Fixed by adding **`eval_split` and `dataset_fingerprint`** to the pairing key and exporting both, and by taking the baseline on the test split from the **frozen order** rather than best-of: A1 §3 freezes the order before test, so only one order exists there, and maximising over whatever else happens to be present is precisely how a validation record leaked in. Best-of is retained on validation, where both orders genuinely ran. A cell with no frozen order, or missing its frozen arm, now emits **nothing** rather than substituting another order. Three regression tests, one pinned to the exact numbers. After the fix every CSV cell mean matches its report to four decimals |
 | B-51 | **A record id does not encode the evaluation split, so a test-split run silently OVERWRITES the validation record of the same cell** ([F-40](#f-40)) | Caught on the Qwen leg, and **the blast radius is larger than first recorded**: the test grid overwrote **five** validation records, not one -- the dense baseline, **both `sequential` (P→Q) records**, and **both `joint` records**. Only the two `sequential_qp` records survived on disk, because no test-split cell shares their id (the frozen order is P→Q at both budgets, so `sequential_qp` was never re-run). `qwen2.5-0.5b_dense_moderate_s00_b32_rep0.json` held the **validation** dense baseline (ppl 17.7758) used as the retention reference for order selection. The test grid planned the same cell, `exists_valid` correctly refused to reuse a validation record for a test run -- and then wrote the test result **to the same filename**, destroying the validation one (now ppl 17.0962, split `test`). **[F-40](#f-40) survives only by luck:** the dense smoke happened to run under a distinct `experiment.id`, so a copy exists as `qwen_smoke_dense__...`, and every arm record stores the retention it computed at run time, so the reported figures remain checkable. Had neither been true, F-40 would cite retention numbers whose denominator no longer existed. **The class is the dangerous part**: `exists_valid` gates *reuse* on the split but nothing gates *overwrite*, so the guard that prevents reading the wrong record does not prevent destroying the right one. Same family as [B-45](#4-bugs-found-that-would-have-invalidated-results) (split confusion) and [B-50](#4-bugs-found-that-would-have-invalidated-results) (silent loss that leaves the count looking healthy). **FIXED 2026-08-14**, once the Qwen grid was no longer mid-flight. `ExperimentTracker.save` now ARCHIVES an existing record to `<id>__split-<old>.json` when the incoming record carries a different `eval_split`, rather than overwriting it. Renaming rather than refusing, deliberately: refusing would block the legitimate case -- running the same grid on the other split, which is the entire two-split design -- and an error there would strand a completed cell. The archive keeps its `.json` suffix in the same directory, so `load_all` still finds it and every split-aware consumer still filters correctly; `_load_dense_reference` in particular recovers the reference this bug used to delete. Two tests: one reproduces the exact Qwen failure and asserts BOTH splits survive, the other asserts a same-split re-run still overwrites, so the archive path cannot fire on the ordinary case and litter the directory. **The destroyed records are RECOVERED from git history, not re-run.** The evidence set committed at **`2832914`** -- the [F-40](#f-40) commit, made *before* the test grid ran -- contains all eight Qwen validation rows with a sha256 per source record. `scripts/recover_qwen_order_selection.py` extracts them to `results/evidence/qwen_order_selection.csv` with a provenance file naming the source commit, the per-record hashes, which records were destroyed and which survive; `--check` verifies the artefact still matches history. The recovered values reproduce F-40 exactly (P→Q 95.2854 against Q→P 95.1916 at W8; 77.3993 against 76.0485 at W4). **Order selection was deliberately NOT re-run**: the test results are known now, and repeating a selection step after seeing the outcome it feeds is post-hoc by definition and would invalidate the freeze it exists to document. The dense record is additionally still on disk under its smoke experiment id (`qwen_smoke_dense__...`, ppl 17.7758); no file is manufactured under the canonical name, which would create a record whose filename and internal id disagree. The Pythia primary was never affected: its 171 test and 54 validation records coexist under distinct experiment ids |
 | B-50 | **`scale_trend` dropped every Q→P cell**, so 5 of 42 pairs vanished from figures and record-level analysis -- and they were the pairs *against* joint ([F-37](#f-37)) | The record-level pairing filtered on `SEQUENTIAL` and `JOINT` and never learned about `SEQUENTIAL_QP`. `find_comparison_pairs` **was** fixed for this ([B-42](#4-bugs-found-that-would-have-invalidated-results)) and carries a comment explaining why; this function was missed, so the same fault survived in a second place. The consequence: the one cell whose frozen order is Q→P -- **pythia-1b/moderate** -- was silently excluded from every trend and every figure built from records. `generate_plots.py` reported "**37 comparable pairs of 37**", which reads as complete: the denominator was computed from the same filtered set, so nothing looked missing. **The direction is what makes it serious.** The dropped cell is the *only* one where joint is consistently worse than sequential (−0.179 pp, 0/5, every bootstrap interval excluding zero), so omitting it removed the strongest evidence against joint -- the **seventh** fault in this project to run in joint's favour, and none has ever run the other way. **Caught while generating the paper figures**, before any figure was published; [F-37](#f-37) and [F-38](#f-38) are unaffected because `report_confirmatory.py` and `report_diagnostics.py` pair on their own and always accepted both orders. Fixed by treating whichever order was frozen as the comparator, with two regression tests. After the fix: **42 comparable pairs of 42** |

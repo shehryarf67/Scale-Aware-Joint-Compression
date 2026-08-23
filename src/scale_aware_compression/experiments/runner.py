@@ -100,14 +100,21 @@ def get_git_commit(*, short: bool = False) -> str | None:
             command,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=30,
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as error:
-        LOGGER.debug("Could not resolve git commit: %s", error)
+        # WARNING, not DEBUG. A null commit means the record cannot be traced to code, which is the
+        # one provenance field the reproducibility rule depends on -- and at INFO the old DEBUG line
+        # left no trace at all, so a null looked like a field nobody had populated rather than a
+        # failure that happened. This is the mechanism behind the two null git_commit values in the
+        # confirmatory run: `git rev-parse` exceeding its timeout while the host was under load.
+        LOGGER.warning("Could not resolve git commit, record provenance will be null: %s", error)
         return None
     if completed.returncode != 0:
-        LOGGER.debug("git rev-parse failed: %s", completed.stderr.strip())
+        LOGGER.warning(
+            "git rev-parse failed, record provenance will be null: %s", completed.stderr.strip()
+        )
         return None
     commit = completed.stdout.strip()
 
@@ -116,7 +123,7 @@ def get_git_commit(*, short: bool = False) -> str | None:
             ["git", "status", "--porcelain"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=30,
             check=False,
         )
     except (OSError, subprocess.SubprocessError):

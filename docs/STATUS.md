@@ -35,7 +35,7 @@
 >
 > **No further tuning is permitted.** Step 10 runs once. What remains is analysis and writing.
 
-**Last updated:** 2026-08-22 · **Experiments and evidence generation complete; paper writing may begin.**
+**Last updated:** 2026-08-23 · **Experiments and evidence generation complete; paper writing may begin.**
 Phases 0, 5, 6, 7 and A1 steps 1–10 are complete. The pipeline
 passes three independent correctness anchors, the budgets and both sequential orders were frozen per
 cell on validation, and the confirmatory grid has now been executed once on the test split under the
@@ -950,6 +950,64 @@ slice **disjoint from calibration by construction**.
 **If pursued:** a gentler probe first (lr 1e-5, or 50 steps, or held-out early stopping) chosen to
 produce a phase that improves or holds both arms. Until one exists the durability question is
 **open, not answered negatively**. A serious attempt needs R=8 and ~11 h of recovery compute.
+
+> ✅ **Done — see [F-43](findings_log.md#f-43) and the section below.** lr 1e-5 produces a phase that
+> improves both arms (+7.21 and +4.73 pp), so this instrument caveat is resolved. The gap still
+> inverts, in one paired draw.
+
+### 🟢 The gentle recovery probe: F-42's instrument is exonerated, and the answer does not change
+
+**2 cells, 1 paired replicate, 0 failures.** Full record: **[F-43](findings_log.md#f-43)**. Post-hoc,
+exploratory, **validation split, ONE paired draw** — it cannot alter [F-37](findings_log.md#f-37) and
+does not.
+
+[F-42](findings_log.md#f-42) degraded both arms, so it could not test durability. This changed **one**
+variable — lr 5e-5 → **1e-5** — and added mid-recovery evaluation every 50 steps.
+
+| step | sequential | joint | gap |
+| --- | --- | --- | --- |
+| 0 | 56.1181 | 57.5629 | **+1.4448** |
+| 50 | **68.5175** | **67.4093** | −1.1082 |
+| 100 | 64.9433 | 63.8432 | −1.1000 |
+| 150 | 63.5475 | 62.5161 | −1.0314 |
+| **200 (CPU)** | **63.3266** | **62.2890** | **−1.0376** |
+
+**1. A working recovery phase exists.** Recovery now *adds* quality — **+7.2086 pp** (sequential) and
+**+4.7262 pp** (joint), against F-42's −2.9100 and −4.6048 at 5e-5. F-42's suspicion of its own
+instrument was correct, and the learning rate was the fault.
+
+**2. Two hundred steps overshoots for both arms.** Both peak at step 50 (+12.40 and +9.85 pp) then
+decline in parallel, giving back ~5.1 pp each. **The optimum is at or before step 50 and this run
+cannot locate it** — probes every 50 steps cannot distinguish a peak at 50 from one at 10.
+
+**3. The gap inverts by step 50 and then barely moves** — between −1.03 and −1.11 pp at all four
+checkpoints. In this draw joint's advantage does not survive a recovery phase that helps.
+
+**What this does to F-42:** F-42 found joint degrading *more* under a destructive phase; this finds
+joint improving *less* under a beneficial one. **Two opposite regimes, same direction** — so the
+direction is not an artefact of an over-strong probe. F-42's weaker claim ("more fragile to
+perturbation") generalises; its stronger sibling ("the advantage is not durable") now has **one** draw
+of direct support where it had none.
+
+⚠️ **What may not be claimed.** One paired draw is **not an effect size**; −1.0376 pp must not be
+quoted as one. The four checkpoints are **not four replicates** — they are autocorrelated points on
+one trajectory. And this must **not** be pooled with F-42 into a single sign test: different learning
+rates are not exchangeable, so 4/4 in one direction is not p = 0.125.
+
+**A hypothesis worth recording, not a finding:** if end-to-end recovery is available, sequential looks
+like the better starting point — it starts lower and ends higher. That would weaken the case for joint
+on *sign* where F-37 weakens it on *magnitude*. It needs **R=8** before it can go in a paper.
+
+**All guards clean** — sparsity identical in both arms, `fake_quant_forward_calls` 62,208 in both,
+budgets matched and **restored across the resume** so the gate still fired, recovery slice disjoint
+from calibration, and the step-200 GPU probe agreeing with the baked CPU evaluation to 0.0008 pp in
+both arms.
+
+⚠️ Two provenance notes, both recorded rather than glossed: the arms ran at **different commits**
+(`b680e09` and `e9bf9af`, from the pause/resume) though the diff touches only resume bookkeeping and
+tests, and the joint record carries a **null `git_commit`** — diagnosed as
+[B-53](findings_log.md#4-bugs-found-that-would-have-invalidated-results), which is very likely also
+the cause of the two null commits in the confirmatory run.
 
 ### The optional experiments — decided 2026-08-11
 
