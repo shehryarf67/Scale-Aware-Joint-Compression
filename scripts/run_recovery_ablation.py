@@ -72,6 +72,58 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _calibration_batches(calibration: Any) -> list[Any]:
+    """Return the batches the arms COMPRESS against.
+
+    Built exactly as ``ExperimentRunner._attach_calibration`` builds them, because B-54 was this
+    script quietly diverging from that reference and handing the arms the recovery slice instead.
+    Its size follows ``data.calibration_samples``; it must never follow ``recovery.max_steps``.
+
+    Args:
+        calibration: The loaded calibration set.
+
+    Returns:
+        One tensor per calibration batch, in loader order.
+    """
+    return [
+        batch["input_ids"] if isinstance(batch, dict) else batch[0] for batch in calibration.loader
+    ]
+
+
+def _recovery_slice(calibration: Any, recovery: Any, replicate: int) -> tuple[list[Any], list[int]]:
+    """Draw the recovery batches, excluding every calibration index.
+
+    Separate from :func:`_calibration_batches` and returning its indices so the disjointness can be
+    checked by the caller and asserted by a test, rather than claimed in a comment as it was when
+    B-54 inverted it.
+
+    Args:
+        calibration: The loaded calibration set, whose dataset supplies the sequences.
+        recovery: The recovery config, which sizes the slice.
+        replicate: Offsets the generator so each replicate draws different recovery data.
+
+    Returns:
+        The batches, and the dataset indices they were drawn from.
+    """
+    import torch
+
+    used = {int(index) for index in calibration.indices}
+    available = [index for index in range(len(calibration.dataset)) if index not in used]
+    generator = torch.Generator().manual_seed(recovery.seed + replicate)
+    order = torch.randperm(len(available), generator=generator).tolist()
+    needed = recovery.max_steps * recovery.batch_size * recovery.gradient_accumulation_steps
+    chosen = [available[order[index % len(order)]] for index in range(needed)]
+
+    batches = []
+    micro = recovery.batch_size
+    for start in range(0, len(chosen), micro):
+        block = chosen[start : start + micro]
+        if len(block) < micro:
+            break
+        batches.append(torch.stack([calibration.dataset[index]["input_ids"] for index in block]))
+    return batches, chosen
+
+
 def _reusable_record(
     path: Path,
     *,
@@ -266,60 +318,32 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - a linear expe
         #
         # Drawn from the same train split, excluding every calibration index, with a fixed
         # generator so the two arms and any re-run get byte-identical batches in identical order.
-        used = {int(index) for index in calibration.indices}
-        available = [index for index in range(len(calibration.dataset)) if index not in used]
-        generator = torch.Generator().manual_seed(recovery.seed + replicate)
-        order = torch.randperm(len(available), generator=generator).tolist()
-        needed = budget_sequences = (
-            recovery.max_steps * recovery.batch_size * recovery.gradient_accumulation_steps
-        )
-        chosen = [available[order[i % len(order)]] for i in range(needed)]
-        recovery_batches = []
-        micro = recovery.batch_size
-        for start in range(0, len(chosen), micro):
-            block = chosen[start : start + micro]
-            if len(block) < micro:
-                break
-            recovery_batches.append(
-                torch.stack([calibration.dataset[index]["input_ids"] for index in block])
-            )
-        LOGGER.info(
-            "Recovery slice: %d sequence(s) from train, DISJOINT from the %d calibration "
-            "sequences (overlap 0 by construction)",
-            len(chosen),
-            len(used),
-        )
-        del budget_sequences
-        LOGGER.info(
-            "Recovery data: %d batch(es) of shape %s, fingerprint %s -- shared by both arms",
-            len(recovery_batches),
-            tuple(recovery_batches[0].shape),
-            calibration_fingerprint,
-        )
+        recovery_batches, chosen = _recovery_slice(calibration, recovery, replicate)
+        calibration_batches = _calibration_batches(calibration)
 
-        # The CALIBRATION batches, which are what the arms compress against. Built the same way as
-        # ExperimentRunner._attach_calibration so this script's compression matches the rest of the
-        # project's -- see B-54, where it did not.
-        calibration_batches = [
-            batch["input_ids"] if isinstance(batch, dict) else batch[0]
-            for batch in calibration.loader
-        ]
-        recovery_indices = {int(index) for index in chosen}
-        overlap = len(recovery_indices & used)
+        # Verified, not asserted in a comment: B-54 shipped a log line claiming disjointness that
+        # was true about the wrong pair of sets. Fail closed rather than report a confounded number.
+        overlap = {int(index) for index in chosen} & {int(index) for index in calibration.indices}
         if overlap:
             LOGGER.error(
-                "Recovery slice overlaps calibration in %d index(es); the disjointness the design "
-                "claims does not hold",
-                overlap,
+                "Recovery slice overlaps calibration in %d index(es); the disjointness this design "
+                "depends on does not hold",
+                len(overlap),
             )
             return 2
         LOGGER.info(
+            "Recovery slice: %d sequence(s) in %d batch(es) of shape %s -- what both arms RECOVER "
+            "on, verified disjoint from calibration",
+            len(chosen),
+            len(recovery_batches),
+            tuple(recovery_batches[0].shape),
+        )
+        LOGGER.info(
             "Calibration: %d sequence(s) in %d batch(es), fingerprint %s -- what the arms COMPRESS "
-            "against, disjoint from the %d recovery sequence(s)",
+            "against",
             len(calibration),
             len(calibration_batches),
             calibration_fingerprint,
-            len(recovery_indices),
         )
 
         evaluation_loader, evaluation_summary = build_evaluation_dataloader(

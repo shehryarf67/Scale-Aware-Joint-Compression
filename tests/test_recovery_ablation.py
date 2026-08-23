@@ -590,3 +590,129 @@ class TestResumingCannotAdoptTheWrongRecord:
             )
             is None
         )
+
+
+class TestTheArmsCompressAgainstCalibrationNotRecoveryData:
+    """B-54: the script handed the arms the RECOVERY slice as calibration, inverting the.
+
+    disjointness its own design claimed and coupling ``recovery.max_steps`` to compression. Thirty
+    five tests guarded this ablation and not one asserted what the arms were calibrated on -- the
+    suite was watching the recovery phase and ignoring the compression before it. These watch it.
+    """
+
+    @staticmethod
+    def _module():
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("rra", "scripts/run_recovery_ablation.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    @staticmethod
+    def _calibration(population=64, calibration_size=8, batch_size=2):
+        """A stub calibration set with a loader, a dataset and disjointness to check against."""
+        import torch
+
+        class Dataset:
+            def __len__(self):
+                return population
+
+            def __getitem__(self, index):
+                # Encode the index in the payload so a batch can be traced to its source rows.
+                return {"input_ids": torch.full((4,), float(index))}
+
+        indices = list(range(calibration_size))
+        dataset = Dataset()
+        loader = [
+            {
+                "input_ids": torch.stack(
+                    [dataset[i]["input_ids"] for i in indices[s : s + batch_size]]
+                )
+            }
+            for s in range(0, len(indices), batch_size)
+        ]
+
+        class Calibration:
+            pass
+
+        calibration = Calibration()
+        calibration.loader = loader
+        calibration.dataset = dataset
+        calibration.indices = indices
+        return calibration
+
+    @staticmethod
+    def _recovery(steps=3, batch_size=2, accumulation=2, seed=1234):
+        from scale_aware_compression.config import RecoveryConfig
+
+        return RecoveryConfig(
+            end_to_end=True,
+            max_steps=steps,
+            batch_size=batch_size,
+            gradient_accumulation_steps=accumulation,
+            seed=seed,
+        )
+
+    def test_calibration_batches_come_from_the_calibration_loader(self):
+        """Its size follows data.calibration_samples, which is the whole point."""
+        module = self._module()
+        calibration = self._calibration(calibration_size=8, batch_size=2)
+        batches = module._calibration_batches(calibration)
+        assert len(batches) == 4
+        rows = {int(value) for batch in batches for value in batch.flatten().tolist()}
+        assert rows == set(range(8))
+
+    def test_calibration_batches_do_not_depend_on_the_recovery_budget(self):
+        """The B-54 signature: max_steps silently resizing the COMPRESSION data.
+
+        F-43 compressed against 1600 sequences and the R=8 leg against 400 for this reason, which is
+        what made their before-recovery gains differ when they had to be bit-identical.
+        """
+        module = self._module()
+        calibration = self._calibration()
+        first = module._calibration_batches(calibration)
+        recovery_small, recovery_large = self._recovery(steps=2), self._recovery(steps=6)
+        module._recovery_slice(calibration, recovery_small, 0)
+        module._recovery_slice(calibration, recovery_large, 0)
+        assert len(module._calibration_batches(calibration)) == len(first)
+
+    def test_the_recovery_slice_excludes_every_calibration_index(self):
+        """The property the design depends on, and the one B-54 inverted."""
+        module = self._module()
+        calibration = self._calibration(calibration_size=8)
+        _, chosen = module._recovery_slice(calibration, self._recovery(steps=3), 0)
+        assert set(chosen) & set(calibration.indices) == set()
+
+    def test_the_recovery_slice_and_the_calibration_batches_are_different_data(self):
+        """If a future edit reintroduces the swap, these two must not be interchangeable."""
+        module = self._module()
+        calibration = self._calibration(calibration_size=8)
+        recovery_batches, _ = module._recovery_slice(calibration, self._recovery(steps=3), 0)
+        calibration_batches = module._calibration_batches(calibration)
+        recovery_rows = {int(v) for b in recovery_batches for v in b.flatten().tolist()}
+        calibration_rows = {int(v) for b in calibration_batches for v in b.flatten().tolist()}
+        assert recovery_rows & calibration_rows == set()
+
+    def test_the_recovery_slice_is_sized_by_the_budget(self):
+        """Steps x batch x accumulation sequences, so both arms consume an identical stream."""
+        module = self._module()
+        calibration = self._calibration()
+        recovery = self._recovery(steps=3, batch_size=2, accumulation=2)
+        batches, chosen = module._recovery_slice(calibration, recovery, 0)
+        assert len(chosen) == 3 * 2 * 2
+        assert len(batches) == 6
+        assert all(batch.shape[0] == 2 for batch in batches)
+
+    def test_the_slice_is_deterministic_per_replicate_and_differs_between_them(self):
+        """Both arms must get byte-identical data; different replicates must not."""
+        module = self._module()
+        calibration = self._calibration()
+        recovery = self._recovery(steps=3)
+        first, _ = module._recovery_slice(calibration, recovery, 0)
+        again, _ = module._recovery_slice(calibration, recovery, 0)
+        other, _ = module._recovery_slice(calibration, recovery, 1)
+        import torch
+
+        assert all(torch.equal(a, b) for a, b in zip(first, again, strict=True))
+        assert not all(torch.equal(a, b) for a, b in zip(first, other, strict=True))
