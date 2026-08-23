@@ -434,3 +434,159 @@ class TestRecoveryDisabledLeavesThePipelineAlone:
         with pytest.raises(ConfigError, match="requires an explicit max_steps"):
             RecoveryConfig(end_to_end=True, max_steps=None)
         RecoveryConfig(end_to_end=True, max_steps=10)
+
+
+class TestResumingCannotAdoptTheWrongRecord:
+    """Resuming by filename is how B-45 and B-51 happened: the name matched, the conditions did.
+
+    not. Every condition that would change the number is compared before a record is reused.
+    """
+
+    @staticmethod
+    def _module():
+        """Load the ablation script as a module without executing its main()."""
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("rra", "scripts/run_recovery_ablation.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    @staticmethod
+    def _config():
+        from scale_aware_compression.config import load_config
+
+        return load_config("configs/experiments/recovery_ablation_160m_w4_gentle.yaml")
+
+    def _write(self, tmp_path, config, **overrides):
+        """Write a record that matches the config, with optional corruptions."""
+        import json
+
+        recovery = config.compression.recovery
+        record = {
+            "smoke": False,
+            "arm": "sequential",
+            "calibration_replicate": 0,
+            "model_name": config.model.name,
+            "model_revision": config.model.revision,
+            "eval_split": config.data.eval_split,
+            "target_sparsity": config.compression.effective_sparsity,
+            "quantisation_bits": config.compression.quantisation.bits,
+            "calibration_fingerprint": "cal-fp",
+            "dataset_fingerprint": "data-fp",
+            "recovery": {
+                "steps": recovery.max_steps,
+                "learning_rate": recovery.learning_rate,
+                "trajectory": [
+                    {"step": step}
+                    for step in range(
+                        recovery.probe_every_steps,
+                        recovery.max_steps + 1,
+                        recovery.probe_every_steps,
+                    )
+                ],
+            },
+        }
+        record.update(overrides)
+        path = tmp_path / "record.json"
+        path.write_text(json.dumps(record), encoding="utf-8")
+        return path
+
+    def _check(self, tmp_path, **overrides):
+        module, config = self._module(), self._config()
+        path = self._write(tmp_path, config, **overrides)
+        return module._reusable_record(
+            path,
+            config=config,
+            arm_name="sequential",
+            replicate=0,
+            calibration_fingerprint="cal-fp",
+            dataset_fingerprint="data-fp",
+        )
+
+    def test_a_matching_record_is_reused(self, tmp_path):
+        """The whole point of resuming: an unchanged cell must not cost 78 minutes again."""
+        assert self._check(tmp_path) is not None
+
+    def test_a_smoke_record_is_never_reused(self, tmp_path):
+        """A 4-step smoke record under a real id would pair against a real arm and look plausible.
+
+        This is the fault that was actually found on disk, not a hypothetical.
+        """
+        assert self._check(tmp_path, smoke=True) is None
+
+    def test_a_different_learning_rate_is_not_reused(self, tmp_path):
+        """The gentle probe exists BECAUSE the learning rate changed; reusing across it would.
+
+        compare 1e-5 against 5e-5 and attribute the difference to the arm.
+        """
+        config = self._config()
+        module = self._module()
+        path = self._write(tmp_path, config)
+        config.compression.recovery.learning_rate = 5e-5
+        assert (
+            module._reusable_record(
+                path,
+                config=config,
+                arm_name="sequential",
+                replicate=0,
+                calibration_fingerprint="cal-fp",
+                dataset_fingerprint="data-fp",
+            )
+            is None
+        )
+
+    def test_a_different_step_count_is_not_reused(self, tmp_path):
+        """Steps are the fairness unit; a mismatch is a different experiment."""
+        assert self._check(tmp_path, recovery={"steps": 100, "learning_rate": 1e-5}) is None
+
+    def test_a_different_calibration_draw_is_not_reused(self, tmp_path):
+        """Paired replicates are only paired if both arms saw the same draw."""
+        assert self._check(tmp_path, calibration_fingerprint="other") is None
+
+    def test_a_different_evaluation_window_is_not_reused(self, tmp_path):
+        """B-45 in miniature: a record measured on another window is not this cell's number."""
+        assert self._check(tmp_path, dataset_fingerprint="other") is None
+
+    def test_the_wrong_arm_is_not_reused(self, tmp_path):
+        """Filenames encode the arm, but the record is what gets believed."""
+        assert self._check(tmp_path, arm="joint") is None
+
+    def test_a_missing_trajectory_is_not_reused(self, tmp_path):
+        """A resumed arm without its probe points would half-populate the comparison."""
+        assert (
+            self._check(tmp_path, recovery={"steps": 200, "learning_rate": 1e-5, "trajectory": []})
+            is None
+        )
+
+    def test_a_missing_file_is_not_reused(self, tmp_path):
+        """Nothing on disk means nothing to adopt."""
+        module, config = self._module(), self._config()
+        assert (
+            module._reusable_record(
+                tmp_path / "absent.json",
+                config=config,
+                arm_name="sequential",
+                replicate=0,
+                calibration_fingerprint="cal-fp",
+                dataset_fingerprint="data-fp",
+            )
+            is None
+        )
+
+    def test_an_unreadable_record_is_not_reused(self, tmp_path):
+        """A truncated write from a killed run must re-run, not raise mid-sweep."""
+        module, config = self._module(), self._config()
+        path = tmp_path / "broken.json"
+        path.write_text("{not json", encoding="utf-8")
+        assert (
+            module._reusable_record(
+                path,
+                config=config,
+                arm_name="sequential",
+                replicate=0,
+                calibration_fingerprint="cal-fp",
+                dataset_fingerprint="data-fp",
+            )
+            is None
+        )

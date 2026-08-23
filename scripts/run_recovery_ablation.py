@@ -72,6 +72,94 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _reusable_record(
+    path: Path,
+    *,
+    config: Any,
+    arm_name: str,
+    replicate: int,
+    calibration_fingerprint: str,
+    dataset_fingerprint: str,
+) -> dict[str, Any] | None:
+    """Return an existing record only if it was produced under exactly this configuration.
+
+    Resuming by filename alone is how B-45 and B-51 happened: the name matched, the conditions did
+    not, and the wrong record was silently adopted. So every condition that would change the number
+    is compared, and any mismatch re-runs the cell rather than reusing it. A smoke record is never
+    reusable regardless.
+
+    Args:
+        path: Where the record for this arm and replicate would live.
+        config: The current experiment config.
+        arm_name: The arm being resumed.
+        replicate: The calibration replicate index.
+        calibration_fingerprint: Fingerprint of the calibration draw in use now.
+        dataset_fingerprint: Fingerprint of the evaluation window in use now.
+
+    Returns:
+        The parsed record if it is safe to reuse, otherwise None.
+    """
+    if not path.exists():
+        return None
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        LOGGER.warning("Re-running %s: existing record unreadable (%s)", path.name, error)
+        return None
+
+    recovery = config.compression.recovery
+    expected = {
+        "smoke": False,
+        "arm": arm_name,
+        "calibration_replicate": replicate,
+        "model_name": config.model.name,
+        "model_revision": config.model.revision,
+        "eval_split": config.data.eval_split,
+        "target_sparsity": config.compression.effective_sparsity,
+        "quantisation_bits": config.compression.quantisation.bits,
+        "calibration_fingerprint": calibration_fingerprint,
+        "dataset_fingerprint": dataset_fingerprint,
+    }
+    for field, wanted in expected.items():
+        if record.get(field) != wanted:
+            LOGGER.warning(
+                "Re-running %s: %s is %r, expected %r", path.name, field, record.get(field), wanted
+            )
+            return None
+
+    stored = record.get("recovery", {})
+    if stored.get("steps") != recovery.max_steps:
+        LOGGER.warning(
+            "Re-running %s: recovery steps %r, expected %r",
+            path.name,
+            stored.get("steps"),
+            recovery.max_steps,
+        )
+        return None
+    if stored.get("learning_rate") != recovery.learning_rate:
+        LOGGER.warning(
+            "Re-running %s: learning rate %r, expected %r",
+            path.name,
+            stored.get("learning_rate"),
+            recovery.learning_rate,
+        )
+        return None
+    # The probe schedule changes what the record contains, not what it measures, but a trajectory
+    # missing from a resumed arm would silently produce a half-populated comparison.
+    wanted_points = (
+        recovery.max_steps // recovery.probe_every_steps if recovery.probe_every_steps else 0
+    )
+    if len(stored.get("trajectory", [])) != wanted_points:
+        LOGGER.warning(
+            "Re-running %s: %d trajectory point(s), expected %d",
+            path.name,
+            len(stored.get("trajectory", [])),
+            wanted_points,
+        )
+        return None
+    return record
+
+
 def _retention(dense_ppl: float, ppl: float) -> float:
     """Perplexity retention as a percentage, the study's primary quality metric."""
     return 100.0 * dense_ppl / ppl
@@ -122,7 +210,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - a linear expe
         mask_sparsity,
         run_end_to_end_recovery,
     )
-    from scale_aware_compression.training.recovery import recovery_step_budget
+    from scale_aware_compression.training.recovery import RecoveryBudget, recovery_step_budget
 
     recovery = config.compression.recovery
     replicates = arguments.replicates or config.sweep.replicates
@@ -134,9 +222,15 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - a linear expe
         # smoke run silently exercises everything EXCEPT the path it was added to check.
         if recovery.probe_every_steps:
             recovery.probe_every_steps = 2
+        # Namespace the ids. Without this, smoke and the real run write to the SAME filenames --
+        # so an interrupted real run leaves a 4-step smoke record sitting under the real name, and
+        # anything that pairs the arms silently compares a real arm against a smoke one. Same
+        # class as B-51: an id that does not distinguish two runs loses one of them.
+        config.experiment.id = f"{config.experiment.id}__smoke"
         LOGGER.warning(
             "SMOKE: 1 replicate, %d recovery steps, %d evaluation sequences. Numbers from this "
-            "mode are meaningless and are written with smoke=true in the record.",
+            "mode are meaningless, are written with smoke=true, and go to ids suffixed __smoke "
+            "so they can never be mistaken for the real run.",
             recovery.max_steps,
             config.evaluation.max_samples,
         )
@@ -223,6 +317,37 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - a linear expe
         budgets = {}
         for arm_name in ARMS:
             started = time.perf_counter()
+            record_path = output_dir / f"{config.experiment.id}__{arm_name}_rep{replicate}.json"
+            if config.sweep.skip_existing:
+                existing = _reusable_record(
+                    record_path,
+                    config=config,
+                    arm_name=arm_name,
+                    replicate=replicate,
+                    calibration_fingerprint=calibration_fingerprint,
+                    dataset_fingerprint=dataset_fingerprint,
+                )
+                if existing is not None:
+                    stored = existing["recovery"]["budget"]
+                    # Restore the budget so the fairness gate below still fires across a resume.
+                    # Skipping it for a reused arm would quietly disable the check that both arms
+                    # were given identical optimisation.
+                    budgets[arm_name] = RecoveryBudget(
+                        stored["optimiser_steps"],
+                        stored["batch_size"],
+                        stored["gradient_accumulation_steps"],
+                        stored["sequence_length"],
+                    )
+                    records.append(existing)
+                    LOGGER.info(
+                        "%s rep%d: reusing existing record, retention %.4f -> %.4f (%+.4f pp)",
+                        arm_name,
+                        replicate,
+                        existing["before"]["retention"],
+                        existing["after"]["retention"],
+                        existing["improvement_pp"],
+                    )
+                    continue
             method = CompressionMethod(arm_name)
             arm_class = COMPRESSOR_REGISTRY[method]
             # The arm refuses a config whose method is a different arm, because the budget is
