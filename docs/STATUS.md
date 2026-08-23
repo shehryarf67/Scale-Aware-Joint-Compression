@@ -954,6 +954,55 @@ produce a phase that improves or holds both arms. Until one exists the durabilit
 > ✅ **Done — see [F-43](findings_log.md#f-43) and the section below.** lr 1e-5 produces a phase that
 > improves both arms (+7.21 and +4.73 pp), so this instrument caveat is resolved. The gap still
 > inverts, in one paired draw.
+### 🔵 The recovery question, answered at R=8: joint's advantage REVERSES
+
+**16 cells, 8 paired replicates, 0 failures.** Full record: **[F-44](findings_log.md#f-44)**.
+Post-hoc, exploratory, **validation split** — it cannot alter [F-37](findings_log.md#f-37) and does
+not. Run entirely after the [B-54](findings_log.md#4-bugs-found-that-would-have-invalidated-results)
+fix.
+
+Pythia-160M, 30% + W4, both arms given an identical 50-step / 204,800-token recovery at lr 1e-5 —
+the setting [F-43](findings_log.md#f-43) established as non-destructive and near-peak.
+
+| | before | after |
+| --- | --- | --- |
+| sequential retention | 56.6280 | **70.7759** (+14.1478 pp) |
+| joint retention | 58.1036 | **69.4317** (+11.3281 pp) |
+| **joint gain** | **+1.4755 pp, 8/8 positive** | **−1.3442 pp, 8/8 negative** |
+
+**Both columns unanimous, and the reversal is significant at p = 0.0078** — the floor reachable at
+R=8 on a two-sided sign test. Sequential improved *more* in 8/8 replicates, which is the mechanism:
+joint does not degrade, it gains less from the same recovery.
+
+**This closes the last standing defence of joint compression in this study.** F-37 found the direct
+advantage too small to matter and not growing with scale; the remaining argument was that joint might
+be a better *initialisation* for whatever comes next. On this evidence it is a worse one.
+
+⚠️ **The reversal's magnitude (1.3442 pp) and unanimity (8/8) would satisfy §6.3's two criteria,
+where joint's own advantage at this scale on test reached +1.0120 pp at 7/8 and failed.** That
+contrast conveys the size of the effect, but it is **not a §6.3 verdict** — §6.3 is pre-registered for
+the test split and the primary comparison, and post-hoc validation work does not inherit its
+authority.
+
+**A reframing worth carrying into the discussion:** 50 steps and 204,800 tokens — about 0.0007 of
+Pythia-160M's pretraining — buy **+14 pp** of retention, against a ~1.5 pp difference between the
+arms. At this scale *whether you recover at all* matters roughly an order of magnitude more than
+*which compression order you used*.
+
+✅ **The before-recovery column independently reproduces [F-27](findings_log.md#f-27)** on the three
+draws they share — +1.0794/+1.6518/+2.3371 against +1.08/+1.65/+2.34, a month apart through a
+different driver. This is the check B-54 had destroyed (pre-fix rep0 read +1.4536), and it is
+stronger than any comparison to F-37 because F-27 shares this run's split *and* draws.
+
+**Limits:** one scale, one budget, one recovery configuration, validation split, post-hoc. Must not
+be pooled with [F-42](findings_log.md#f-42) or [F-43](findings_log.md#f-43) — different learning
+rates and step counts are not exchangeable draws.
+
+**All guards clean:** sparsity identical in all 16 cells, `fake_quant_forward_calls` 9,600 in all 16,
+budgets matched, disjointness **verified at runtime** rather than asserted, and **0 null
+`git_commit`** values against F-43's 1 — the [B-53](findings_log.md#4-bugs-found-that-would-have-invalidated-results)
+fix holding.
+
 
 > ⚠️ **Both recovery findings were corrected 2026-08-23 —
 > [B-54](findings_log.md#4-bugs-found-that-would-have-invalidated-results).** The ablation script

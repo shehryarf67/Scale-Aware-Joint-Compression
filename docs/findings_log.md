@@ -101,6 +101,110 @@ which is what the arm comparison needs.
 
 ## 2. Findings
 
+### F-44 — Joint's advantage reverses under equal recovery: 8/8 replicates, p = 0.0078 {#f-44}
+
+**2026-08-23 · `45f288d` · POST-HOC EXPLORATORY · validation split · NOT CONFIRMATORY.** Cannot
+alter, replace or reinterpret [F-37](#f-37). Config
+`configs/experiments/recovery_ablation_160m_w4_r8.yaml`; 16 records in `outputs/recovery_ablation/`
+under the `_r8` id. Run entirely after the [B-54](#4-bugs-found-that-would-have-invalidated-results)
+fix, so the arms compress against the 128-sequence calibration set and recover on a **verified**
+disjoint slice.
+
+Pythia-160M, 30% + W4, dense perplexity 36.9741, **eight paired calibration replicates**, masks
+frozen, W4 fake quantisation live, identical 50-step / 204,800-token recovery at lr 1e-5 — the
+setting [F-43](#f-43) established as non-destructive and near-peak.
+
+#### The result
+
+| rep | seq before | seq after | joint before | joint after | gain before | gain after |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 | 56.6554 | 70.8858 | 57.7347 | 70.0553 | +1.0794 | −0.8305 |
+| 1 | 56.8942 | 72.5509 | 58.5460 | 69.7678 | +1.6518 | −2.7831 |
+| 2 | 55.7244 | 69.5589 | 58.0615 | 68.9582 | +2.3371 | −0.6008 |
+| 3 | 57.0642 | 70.6031 | 57.5933 | 69.6081 | +0.5291 | −0.9950 |
+| 4 | 56.9150 | 70.2684 | 57.1636 | 68.1052 | +0.2486 | −2.1633 |
+| 5 | 57.1998 | 71.2669 | 59.2641 | 70.4450 | +2.0643 | −0.8219 |
+| 6 | 56.2618 | 71.3271 | 58.4089 | 69.8208 | +2.1471 | −1.5063 |
+| 7 | 56.3095 | 69.7457 | 58.0564 | 68.6932 | +1.7468 | −1.0525 |
+| **mean** | 56.6280 | **70.7759** | 58.1036 | **69.4317** | **+1.4755** | **−1.3442** |
+| sd | | 0.8227 | | 0.5744 | 0.7748 | 0.7619 |
+
+**Both columns are unanimous.** Joint leads in **8/8** replicates before recovery and trails in
+**8/8** after. A two-sided exact sign test on the reversal gives **p = 0.0078**, the floor reachable
+at R=8.
+
+**Sequential improved more, in 8/8 replicates** — **+14.1478 pp** against joint's **+11.3281 pp**.
+That is the mechanism of the reversal: not that joint degrades, but that it gains less from the same
+recovery.
+
+#### Three things worth separating
+
+**1. The reversal is the strongest sign-consistent effect this project has measured — and it points
+against joint.** Its magnitude (1.3442 pp) and unanimity (8/8) would satisfy the two criteria §6.3
+sets, where joint's *own* advantage at this scale and budget on test reached +1.0120 pp at 7/8 and
+failed. **This is an illustrative comparison, not a §6.3 verdict**: §6.3 is pre-registered for the
+test split and the primary comparison, and applying its thresholds to a post-hoc validation ablation
+does not confer its authority. Recorded because the contrast is the honest way to convey the size of
+what was found, not to claim a pass.
+
+**2. Recovery is worth far more than the choice of arm.** Fifty steps and 204,800 tokens — about
+0.0007 of Pythia-160M's pretraining — move retention from ~56.6% to ~70.8%, a **+14 pp** gain. The
+joint-versus-sequential difference at the same budget is ~1.5 pp. So at this scale the compression
+*method* is roughly an order of magnitude less important than whether any recovery is done at all.
+That reframes the study's question rather than answering it, and it belongs in the discussion.
+
+**3. The before-recovery column independently reproduces [F-27](#f-27).** On the three draws the two
+share, at the same budget and split, a month apart and through a different driver:
+
+| rep | F-27 | this run |
+| --- | --- | --- |
+| 0 | +1.08 | **+1.0794** |
+| 1 | +1.65 | **+1.6518** |
+| 2 | +2.34 | **+2.3371** |
+| mean (n=3) | +1.69 | **+1.6894** |
+
+This is the reproduction check [B-54](#4-bugs-found-that-would-have-invalidated-results) had silently
+destroyed — pre-fix, replicate 0 read +1.4536 against F-27's +1.08 — and it is stronger evidence for
+the fix than any comparison to F-37, because F-27 shares this run's split *and* its draws.
+
+#### What may NOT be claimed
+
+- **Not confirmatory, and it cannot touch [F-37](#f-37).** Post-hoc, validation split, invented after
+  the confirmatory result was known. F-37 remains the study's answer to its primary question.
+- **One scale, one budget.** 160M at 30% + W4 only. Nothing here says whether the reversal holds at
+  410M or 1B, or at W8 where [F-05](#f-05) says the mechanism is inert to begin with.
+- **One recovery configuration.** 50 steps at lr 1e-5. [F-43](#f-43) showed the *magnitude* of the
+  gap moves with step count, though its sign did not over 50–200 steps.
+- **Do not pool with [F-42](#f-42) or [F-43](#f-43).** Different learning rates and step counts, so
+  those draws are not exchangeable with these. This run's p = 0.0078 stands on its own eight draws.
+- **The recovery slice is train-split data.** Retention is measured on validation, disjoint from
+  both, so the improvements are genuine generalisation — but a different recovery corpus could give
+  a different magnitude.
+
+#### The claim this licenses
+
+**At 160M and 4 bits, joint's layerwise advantage does not survive equal end-to-end recovery, and
+reverses: sequential is the better starting point when any recovery is available.** Sign-consistent
+across eight paired draws at p = 0.0078, exploratory.
+
+This closes the last standing defence of joint compression in this study. [F-37](#f-37) found the
+direct advantage too small to matter and not growing with scale; the remaining argument was that
+joint might be a better *initialisation*. On this evidence it is a worse one.
+
+#### Guards and provenance
+
+| Guard | Result |
+| --- | --- |
+| `mask_sparsity` before vs after | **0.2996961805555556**, identical in all 16 cells |
+| `fake_quant_forward_calls` | **9,600** in all 16 — W4 live throughout, and equal across arms |
+| `assert_budgets_match` | passed in all 8 replicates — 50 × 2 × 4 × 512 = 204,800 tokens |
+| Recovery/calibration disjointness | **verified at runtime**, not asserted — the run exits non-zero on any overlap (B-54 fix) |
+| `git_commit` | **0 nulls in 16 records**, against F-43's 1 — the [B-53](#4-bugs-found-that-would-have-invalidated-results) timeout fix holding |
+| Failures | 0 |
+
+Both arms of every replicate ran on one host, under one `method_version`, with CPU evaluation
+throughout, so the absolute retentions are directly comparable to [F-42](#f-42) and [F-43](#f-43).
+
 ### F-43 — A recovery phase that works: F-42's instrument is exonerated, and joint's advantage still does not survive {#f-43}
 
 > ⚠️ **CORRECTED 2026-08-23 — [B-54](#4-bugs-found-that-would-have-invalidated-results).** Both arms
