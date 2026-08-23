@@ -297,6 +297,31 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - a linear expe
             calibration_fingerprint,
         )
 
+        # The CALIBRATION batches, which are what the arms compress against. Built the same way as
+        # ExperimentRunner._attach_calibration so this script's compression matches the rest of the
+        # project's -- see B-54, where it did not.
+        calibration_batches = [
+            batch["input_ids"] if isinstance(batch, dict) else batch[0]
+            for batch in calibration.loader
+        ]
+        recovery_indices = {int(index) for index in chosen}
+        overlap = len(recovery_indices & used)
+        if overlap:
+            LOGGER.error(
+                "Recovery slice overlaps calibration in %d index(es); the disjointness the design "
+                "claims does not hold",
+                overlap,
+            )
+            return 2
+        LOGGER.info(
+            "Calibration: %d sequence(s) in %d batch(es), fingerprint %s -- what the arms COMPRESS "
+            "against, disjoint from the %d recovery sequence(s)",
+            len(calibration),
+            len(calibration_batches),
+            calibration_fingerprint,
+            len(recovery_indices),
+        )
+
         evaluation_loader, evaluation_summary = build_evaluation_dataloader(
             config.data, tokenizer, max_samples=config.evaluation.max_samples
         )
@@ -356,7 +381,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - a linear expe
             # which is exactly what §3.11 requires the two arms to hold identical.
             config.compression.method = method
             arm = arm_class(config)
-            arm.set_calibration(list(recovery_batches), fingerprint=calibration_fingerprint)
+            arm.set_calibration(list(calibration_batches), fingerprint=calibration_fingerprint)
 
             arm_loaded = load_model_and_tokenizer(config.model)
             model = arm_loaded.model

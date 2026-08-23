@@ -955,6 +955,18 @@ produce a phase that improves or holds both arms. Until one exists the durabilit
 > improves both arms (+7.21 and +4.73 pp), so this instrument caveat is resolved. The gap still
 > inverts, in one paired draw.
 
+> ⚠️ **Both recovery findings were corrected 2026-08-23 —
+> [B-54](findings_log.md#4-bugs-found-that-would-have-invalidated-results).** The ablation script
+> compressed its arms against the **recovery slice** instead of the 128-sequence calibration set, so
+> the disjointness both findings claim is **inverted**: the arms were recovered on exactly the data
+> they were calibrated on. Both arms always saw byte-identical data, so **every within-run
+> comparison stands** — the gap, the trajectory and the inversion are unaffected. Withdrawn: F-42's
+> use of its before-recovery gain as evidence that the compression half reproduces F-37. Caught
+> because the R=8 leg's replicate 0 reported a before-recovery gain of +1.4536 pp where F-43's same
+> draw reported +1.4448 — a quantity that must be bit-identical. Fixed, and the script now fails
+> closed if the two slices intersect. **[F-37](findings_log.md#f-37) and
+> [F-41](findings_log.md#f-41) run through `ExperimentRunner` and were never affected.**
+
 ### 🟢 The gentle recovery probe: F-42's instrument is exonerated, and the answer does not change
 
 **2 cells, 1 paired replicate, 0 failures.** Full record: **[F-43](findings_log.md#f-43)**. Post-hoc,
