@@ -3,7 +3,7 @@
 %
 %  Required preamble packages:
 %    \usepackage{booktabs, amsmath, amssymb, algorithm, algpseudocode}
-%    \usepackage{multirow, siunitx}
+%    \usepackage{multirow, siunitx, pgfplots}  \pgfplotsset{compat=1.18}
 %
 %  All numbers below are regenerable:
 %    python scripts/audit_confirmatory_run.py   # gate: must print AUDIT PASSED
@@ -81,6 +81,64 @@ pythia-1b   & 30\% + W4 & 96.35 & 92.33 & 89.65 & 89.79 \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+\subsection{Implementation correctness anchors}
+\label{subsec:anchors}
+
+Because the effect under test is of order $\SI{1}{pp}$, an implementation fault could plausibly
+produce or destroy it. We therefore validated the pipeline against three independent
+references before interpreting any result, targeting the two halves of the method separately.
+
+\paragraph{The mask is bit-identical to an independent implementation.} Our saliency rule is
+the activation-weighted magnitude criterion, so an independent implementation given matched
+inputs must produce the same mask. Compared across all $48$ targeted modules of Pythia-160M
+--- \num{84934656} weights --- the masks agree in \textbf{zero differing positions}, with
+worst per-module overlap $1.000000$ and column norms agreeing to $6.0 \times 10^{-7}$
+relative. The two paths differ precisely where a fault would hide: ours derives
+$\lVert X_{:,j}\rVert_2$ from the streamed Gram as $\sqrt{\operatorname{diag}(X^\top X)}$
+while the reference sums column squares directly and never forms a Gram, so a streaming
+fault cannot cancel; ours computes an exact prune count and scatters, while the reference
+sorts and takes top-$k$ per row.
+
+\paragraph{The solver never falls below the provable optimum.} For a fixed mask the objective
+in \eqref{eq:gram} admits a closed-form per-row minimiser $\hat{w}_S = (H_{SS})^{-1}H_{S,:}w$.
+Solving this exactly in float64 with no damping over $96$ rows (12 modules spanning four
+module types and three depths) yields two hard invariants, both satisfied: \textbf{zero rows
+score below the provable optimum} (required, since it is impossible) and \textbf{zero rows end
+worse than naive masking} (required, since it is what the accept-only-if-better guard of
+\eqref{eq:accept} exists to enforce). Mean improvement over naive masking is $+38.65\%$ of the
+naive objective, at a mean efficiency of $0.6409$ of the achievable gain.
+
+\paragraph{Absolute quality is credible against a published reference.} Internal consistency
+does not establish that the numbers are in a plausible range. Compared against an unmodified
+reference SparseGPT implementation at matched model, revision, calibration draw, module
+coverage and evaluation loader --- the compression algorithm being the only unmatched
+variable --- our pruning-only arm reaches $80.97\%$ retention against the reference's
+$55.99\%$. We flag rather than celebrate this: a $\SI{24.98}{pp}$ advantage over a well-cited
+reference is far more likely to indicate a misconfiguration than a genuine win, and it ran
+opposite to our pre-recorded expectation. The gap is attributable to the mask comparison
+group (per-output-row against tensor-wide) and to the criterion; matched on comparison group,
+our arm sits within roughly $9\%$ relative perplexity of the canonical implementation.
+
+\paragraph{Every implementation fault we found flattered the joint arm.} Six defects were
+identified and corrected during development, and \emph{not one} ran in the other direction.
+The most consequential were an objective mismatch in which each arm reconstructed against its
+own intermediate rather than the dense weight, an unequal solver budget in which the joint arm
+received twice the optimisation, and a baseline defect in which joint gain was measured
+against $P{\to}Q$ alone where the protocol required best-of-both. This is simultaneously
+reassuring and a reason for caution: the final estimate was reached by removing biases that
+all pointed the same way, so it is conservative relative to the development-time figures ---
+but the direction of historical error is itself grounds for scepticism about a sub-$\SI{1}{pp}$
+positive result. The three anchors above bound what remains; bounding is not elimination.
+
+\paragraph{Solver slack is bounded in sign but not in magnitude.} Arm-dependent solver
+slack is real --- efficiency $0.6409$ under the sequential mask against $0.5631$ under the
+joint mask --- but across $96$ exactly-solved rows it \textbf{never inverted which mask was
+better}. The \emph{direction} of a measured joint gain is therefore not a solver artefact, and
+the slack runs \emph{against} joint, understating rather than inflating it. The effect on
+magnitude remains unquantified and cannot be closed by the same method: the exact minimiser
+exists only for the continuous least-squares problem, and the discrete grid makes the
+quantised version an integer program with no closed form.
 
 \subsection{The confirmatory result: no cell is practically important}
 \label{subsec:headline}
@@ -196,9 +254,57 @@ not a fourth scale point}, and must not be interpolated into the Pythia trend.}
 \end{tabular}
 \end{table}
 
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}
+\begin{semilogxaxis}[
+    width=0.72\textwidth, height=6cm,
+    xlabel={Targeted (non-embedding) parameters},
+    ylabel={Joint gain (pp)},
+    xmin=6e7, xmax=1.1e9,
+    ymin=-0.5, ymax=1.6,
+    xtick={8.49e7, 3.02e8, 8.05e8},
+    xticklabels={160M, 410M, 1B},
+    grid=major, grid style={gray!25},
+    legend style={at={(0.98,0.98)}, anchor=north east, font=\small, draw=gray!50},
+    tick label style={font=\small}, label style={font=\small},
+]
+\addplot[dashed, gray, thick, forget plot] coordinates {(6e7,1.0) (1.1e9,1.0)};
+\node[gray, font=\scriptsize, anchor=south east] at (axis cs:1.05e9,1.02) {practical bar (1.0 pp)};
+\addplot[black, thick, mark=*, error bars/.cd, y dir=both, y explicit]
+  coordinates {
+    (8.49e7, 1.0120) +- (0, 0.2762)
+    (3.02e8, 0.9348) +- (0, 0.2204)
+    (8.05e8, 0.1316) +- (0, 0.0831)
+  };
+\addlegendentry{30\% + W4}
+\addplot[black, thick, dashed, mark=square*, mark options={fill=white},
+         error bars/.cd, y dir=both, y explicit]
+  coordinates {
+    (8.49e7, 0.0381) +- (0, 0.0299)
+    (3.02e8, 0.0289) +- (0, 0.0184)
+    (8.05e8, -0.1794) +- (0, 0.0325)
+  };
+\addlegendentry{30\% + W8 (control)}
+\addplot[black, only marks, mark=triangle*, mark size=3pt, forget plot]
+  coordinates {(3.58e8, 0.4213)};
+\node[font=\scriptsize, anchor=north west] at (axis cs:3.7e8, 0.40) {Qwen 0.5B};
+\addplot[black, thin, forget plot] coordinates {(6e7,0) (1.1e9,0)};
+\end{semilogxaxis}
+\end{tikzpicture}
+\caption{Joint gain against targeted parameter count. Error bars are standard errors over
+paired calibration replicates ($R{=}8$ at 160M and 410M, $R{=}5$ at 1B). The W4 gain is
+positive at all three scales but does not increase with scale and never clears the
+pre-registered $\SI{1.0}{pp}$ bar under both criteria; the W8 control sits at or below zero.
+\textbf{Qwen2.5-0.5B (triangle) is plotted for reference only and is excluded from any
+fit} --- it is a different model family, not a fourth scale point, and its horizontal
+placement should not be read as interpolating the Pythia trend.}
+\label{fig:trend}
+\end{figure}
+
 The motivating hypothesis --- that joint optimisation pays off \emph{more} at scale --- is
-\textbf{not supported}. The observed direction is the opposite, at both budgets. Three
-considerations prevent us from stating this as a refutation:
+\textbf{not supported} (Figure~\ref{fig:trend}). The observed direction is the opposite, at
+both budgets. Three considerations prevent us from stating this as a refutation:
 
 \begin{enumerate}
   \item \textbf{The shape is not a monotone decline.} The 160M and 410M cells lie within
@@ -217,6 +323,27 @@ considerations prevent us from stating this as a refutation:
 
 The defensible claim is therefore: \emph{the joint advantage did not increase with scale, the
 observed direction was opposite, and at no scale does it reach practical importance.}
+
+\subsection{A fixed recipe does not imply matched effective severity}
+\label{subsec:severity}
+
+Before attributing the trend to scale, one confound must be made explicit, because it is a
+genuine alternative explanation rather than a caveat. Both budgets prune $30\%$ at every
+scale, which holds the \emph{recipe} constant. It does not hold the \emph{damage} constant.
+Retention at the aggressive budget runs $55.81\%$ / $57.56\%$ / $89.65\%$ across
+160M / 410M / 1B (Table~\ref{tab:retention}): the same recipe is far milder at 1B.
+
+This matters directly for interpretation. A sequential baseline that already retains $89.65\%$
+leaves little quality for a better layer solution to recover, so the same local mechanism buys
+less end-to-end even if it is working exactly as well. ``Joint helps less at scale'' and
+``joint helps less when there is less to recover'' are not distinguished by this design.
+Nominal severity was matched across scales; \emph{effective} severity was not, and larger
+models tolerating compression better is a robustness that benefited the sequential baseline
+too.
+
+We therefore do not claim that the three Pythia scales experienced equal effective severity,
+and we treat headroom as a live competing explanation for the trend alongside the depth
+confound of \S\ref{subsec:trend}.
 
 \subsection{Mechanism: the local effect does not weaken, its translation does}
 \label{subsec:mechanism}
@@ -418,13 +545,17 @@ to adopt a joint pipeline should therefore be conditioned on precision first, no
 
 \paragraph{Interpreting the dissociation.} The most scientifically interesting result is one
 we cannot fully explain: the joint mechanism is undiminished at 1B by every local measure we
-have, while its end-to-end benefit collapses. If the headroom explanation is correct, joint
-gain should track compression severity rather than scale, and would reappear at 1B under a
-budget aggressive enough to degrade it comparably to 160M. If the depth explanation is
-correct, gain should track block count, and a deeper model at the same parameter count would
-show more. These make different predictions and could be separated by a depth-controlled
-experiment; we did not run one, and we flag the confound rather than adjudicating it from
-data that cannot.
+have, while its end-to-end benefit collapses. Two explanations remain live, and they are
+distinguishable in principle. If \emph{headroom} is the cause (\S\ref{subsec:severity}), joint
+gain should track effective compression severity rather than parameter count, and would
+reappear at 1B under a budget aggressive enough to degrade it comparably to 160M --- a
+prediction directly testable by re-running 1B at a severity matched on \emph{retention}
+rather than on nominal sparsity and bit width. If \emph{depth} is the cause, gain should track
+block count, and a deeper model at equal parameter count would show more. We did not run
+either experiment. We flag both rather than adjudicating between them from data that cannot,
+and we note that the conventional framing of this question --- ``does joint help more at
+scale?'' --- may be under-specified: holding a recipe fixed across scales does not hold the
+thing the mechanism actually acts on fixed.
 
 \paragraph{The gap between nominal and realised compression benefit.} Our latency results
 reinforce a point the field has made before and continues to under-weight. Reporting a
@@ -457,6 +588,16 @@ We state these plainly, and several have already appeared in context above.
         pythia-410m's 24, so depth is non-monotone ($12 \to 24 \to 16$) across the suite.
         Because the method is layerwise, this is a live alternative explanation for the only
         large movement in the trend.
+  \item \textbf{A fixed recipe is not matched effective severity.} Retention at the aggressive
+        budget runs $55.8\%$ / $57.6\%$ / $89.7\%$ across the three scales
+        (\S\ref{subsec:severity}). ``Joint helps less at scale'' and ``joint helps less when
+        there is less to recover'' are not separated by this design.
+  \item \textbf{Every implementation fault found in this project flattered the joint arm}
+        (\S\ref{subsec:anchors}). The final estimate is conservative relative to
+        development-time figures, but the consistent direction of historical error is grounds
+        for caution about a sub-$\SI{1}{pp}$ positive result.
+  \item \textbf{Solver slack is bounded in sign but not magnitude}, and the anchor
+        establishing that bound ran at 160M only; it was not repeated at 410M or 1B.
   \item \textbf{One sequential implementation against one joint implementation.} This is not
         a claim about pruning or quantisation in general, nor about joint compression as a
         family. A different joint formulation could behave differently at any scale.
@@ -480,6 +621,12 @@ We state these plainly, and several have already appeared in context above.
         sparsity--speedup relationship remains unanswered.
   \item \textbf{No joint-versus-sequential latency comparison exists in this study}, for the
         structural reason given in \S\ref{subsec:latency}.
+  \item \textbf{Structured ($N{:}M$) sparsity was never run.} The mask primitives support
+        $2{:}4$ and $4{:}8$ patterns, but no structured variant was executed, so the one
+        pattern with a realistic prospect of kernel-level speedup is untested here. Selecting
+        it \emph{after} observing the unstructured null would require declaring it as such.
+  \item \textbf{The 1.4B extension was registered but not run}, and is not evidence in this
+        study. The scale axis ends at 1B.
   \item \textbf{Qwen2.5-0.5B is external-validity evidence for a structural pattern, not a
         fourth scale point} and not additional evidence for an effect size.
   \item \textbf{The recovery ablation is post-hoc and exploratory}, at one scale, one budget
