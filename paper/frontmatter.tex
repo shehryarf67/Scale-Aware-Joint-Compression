@@ -1,0 +1,166 @@
+% =====================================================================
+%  Scale-Aware Joint Compression -- Abstract, Introduction, Related Work
+%
+%  Required preamble packages:
+%    \usepackage{booktabs, amsmath, amssymb, algorithm, algpseudocode}
+%    \usepackage{multirow, siunitx}
+%
+%  Section order in the assembled manuscript:
+%    frontmatter.tex  (abstract, S1 introduction, S2 related work)
+%    methodology.tex  (S3 methodology)
+%    results.tex      (S4 results, S5 discussion, S6 limitations, S7 conclusion)
+% =====================================================================
+
+\begin{abstract}
+Pruning and quantisation are conventionally applied in sequence: prune, recover, then
+quantise. Joint formulations, in which the pruning decision is made with knowledge of the
+quantisation grid, are reported to improve on this --- but almost always at a single model
+size, leaving unanswered the question a practitioner actually faces: at \emph{my} model
+scale, is the additional pipeline complexity justified? We report a pre-registered,
+confirmatory measurement of \emph{joint gain} --- the difference in perplexity retention
+between joint and sequential pipelines at a matched compression budget --- across the Pythia
+suite from 160M to 1B targeted parameters, at two precisions, over eight paired calibration
+replicates, with optimisation budgets matched by construction and asserted in code. On a
+held-out test split accessed once, \textbf{no cell meets our pre-registered
+practical-importance criterion} of $\geq\!\SI{1.0}{pp}$ mean gain with a consistent sign.
+The largest effects are $+\SI{1.01}{pp}$ at 160M ($7/8$ replicates positive) and
+$+\SI{0.93}{pp}$ at 410M ($8/8$, Holm-adjusted $p = 0.047$), each failing a different
+criterion by a narrow margin; at 1B the gain falls to $+\SI{0.13}{pp}$. The motivating
+hypothesis --- that joint optimisation pays off more at scale --- is not supported. Layerwise
+diagnostics reveal why the aggregate picture is not simply a weakening mechanism: mask
+divergence and local layer-objective advantage are \emph{undiminished} at 1B, yet the
+end-to-end gain collapses, a dissociation we characterise but do not close. We further find
+that the precision-specific structure of the effect replicates in a second model family
+(Qwen2.5-0.5B), that $30\%$ unstructured sparsity yields no commensurate CPU speedup, and
+that a short recovery phase applied equally to both arms \emph{reverses} the ordering in
+$8/8$ replicates. We release code, configurations and all run records.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+
+Language models in the $10^{8}$--$10^{9}$ parameter range are increasingly deployed on
+commodity CPUs, where compression is not an optimisation but a precondition for running the
+model at all. The two dominant techniques --- unstructured pruning and post-training weight
+quantisation --- are complementary, and in practice are applied \emph{sequentially}: the
+model is pruned, its quality partially recovered, and the result quantised. This ordering is
+an engineering convention rather than a derived optimum, and it has a clear structural
+deficiency. When the mask is chosen first, it is chosen in ignorance of the quantisation
+grid: a weight retained for its magnitude may be rounded to a grid point that renders it
+nearly useless, while a weight discarded as small may have survived quantisation intact.
+
+\emph{Joint} formulations address this by making the mask decision under quantised weights
+and re-estimating the quantisation scales after the mask moves, so that the two constraints
+inform one another within a single reconstruction objective. Such methods are more expensive
+to implement, more fragile to tune, and --- critically for a practitioner deciding whether to
+adopt one --- are almost universally evaluated at a single model size.
+
+This leaves a gap that matters. Compression sensitivity is known to vary with scale: larger
+models carry more redundancy, and the same recipe that devastates a 160M model may barely
+perturb a 1B one. If joint optimisation confers a growing advantage as models scale, the
+engineering investment is easy to justify; if the advantage shrinks, the sequential pipeline
+is the rational default precisely where compression matters most. Neither claim has been
+tested under controlled conditions.
+
+A second gap runs alongside it. Compression papers report theoretical parameter reduction and
+bit-width savings far more often than measured latency on the hardware the model will
+actually run on. A $30\%$ sparse, 4-bit model implies a large nominal compression ratio; what
+it delivers on a dense CPU GEMM kernel is a separate empirical question, and one that a FLOP
+count cannot answer.
+
+\paragraph{Contributions.}
+\begin{enumerate}
+  \item \textbf{A controlled measurement of joint gain across an order of magnitude of
+        model scale} (160M $\rightarrow$ 410M $\rightarrow$ 1B targeted parameters), with
+        dataset, tokeniser, calibration draw, module coverage and optimisation budget held
+        fixed by construction rather than by convention.
+  \item \textbf{Fairness enforced in code.} Both arms are call-orderings over one shared
+        layerwise solver; equality of solver budget is asserted from the configuration
+        before a sweep begins and from the persisted records afterwards. We report the
+        specific failure modes these assertions were introduced to catch.
+  \item \textbf{A pre-registered confirmatory design.} Budgets, sequential orderings and all
+        exploratory estimates live on a validation split; the test split was accessed once,
+        under a frozen configuration, with a practical-importance threshold fixed in advance.
+        We report that \emph{no cell meets it}, including two near-misses that we decline to
+        accommodate by moving the bar.
+  \item \textbf{A mechanistic dissociation.} Layerwise diagnostics show the joint mechanism
+        is \emph{not} weaker at 1B --- mask divergence and local objective advantage are at
+        or above their 160M values --- while end-to-end gain collapses by roughly $8\times$.
+        We identify two candidate explanations, including a depth confound intrinsic to the
+        Pythia suite, and test neither, stating the dissociation as open.
+  \item \textbf{Measured rather than inferred deployment claims}, on CPU, with prefill and
+        decode separated, and an explicit account of which arms cannot be timed at all and
+        why.
+  \item \textbf{Three replication checks that a positive result would not have survived:} an
+        external-validity leg in a second model family, a matched-quality mechanistic
+        control, and a post-hoc recovery ablation that reverses the ordering.
+\end{enumerate}
+
+\paragraph{Summary of findings.} On the confirmatory split, joint compression yields a small
+positive gain over the frozen sequential baseline at 4-bit precision --- $+\SI{1.01}{pp}$ at
+160M and $+\SI{0.93}{pp}$ at 410M --- and effectively nothing at 1B ($+\SI{0.13}{pp}$). At
+8-bit precision, where the mechanism is predicted to be inert, gain is indistinguishable from
+zero at the two smaller scales and reliably \emph{negative} at 1B. No cell satisfies the
+pre-registered practical-importance criterion. The observed direction across scale is
+opposite to the motivating hypothesis, but the cross-scale decline is not itself
+statistically established, and is confounded with a non-monotone depth profile in the model
+suite. We therefore report a negative result on practical importance, a robust
+precision-specific structural finding that replicates across model families, and an open
+mechanistic question.
+
+\section{Background and related work}
+\label{sec:related}
+
+\paragraph{Unstructured pruning and post-training reconstruction.} Magnitude pruning removes
+weights of smallest absolute value and remains a strong baseline. Activation-aware criteria
+improve on it by weighting magnitude with the energy of the corresponding input channel,
+recognising that a large weight multiplying a near-zero activation contributes little. A
+parallel line of work reconstructs the surviving weights to preserve layer \emph{outputs}
+rather than weight values, solving a least-squares problem in the input Gram matrix
+$H = X^{\top}X$; this error-compensation step accounts for most of the benefit over naive
+masking, and second-order variants extend it with Hessian-informed column sweeps. Our
+solver sits in this family. We deliberately adopt a first-order saliency criterion and a
+damped alternating refinement solver rather than a state-of-the-art pruning criterion: a
+stronger base method would raise \emph{both} arms, and the quantity of interest here is the
+difference between pipelines, not their absolute quality.
+
+\paragraph{Post-training quantisation.} Weight-only post-training quantisation maps weights
+to a low-precision grid using scales estimated from calibration statistics, with symmetric
+per-channel or per-group schemes trading calibration cost against fidelity. Below 8 bits,
+reconstruction against calibration activations becomes necessary rather than optional.
+Quantisation-aware training, which propagates gradients through a straight-through estimator,
+generally recovers more quality but requires a full training loop --- a memory-compute
+bottleneck that rules it out at $10^{9}$ parameters on a single commodity accelerator, and
+the reason this study adopts layerwise post-training reconstruction instead.
+
+\paragraph{Combining pruning and quantisation.} The sequential composition of the two is
+standard practice. Joint formulations --- variously described as pruning-aware quantisation,
+sparse-quantised optimisation, or unified compression --- report advantages from letting the
+mask decision see the grid. Our reading of this literature is that the reported gains are
+credible but narrowly scoped: they are typically demonstrated at one model size, often
+without matched optimisation budgets between the compared pipelines, and rarely with
+replicate-level variance. The last point is not a minor omission. As we show in
+\S\ref{sec:results}, replicate-to-replicate spread at 4-bit precision is comparable to the
+effect itself, so a single-draw comparison cannot distinguish a genuine advantage from a
+favourable calibration draw.
+
+\paragraph{Scale as an experimental variable.} The Pythia suite is designed for controlled
+scale studies: models across the size range share data ordering, tokeniser and training
+recipe, so scale can be varied while holding the training pipeline fixed. This makes it the
+natural substrate for our question. It is not, however, a perfectly isolated scale axis ---
+depth, width, head configuration and tokens-per-parameter all covary along the suite, and we
+document in \S\ref{subsec:limits} a specific consequence: \emph{pythia-1b is shallower than
+pythia-410m}, which confounds the one large movement in our trend.
+
+\paragraph{Sparsity and realised speedup.} A recurring gap in the compression literature is
+between nominal and realised benefit. Unstructured sparsity does not accelerate a dense GEMM
+kernel: the multiply-accumulates still execute, they merely multiply by zero. Realising a
+speedup requires either a sparse kernel or a structured pattern ($N{:}M$) the hardware can
+exploit, and CPU support for semi-structured sparsity is considerably less mature than its
+GPU counterpart. We therefore treat ``does sparsity become speed?'' as an empirical question
+to be measured on the deployment target, and report the answer we obtained rather than the
+one the compression ratio implies.
+
+\paragraph{Positioning.} We introduce no new compression method. Our contribution is a
+measurement, under controls the existing literature does not consistently apply, of a design
+choice that is widely made and rarely tested across scale.

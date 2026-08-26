@@ -1,0 +1,514 @@
+% =====================================================================
+%  Scale-Aware Joint Compression -- Methodology
+%  Drop-in section for a NeurIPS/ICML/ACL-style manuscript.
+%
+%  Required preamble packages:
+%    \usepackage{booktabs, amsmath, amssymb, algorithm, algpseudocode}
+%    \usepackage{multirow, siunitx}
+%
+%  Every quantity below is traceable to the repository:
+%    method   : docs/method_definition.md, src/.../compression/{arms,layerwise,reconstruct}.py
+%    protocol : docs/protocol_freeze.md, docs/protocol_amendment_a1.md
+%    evidence : docs/findings_log.md (F-05, F-37, F-38, F-39--F-41, F-44)
+% =====================================================================
+
+\section{Methodology}
+\label{sec:method}
+
+\subsection{Study design and scope}
+\label{subsec:scope}
+
+We measure a single design choice under controlled conditions: whether interleaving
+pruning and quantisation within one optimisation objective (\emph{joint}) outperforms
+applying them in sequence (\emph{sequential}), and whether any such advantage varies with
+model scale. We introduce no new compression primitive. Both the pruning criterion and the
+quantiser are deliberately standard, so that the measured quantity isolates the
+\emph{pipeline ordering} rather than the strength of an underlying heuristic; a bespoke
+criterion would confound ``joint helps'' with ``our criterion helps''.
+
+The comparison is therefore between one specific sequential implementation and one specific
+joint implementation, and results should be read as evidence about these pipelines rather
+than about joint compression as a family. Concretely, we evaluate five arms:
+
+\begin{itemize}
+  \item \textbf{Dense} (FP32): the reference against which all retention is measured.
+  \item \textbf{Pruning-only}: mask, then reconstruct. Weights remain FP32, which makes this
+        the only arm eligible for native CPU latency measurement (\S\ref{subsec:deployment}).
+  \item \textbf{Quantisation-only}: no mask; reconstruct under the quantisation grid.
+  \item \textbf{Sequential} ($P\!\rightarrow\!Q$ and $Q\!\rightarrow\!P$): the two orderings.
+  \item \textbf{Joint}: alternating layerwise co-optimisation of mask and quantiser.
+\end{itemize}
+
+\paragraph{Method family.} The unit of optimisation is \emph{local reconstruction steps per
+layer}, not global optimiser steps: we perform layerwise post-training reconstruction rather
+than quantisation-aware fine-tuning. This choice is a memory-compute constraint made
+explicit --- full-model fine-tuning of a $10^9$-parameter model does not fit within the
+\SI{6}{\giga\byte} device budget available to this study, whereas layerwise reconstruction
+requires only a single $(d_{\mathrm{in}}\!\times\!d_{\mathrm{in}})$ Gram buffer per layer
+(\S\ref{subsec:objective}). A short full-model recovery phase is examined separately as a
+post-hoc ablation (\S\ref{subsec:recovery}) and is not part of the primary comparison.
+
+\subsection{The layerwise reconstruction objective}
+\label{subsec:objective}
+
+Let $W \in \mathbb{R}^{d_{\mathrm{out}} \times d_{\mathrm{in}}}$ denote the weight of a
+targeted linear layer and $X \in \mathbb{R}^{n \times d_{\mathrm{in}}}$ the calibration
+activations observed at its input. Let $M \in \{0,1\}^{d_{\mathrm{out}} \times d_{\mathrm{in}}}$
+be a binary keep-mask and $Q_b(\cdot)$ a symmetric uniform quantiser at bit width $b$. Since
+\texttt{nn.Linear} computes $Y = XW^{\top}$, the layerwise reconstruction objective is
+
+\begin{align}
+  \mathcal{L}_{\mathrm{rec}}(M, Q_b)
+    &= \bigl\| XW^{\top} - X\,(M \odot Q_b(W))^{\top} \bigr\|_F^{2}
+    \label{eq:objective} \\[2pt]
+  \text{subject to}\quad
+    &\operatorname{sparsity}(M) = s, \qquad \text{bit width}(Q_b) = b .
+    \nonumber
+\end{align}
+
+Expanding \eqref{eq:objective} over output channels yields a sum of quadratic forms in the
+Gram matrix $H = X^{\top}X$:
+
+\begin{align}
+  \mathcal{L}_{\mathrm{rec}}
+    = \sum_{o=1}^{d_{\mathrm{out}}}
+      (w_o - \hat{w}_o)^{\top} H \, (w_o - \hat{w}_o),
+  \qquad
+  \hat{w}_o = m_o \odot Q_b(w_o),
+  \label{eq:gram}
+\end{align}
+
+where $w_o$ and $m_o$ denote the $o$-th rows of $W$ and $M$. Two properties of
+\eqref{eq:gram} are load-bearing for this study. First, the objective depends on the
+calibration data \emph{only} through $H$, so memory cost is fixed at one
+$(d_{\mathrm{in}}\!\times\!d_{\mathrm{in}})$ buffer per layer irrespective of calibration
+set size. Second, the right-hand side of the induced normal equations is formed over the
+\emph{full} dense row, including entries about to be zeroed; surviving weights therefore
+absorb the contribution of pruned weights rather than the layer simply losing it. This error
+compensation accounts for most of the benefit of reconstruction over naive masking.
+
+Layers are processed one at a time in depth order, with calibration activations propagated
+through the \emph{already-compressed} prefix, so that accumulated error is realistic rather
+than optimistic.
+
+\paragraph{Solver.} We use a damped alternating refinement solver. Given a fixed mask, the
+solver alternates between a continuous correction against the current residual and a
+projection back onto the quantisation grid, retaining a candidate only when the objective
+strictly improves:
+
+\begin{align}
+  \hat{W}^{(t+1)} =
+  \begin{cases}
+    \Pi_{M, Q_b}\!\bigl(\hat{W}^{(t)} + \Delta^{(t)}\bigr)
+      & \text{if } \mathcal{L}_{\mathrm{rec}}\bigl(\Pi_{M, Q_b}(\hat{W}^{(t)} + \Delta^{(t)})\bigr)
+        < \mathcal{L}_{\mathrm{rec}}\bigl(\hat{W}^{(t)}\bigr), \\[4pt]
+    \hat{W}^{(t)} & \text{otherwise,}
+  \end{cases}
+  \label{eq:accept}
+\end{align}
+
+where $\Pi_{M,Q_b}(\cdot) = M \odot Q_b(\cdot)$ and $\Delta^{(t)}$ solves the ridge-damped
+system $(H + \lambda \bar{h} I)\Delta = H(W - \hat{W}^{(t)})$ with $\bar{h}$ the mean Gram
+diagonal and $\lambda = 10^{-2}$. Iterate zero is the naive baseline (mask and
+round-to-nearest). The accept-only-if-better rule in \eqref{eq:accept} is necessary rather
+than cosmetic: projection onto a discrete grid is not guaranteed to reduce a quadratic
+objective, so an unguarded loop can terminate worse than it began.
+
+\subsection{Targeted modules}
+\label{subsec:modules}
+
+All arms compress an identical module set, resolved through a single code path. An arm that
+compressed more layers than another would exhibit a ``gain'' that is in fact a coverage
+difference. We target linear layers inside decoder blocks only:
+
+\begin{itemize}\setlength{\itemsep}{2pt}
+  \item \textbf{GPT-NeoX / Pythia}: \texttt{attention.query\_key\_value} (fused QKV) and
+        \texttt{attention.dense}; \texttt{mlp.dense\_h\_to\_4h} and
+        \texttt{mlp.dense\_4h\_to\_h}.
+  \item \textbf{Qwen2}: \texttt{self\_attn.\{q,k,v,o\}\_proj};
+        \texttt{mlp.\{gate,up,down\}\_proj}.
+\end{itemize}
+
+Input embeddings, positional embeddings, the output head, LayerNorm parameters and all
+biases are excluded. The exclusion of embeddings is required for the scale question to be
+well posed: embedding parameters constitute a large fraction of a 160M model and a much
+smaller fraction of a 1B model, so including them would make the \emph{effective}
+compression budget vary with scale, rendering a scale trend in joint gain inseparable from a
+scale trend in how much of the model was compressed. Consequently, reported compression
+ratios are ratios over compressible parameters, and the scale axis is \textbf{targeted
+non-embedding parameter count}. For Qwen2.5 the exclusion is additionally forced by tied
+embeddings: compressing \texttt{lm\_head} would compress the input embedding as a side
+effect.
+
+\subsection{Pruning and quantisation primitives}
+\label{subsec:primitives}
+
+\paragraph{Saliency.} We score weights by activation-weighted magnitude,
+
+\begin{align}
+  S_{ij} = \lvert W_{ij} \rvert \cdot \lVert X_{:,j} \rVert_2 ,
+  \label{eq:saliency}
+\end{align}
+
+so that a weight is deemed unimportant only if it is both small \emph{and} multiplies a
+low-energy input. The column norms in \eqref{eq:saliency} are already accumulated for the
+reconstruction solver, so the criterion is obtained at no additional cost. Pruning is
+unstructured at a fixed global sparsity $s$, held constant across model sizes. Masks are
+realised exactly and verified on the converted, reloaded artefact rather than in memory.
+
+\paragraph{Quantisation.} We use weight-only symmetric quantisation, per-channel by default
+with per-group granularity (group size $128$) for sub-8-bit schemes, at $b \in \{8, 4\}$.
+Activations remain in floating point. The scheme, granularity, group size and excluded
+modules are identical across all arms by construction: every arm includes the same
+configuration fragment rather than restating it.
+
+We distinguish \emph{fake} quantisation (FP32 storage, values snapped to the grid), which
+the solver operates on, from \emph{real} quantisation (packed low-bit storage plus scales).
+Only the converted artefact is measured for size or latency; a model that was fake-quantised
+but never converted yields correct-looking quality alongside a meaningless size. Run records
+carry \texttt{is\_converted} and \texttt{storage\_efficiency} so that this failure mode is
+detectable after the fact.
+
+\subsection{Arm definitions}
+\label{subsec:arms}
+
+The five arms are thin declarations over one shared driver; the only quantity an arm may
+vary is the order in which it calls the solver. This is what makes ``what qualifies as
+joint'' checkable in code rather than by inspection. Writing $\textsc{Solve}(M, b)$ for one
+call of the solver of \S\ref{subsec:objective} against the \emph{dense} weight under mask
+$M$ at bit width $b$, and $\textsc{Mask}(\cdot)$ for the top-$(1{-}s)$ selection under
+\eqref{eq:saliency}:
+
+\begin{align}
+  \textbf{Pruning:}\quad
+    & M \leftarrow \textsc{Mask}(W), \quad
+      \hat{W} \leftarrow \textsc{Solve}(M, \varnothing)
+    \nonumber \\[2pt]
+  \textbf{Quantisation:}\quad
+    & M \leftarrow \mathbf{1}, \quad
+      \hat{W} \leftarrow \textsc{Solve}(M, b)
+    \nonumber \\[2pt]
+  \textbf{Sequential } P\!\rightarrow\!Q:\quad
+    & M \leftarrow \textsc{Mask}(W), \quad
+      \tilde{W} \leftarrow \textsc{Solve}(M, \varnothing),
+    \nonumber \\
+    & \hat{W} \leftarrow \textsc{Solve}(M, b \mid \Sigma \text{ fitted on } \tilde{W})
+    \nonumber \\[2pt]
+  \textbf{Sequential } Q\!\rightarrow\!P:\quad
+    & \tilde{W} \leftarrow \textsc{Solve}(\mathbf{1}, b), \quad
+      M \leftarrow \textsc{Mask}_{Q}(\tilde{W}),
+    \nonumber \\
+    & \hat{W} \leftarrow \textsc{Solve}(M, b \mid \Sigma \text{ reused exactly})
+    \nonumber
+\end{align}
+
+A critical implementation detail: \emph{every} arm reconstructs against the dense weight, so
+the objective in \eqref{eq:objective} is identical across arms. An earlier revision passed
+each arm's intermediate weight as the reconstruction target, causing $P\!\rightarrow\!Q$ to
+minimise distance to its pruned approximation and $Q\!\rightarrow\!P$ to minimise distance
+to its quantised one, while the joint arm minimised distance to dense. The arms were then
+optimising three different objectives, and the asymmetry inflated joint gain --- precisely
+the failure that matched-condition fairness exists to prevent. What an arm \emph{may} vary
+is the provenance of the quantisation grid, which is a genuine pipeline property:
+$P\!\rightarrow\!Q$ fits the grid on the post-pruning distribution; $Q\!\rightarrow\!P$
+fits once on the dense tensor and reuses it \emph{exactly}, since refitting after the mask
+moves would convert it into a second joint arm.
+
+\subsection{The joint arm}
+\label{subsec:joint}
+
+The joint arm performs alternating layerwise co-optimisation of the mask and the quantiser
+(Algorithm~\ref{alg:joint}). Two conditions define membership in the joint family, and both
+are asserted by regression tests that fail if the arm degenerates into ``prune fully, then
+apply ordinary PTQ'': (i) mask decisions are evaluated under fake-quantised weights, and
+(ii) quantisation scales are re-estimated after the mask changes.
+
+\begin{algorithm}[t]
+\caption{Alternating layerwise co-optimisation (joint arm), per layer}
+\label{alg:joint}
+\begin{algorithmic}[1]
+  \Require dense weight $W$, Gram $H = X^\top X$, sparsity $s$, bit width $b$, iterations $K$
+  \State $M^{(0)} \gets \textsc{Mask}(W)$
+      \Comment{first mask has no quantiser to see}
+  \State $\mathcal{I} \gets \textsc{Solve}(M^{(0)}, b)$
+      \Comment{incumbent: weight, codes, scales, loss}
+  \State $M^{\star} \gets M^{(0)}$
+  \For{$k = 1$ \textbf{to} $K-1$}
+    \State $\Sigma \gets \textsc{FitScales}(\mathcal{I}.w, M^{\star})$
+        \Comment{re-estimation requirement}
+    \State $M^{(k)} \gets \textsc{Mask}_{Q}\!\bigl(\textsc{FakeQuant}(\mathcal{I}.w, \Sigma)\bigr)$
+        \Comment{mask scored under quantised weights}
+    \State $\mathcal{P} \gets \textsc{Solve}\bigl(M^{(k)}, b \mid \text{grid fitted on } \mathcal{I}.w\bigr)$
+    \If{$\mathcal{P}.\ell < \mathcal{I}.\ell$}
+        \Comment{incumbent guard}
+      \State $\mathcal{I} \gets \mathcal{P}$; \quad $M^{\star} \gets M^{(k)}$
+    \EndIf
+    \State record $\bigl(k,\; \mathcal{I}.\ell,\; \mathcal{P}.\ell,\; \text{accepted},\;
+           \lVert M^{(k)} \neq M^{\star} \rVert_1 / \lvert M \rvert\bigr)$
+  \EndFor
+  \State \Return $(M^{\star}, \mathcal{I})$
+\end{algorithmic}
+\end{algorithm}
+
+\paragraph{The incumbent guard.} The solver's own accept-only-if-better rule
+\eqref{eq:accept} protects a \emph{fixed} mask; nothing protects the outer loop across mask
+\emph{changes}. Without the guard on line~8, an iteration selecting a worse mask replaces a
+better feasible solution the search had already found. This is empirically measurable: at
+$30\%$ sparsity with $b{=}4$ on Pythia-160M, four alternations scored worse than two
+($73.17$ against $71.87$ perplexity), the signature of a wandering rather than converging
+search. The guard does not tilt the comparison toward joint --- it prevents an alternating
+procedure from discarding a solution it had already reached, and leaves the step count
+unchanged.
+
+\paragraph{Mask scoring under quantisation.} The joint mask is scored on quantised weights,
+$S_{ij} = \lvert Q_b(W_{ij}) \rvert \cdot \lVert X_{:,j} \rVert_2$, optionally replaced by a
+keep-versus-prune benefit criterion. A mask ranked on untouched FP32 weights is chosen in
+ignorance of the grid, which is exactly the degenerate case the definition excludes. The
+consequence of this design is that the joint mechanism is \emph{precision-dependent by
+construction}, a prediction we state before presenting results: at $b{=}8$ quantisation error
+is small enough that the saliency ranking survives largely intact, so joint and sequential
+masks nearly coincide and the arms should be near-indistinguishable. The $b{=}8$ budget is
+therefore a \emph{control}, not a second treatment.
+
+\subsection{Fairness constraints}
+\label{subsec:fairness}
+
+The dominant threat to validity in a comparison of this form is that the joint arm receives
+more optimisation than the sequential arm and the resulting quality difference is attributed
+to the method. We enforce matching in code, and assert it both before and after each run.
+
+\begin{table}[t]
+\centering
+\caption{Matched conditions and their enforcement mechanism. Assertions run from the
+configuration before a sweep begins (hours of compute are at stake) and again from the
+persisted records afterwards.}
+\label{tab:fairness}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Quantity} & \textbf{Requirement} & \textbf{Enforcement} \\
+\midrule
+Target sparsity        & identical            & shared config fragment; asserted \\
+Bit width, granularity & identical            & shared config fragment; asserted \\
+Targeted modules       & identical            & single \texttt{select\_compressible\_modules} path \\
+Layer processing order & identical            & shared layerwise driver, depth order \\
+Calibration tensors    & byte-identical       & indices from fixed \texttt{calibration\_seed} \\
+Solver passes / layer  & equal across arms    & \texttt{assert\_arms\_can\_be\_matched} (pre-run) \\
+Total local steps      & equal across model   & \texttt{assert\_matched\_plans} (post-run) \\
+Artefact format        & identical            & single conversion path; \texttt{storage\_efficiency} \\
+Evaluation window      & identical            & dataset fingerprint compared per record \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Two mechanisms deserve emphasis. First, the sequential $P\!\rightarrow\!Q$ pipeline performs
+a \emph{second} reconstruction pass specifically so that its solver-call total equals the
+joint arm's $K$ alternations; without it, the joint arm would receive strictly more
+optimisation. With the sweep solver each call is one deterministic pass, so \emph{passes},
+not nominal step counts, are the fairness unit, and we set $K = 2$ to match. We note that an
+earlier screening grid ran with $K = 4$ against sequential's two passes --- i.e.\ the joint
+arm on twice the optimisation budget --- which motivated promoting this check from a
+documented convention to an executable pre-run assertion.
+
+Second, calibration indices derive from a dedicated \texttt{calibration\_seed} rather than
+the run seed, so that varying the replicate index changes the calibration draw (and hence
+$H$, the mask, and the solution) without perturbing anything else, and both arms of a pair
+share that draw exactly.
+
+\paragraph{Acknowledged limitation.} Equal steps is not equal difficulty. The joint arm
+solves a harder problem within the same budget, so a matched comparison may understate what
+joint could achieve under a budget tuned for it, just as an unmatched comparison overstates
+it. The matched comparison is the defensible one, and we report this asymmetry rather than
+resolving it.
+
+\subsection{Block-wise GPU offloading and dependency-group capture}
+\label{subsec:offload}
+
+Two implementation properties of the driver materially affect what can be run and what the
+numbers mean.
+
+\paragraph{Block-wise offloading.} Holding a full $10^{9}$-parameter model resident on a
+\SI{6}{\giga\byte} device causes the compression stage to peak at \SI{6.31}{\gibi\byte},
+completing only by spilling to host memory at roughly $7\times$ the solve time. We instead
+hold \emph{one decoder block} on the device at a time, keeping the remainder on the host, at
+a cost of two host--device transfers per block. This changes no reported number --- the
+resident and offloaded paths were verified bit-identical --- but it is what makes the 1B
+scale point runnable at all, reducing peak reservation to \SI{4.29}{\gibi\byte} with no
+spill.
+
+\paragraph{Capture per dependency group.} Activations are captured once per
+\emph{dependency group} rather than once per block. A module whose input is produced by
+another module in the same block must be fitted against the inputs it will actually receive
+--- that is, after its producer has been compressed. Capturing once per block would fit an
+MLP down-projection against activations produced by the \emph{dense} up-projection, inputs
+that never occur at inference; that is block-wise reconstruction described as layerwise. In
+Pythia, attention output and MLP projections form separate groups; Qwen2's sequential
+residual structure makes the MLP depend on the whole block, yielding four groups.
+
+\subsection{Experimental grid}
+\label{subsec:grid}
+
+\begin{table}[t]
+\centering
+\caption{Model suite. The scale axis is targeted (non-embedding) parameter count. Depth is
+\emph{not} monotone in the Pythia suite: pythia-1b is shallower than pythia-410m while being
+$2.7\times$ wider in targeted parameters. Qwen2.5-0.5B is an external-validity check, not a
+scale point.}
+\label{tab:models}
+\begin{tabular}{@{}llrrrl@{}}
+\toprule
+\textbf{Model} & \textbf{Revision} & \textbf{Blocks} & \textbf{Targeted params} & \textbf{Modules} & \textbf{Role} \\
+\midrule
+pythia-160m    & \texttt{50f5173d} & 12 & \num{84934656}  & 48 & scale sweep \\
+pythia-410m    & \texttt{dd47b0e}  & 24 & \num{301989888} & 96 & scale sweep \\
+pythia-1b      & \texttt{f73d7dcc} & 16 & \num{805306368} & 64 & scale sweep \\
+\midrule
+qwen2.5-0.5b   & \texttt{060db649} & 24 & ---             & 96 & external validation \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Budgets.} Two budgets are run per model, varying \emph{precision} at fixed
+sparsity so that the precision-dependence prediction of \S\ref{subsec:joint} is directly
+testable:
+
+\begin{itemize}
+  \item \textbf{Moderate} --- $30\%$ sparsity, $b{=}8$. The control condition.
+  \item \textbf{Aggressive} --- $30\%$ sparsity, $b{=}4$. The headline condition.
+\end{itemize}
+
+Both budgets were selected on the validation split during a screening phase, under a
+pre-declared eligibility rule (technically stable, measurably but not catastrophically
+degraded), and frozen before the test split was accessed. The sequential order was likewise
+frozen per (model, budget) cell on validation, so only one order is run on test.
+
+\paragraph{Data and evaluation.} Calibration draws $128$ sequences of $512$ tokens from the
+WikiText-2 training split; evaluation uses $512$ non-overlapping windows of $512$ tokens.
+Calibration is disjoint from evaluation by construction, and overlap raises rather than
+warns. The quality metric is perplexity retention relative to each model's own dense
+baseline,
+
+\begin{align}
+  R = 100 \cdot \frac{\mathrm{PPL}_{\mathrm{dense}}}{\mathrm{PPL}_{\mathrm{compressed}}},
+  \label{eq:retention}
+\end{align}
+
+rather than raw perplexity, which falls with scale for reasons unrelated to compression and
+would render any cross-scale trend uninterpretable. The dependent variable is \emph{joint
+gain},
+
+\begin{align}
+  G = R_{\mathrm{joint}} - R_{\mathrm{sequential}},
+  \label{eq:gain}
+\end{align}
+
+in percentage points, at a matched compression budget, so that $G > 0$ always denotes a
+joint advantage.
+
+\paragraph{Split discipline.} The validation split is a declared \emph{selection surface}:
+budgets, sequential orders, and every exploratory estimate live there. The test split was
+accessed once, under a frozen configuration, with no tuning afterwards. Every record stores
+its evaluation split and dataset fingerprint, and pairing keys include both --- a safeguard
+added after a defect was found in which a validation record could be paired against a
+test record because experiment identifiers did not encode the split.
+
+\subsection{Statistical analysis}
+\label{subsec:stats}
+
+Replication is over \emph{paired calibration draws}: replicate $r$ selects a fixed
+calibration subset shared by both arms of a cell, so the joint and sequential arms of a pair
+differ only in pipeline. The compression procedure itself is deterministic given a draw,
+so treating replicates as ordinary run-seed repetitions would produce duplicates. We use
+$R = 8$ paired replicates at 160M and 410M and $R = 5$ at 1B, the latter a schedule
+concession whose consequence we state explicitly: at $R = 5$ the smallest attainable
+two-sided exact sign-test $p$-value is $0.0625$, so the 1B leg contributes effect sizes and
+sign consistency but cannot reach conventional significance at any effect size. This is a
+design limit, not a finding.
+
+Three analyses are pre-specified:
+
+\begin{enumerate}
+  \item \textbf{Exact two-sided sign test} over the $R$ paired gains, testing sign
+        consistency without distributional assumptions.
+  \item \textbf{Paired block bootstrap} over whole evaluation windows ($10^4$ resamples, one
+        index draw applied to both arms), reported on per-token NLL advantage. Windows rather
+        than tokens are the resampling unit because neighbouring tokens are dependent and a
+        token-level bootstrap understates the interval.
+  \item \textbf{Holm--Bonferroni correction} across the six (scale $\times$ budget) cells
+        examined. Reporting the largest of six raw $p$-values without correction is precisely
+        the inflation our pre-registered threat analysis anticipated; corrected values are the
+        ones we quote.
+\end{enumerate}
+
+\paragraph{Pre-registered practical-importance criterion.} A cell is declared practically
+important only if it satisfies \emph{both} conditions: mean gain $\bar{G} \geq
+\SI{1.0}{pp}$ \emph{and} $\operatorname{sign}(G_r)$ consistent across all $r \in
+\{1,\dots,R\}$. The threshold was fixed before any test-split data existed and is not
+adjusted post hoc. We report near-misses against it explicitly rather than renegotiating the
+bar.
+
+\paragraph{Provenance gate.} Before any test-split number is read, an automated audit
+verifies that every planned cell exists, is complete, non-stale, produced under a single
+\texttt{method\_version}, and originates from a single host. The confirmatory grid comprises
+$171$ records forming $42$ joint/sequential pairs; the audit must report zero failures,
+zero stale and zero missing records before analysis proceeds.
+
+\subsection{Deployment measurement protocol}
+\label{subsec:deployment}
+
+Deployment quantities --- latency, throughput, peak memory and checkpoint size --- are
+measured exclusively on CPU, on a single designated benchmark host, with a pinned thread
+count and fixed batch and sequence lengths. Compression and quality evaluation are portable
+across accelerators (they differ only by floating-point reduction order, on the order of
+$10^{-5}$ relative, against effects of order $10^{-2}$); a latency, by contrast, is a
+property of a machine. Accordingly no results table combines records from more than one
+host, and every record carries full hardware metadata so that a violation is detectable
+after the fact.
+
+We report prefill and decode latency separately (median and IQR over $60$ samples per cell,
+with model-order rotation so thermal drift is spread across arms rather than loaded onto
+whichever ran first), because a blended generation latency conceals the compute-bound versus
+bandwidth-bound distinction the sparsity question turns on.
+
+\paragraph{Scope restriction on $b{=}4$.} The CPU quantisation backend provides a mature
+INT8 path but no equally mature 4-bit weight-only kernel; a packed 4-bit linear dequantises
+on every forward pass, so timing it would measure the unpacking kernel rather than the
+compression. We therefore report $b{=}4$ for quality and size but exclude it from latency
+tables, and answer the sparsity-to-speedup question from the pruning-only arm, whose weights
+remain FP32 and benchmark natively.
+
+\paragraph{Never infer speedup from sparsity.} We report three quantities separately:
+theoretical non-zero parameter reduction, measured serialised checkpoint size, and measured
+CPU latency. An unstructured mask stores zeros, and a dense GEMM kernel multiplies by them
+rather than skipping them; a null latency result under unstructured sparsity is a finding
+about the deployment path, not a failure of the experiment.
+
+\subsection{Post-hoc recovery ablation}
+\label{subsec:recovery}
+
+The core method performs no fine-tuning. Separately, and after the confirmatory result was
+known, we examine whether a short full-model recovery phase applied \emph{equally} to both
+arms closes or widens the gap. Masks are frozen, fake quantisation remains active, and both
+arms receive an identical step count, token budget and learning rate on a recovery slice
+verified disjoint from the calibration set. This ablation is labelled exploratory throughout:
+it is post-hoc, runs on the validation split, and cannot alter or reinterpret the
+confirmatory result. We report it because a recovery phase changes which pipeline is
+preferable, and because the magnitude of the recovery effect relative to the pipeline effect
+is itself informative for practitioners.
+
+% =====================================================================
+%  NOTE FOR CO-AUTHORS -- remove before submission.
+%
+%  Two repository inconsistencies were encountered while drafting this section and should be
+%  resolved before the manuscript is circulated:
+%
+%  1. docs/method_definition.md ends with a "Current Status" table stating that module
+%     selection, the layerwise driver, and all five arms are placeholders. That table is
+%     stale: layerwise.py implements the driver and all five arms, and the confirmatory
+%     grid (F-37) has been executed. Per CLAUDE.md ("if code and docs disagree, that is a
+%     bug in one of them"), the table needs updating rather than silent divergence.
+%
+%  2. docs/method_definition.md still specifies 50% / 70% sparsity budgets in places, while
+%     the frozen confirmatory configuration uses 30% sparsity at both budgets, varying
+%     precision (W8 / W4) instead. The frozen values in main_scale_sweep.yaml are the ones
+%     used above; method_definition.md should be reconciled to match.
+% =====================================================================
