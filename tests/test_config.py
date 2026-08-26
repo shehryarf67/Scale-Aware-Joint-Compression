@@ -402,6 +402,20 @@ class TestShippedConfigs:
             # `use_frozen_order: true` and refuses to build a plan until an order is frozen for that
             # model, so this config produces the evidence that permits the freeze.
             "qwen_order_selection.yaml",
+            # POST-HOC exploratory ablation: identical short end-to-end recovery after each arm,
+            # to test whether the joint solution holds structure the layerwise objective cannot
+            # translate into perplexity (F-38). Validation split, separate output tree, cannot
+            # touch the confirmatory grid.
+            "recovery_ablation_160m_w4.yaml",
+            # F-42 follow-up, INSTRUMENT CHECK not a result: F-42 degraded both arms, so this
+            # asks whether a non-destructive recovery phase exists at all. lr 1e-5 rather than
+            # 5e-5, everything else held, plus mid-recovery evaluation for a trajectory. One
+            # paired draw, validation split, same separate output tree.
+            "recovery_ablation_160m_w4_gentle.yaml",
+            # F-43 follow-up at R=8: the durability question at the recovery setting F-43
+            # established as non-destructive and near-peak (lr 1e-5, 50 steps). Eight paired
+            # draws, validation split, same separate output tree, third distinct id.
+            "recovery_ablation_160m_w4_r8.yaml",
             # A1 step 7: re-checks the W8 order across paired draws, because it was frozen on a
             # +0.43 pp single-draw margin and the sign of that budget's joint gain depends on it.
             "order_selection_w8_replicates.yaml",

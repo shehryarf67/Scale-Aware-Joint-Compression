@@ -101,32 +101,343 @@ which is what the arm comparison needs.
 
 ## 2. Findings
 
-<<<<<<< HEAD
-### F-31 — Provisional Pythia-1B validation values were produced in Colab, but the Task 2 run is not yet admissible {#f-31}
+### F-44 — Joint's advantage reverses under equal recovery: 8/8 replicates, p = 0.0078 {#f-44}
 
-*2026-08-01 — Pythia-1B, revision `f73d7dcc545c8bd326d8559c8ef84ffe92fea6b2` — WikiText-2 validation, 493 × 512 — exploratory GPU evaluation on Tesla T4 — Python 3.12.13, torch 2.11.0+cu128 — repository commit `7ecaa28fb91c273890de54dce32d9ffa46244039` with uncommitted notebook changes*
+**2026-08-23 · `45f288d` · POST-HOC EXPLORATORY · validation split · NOT CONFIRMATORY.** Cannot
+alter, replace or reinterpret [F-37](#f-37). Config
+`configs/experiments/recovery_ablation_160m_w4_r8.yaml`; 16 records in `outputs/recovery_ablation/`
+under the `_r8` id. Run entirely after the [B-54](#4-bugs-found-that-would-have-invalidated-results)
+fix, so the arms compress against the 128-sequence calibration set and recover on a **verified**
+disjoint slice.
 
-The Colab notebook produced the following provisional quality values from one calibration draw:
+Pythia-160M, 30% + W4, dense perplexity 36.9741, **eight paired calibration replicates**, masks
+frozen, W4 fake quantisation live, identical 50-step / 204,800-token recovery at lr 1e-5 — the
+setting [F-43](#f-43) established as non-destructive and near-peak.
 
-| Budget | Arm | Perplexity | Retention |
-| --- | --- | ---: | ---: |
-| Moderate, 30% + W8 | dense | 17.9432 | 100.00% |
-| Moderate, 30% + W8 | sequential P→Q | 18.6302 | 96.31% |
-| Moderate, 30% + W8 | sequential Q→P | 18.6199 | 96.37% |
-| Moderate, 30% + W8 | joint | 18.6305 | 96.31% |
-| Aggressive, 30% + W4 | sequential P→Q | 20.0938 | 89.30% |
-| Aggressive, 30% + W4 | sequential Q→P | 20.5073 | 87.50% |
-| Aggressive, 30% + W4 | joint | 19.9903 | 89.76% |
+#### The result
 
-The provisional order signal is Q→P for moderate W8 and P→Q for aggressive W4. However, the run
-must not be used to freeze either order: the notebook restored `layerwise.py` from Git before the
-sweep, later patched `activations.py` and `runner.py` in place, and the focused post-run tests failed
-during collection (`capture_activations` / `LayerwiseReport` import errors). The recorded run also
-used an uncommitted state and GPU quality evaluation, which is allowed for exploration but must be
-reported as such. Rerun Task 2 from the clean committed Task 1 state, verify the full test suite and
-offload gates, and then record the trusted 1B order decision.
+| rep | seq before | seq after | joint before | joint after | gain before | gain after |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 | 56.6554 | 70.8858 | 57.7347 | 70.0553 | +1.0794 | −0.8305 |
+| 1 | 56.8942 | 72.5509 | 58.5460 | 69.7678 | +1.6518 | −2.7831 |
+| 2 | 55.7244 | 69.5589 | 58.0615 | 68.9582 | +2.3371 | −0.6008 |
+| 3 | 57.0642 | 70.6031 | 57.5933 | 69.6081 | +0.5291 | −0.9950 |
+| 4 | 56.9150 | 70.2684 | 57.1636 | 68.1052 | +0.2486 | −2.1633 |
+| 5 | 57.1998 | 71.2669 | 59.2641 | 70.4450 | +2.0643 | −0.8219 |
+| 6 | 56.2618 | 71.3271 | 58.4089 | 69.8208 | +2.1471 | −1.5063 |
+| 7 | 56.3095 | 69.7457 | 58.0564 | 68.6932 | +1.7468 | −1.0525 |
+| **mean** | 56.6280 | **70.7759** | 58.1036 | **69.4317** | **+1.4755** | **−1.3442** |
+| sd | | 0.8227 | | 0.5744 | 0.7748 | 0.7619 |
 
-=======
+**Both columns are unanimous.** Joint leads in **8/8** replicates before recovery and trails in
+**8/8** after. A two-sided exact sign test on the reversal gives **p = 0.0078**, the floor reachable
+at R=8.
+
+**Sequential improved more, in 8/8 replicates** — **+14.1478 pp** against joint's **+11.3281 pp**.
+That is the mechanism of the reversal: not that joint degrades, but that it gains less from the same
+recovery.
+
+#### Three things worth separating
+
+**1. The reversal is the strongest sign-consistent effect this project has measured — and it points
+against joint.** Its magnitude (1.3442 pp) and unanimity (8/8) would satisfy the two criteria §6.3
+sets, where joint's *own* advantage at this scale and budget on test reached +1.0120 pp at 7/8 and
+failed. **This is an illustrative comparison, not a §6.3 verdict**: §6.3 is pre-registered for the
+test split and the primary comparison, and applying its thresholds to a post-hoc validation ablation
+does not confer its authority. Recorded because the contrast is the honest way to convey the size of
+what was found, not to claim a pass.
+
+**2. Recovery is worth far more than the choice of arm.** Fifty steps and 204,800 tokens — about
+0.0007 of Pythia-160M's pretraining — move retention from ~56.6% to ~70.8%, a **+14 pp** gain. The
+joint-versus-sequential difference at the same budget is ~1.5 pp. So at this scale the compression
+*method* is roughly an order of magnitude less important than whether any recovery is done at all.
+That reframes the study's question rather than answering it, and it belongs in the discussion.
+
+**3. The before-recovery column independently reproduces [F-27](#f-27).** On the three draws the two
+share, at the same budget and split, a month apart and through a different driver:
+
+| rep | F-27 | this run |
+| --- | --- | --- |
+| 0 | +1.08 | **+1.0794** |
+| 1 | +1.65 | **+1.6518** |
+| 2 | +2.34 | **+2.3371** |
+| mean (n=3) | +1.69 | **+1.6894** |
+
+This is the reproduction check [B-54](#4-bugs-found-that-would-have-invalidated-results) had silently
+destroyed — pre-fix, replicate 0 read +1.4536 against F-27's +1.08 — and it is stronger evidence for
+the fix than any comparison to F-37, because F-27 shares this run's split *and* its draws.
+
+#### What may NOT be claimed
+
+- **Not confirmatory, and it cannot touch [F-37](#f-37).** Post-hoc, validation split, invented after
+  the confirmatory result was known. F-37 remains the study's answer to its primary question.
+- **One scale, one budget.** 160M at 30% + W4 only. Nothing here says whether the reversal holds at
+  410M or 1B, or at W8 where [F-05](#f-05) says the mechanism is inert to begin with.
+- **One recovery configuration.** 50 steps at lr 1e-5. [F-43](#f-43) showed the *magnitude* of the
+  gap moves with step count, though its sign did not over 50–200 steps.
+- **Do not pool with [F-42](#f-42) or [F-43](#f-43).** Different learning rates and step counts, so
+  those draws are not exchangeable with these. This run's p = 0.0078 stands on its own eight draws.
+- **The recovery slice is train-split data.** Retention is measured on validation, disjoint from
+  both, so the improvements are genuine generalisation — but a different recovery corpus could give
+  a different magnitude.
+
+#### The claim this licenses
+
+**At 160M and 4 bits, joint's layerwise advantage does not survive equal end-to-end recovery, and
+reverses: sequential is the better starting point when any recovery is available.** Sign-consistent
+across eight paired draws at p = 0.0078, exploratory.
+
+This closes the last standing defence of joint compression in this study. [F-37](#f-37) found the
+direct advantage too small to matter and not growing with scale; the remaining argument was that
+joint might be a better *initialisation*. On this evidence it is a worse one.
+
+#### Guards and provenance
+
+| Guard | Result |
+| --- | --- |
+| `mask_sparsity` before vs after | **0.2996961805555556**, identical in all 16 cells |
+| `fake_quant_forward_calls` | **9,600** in all 16 — W4 live throughout, and equal across arms |
+| `assert_budgets_match` | passed in all 8 replicates — 50 × 2 × 4 × 512 = 204,800 tokens |
+| Recovery/calibration disjointness | **verified at runtime**, not asserted — the run exits non-zero on any overlap (B-54 fix) |
+| `git_commit` | **0 nulls in 16 records**, against F-43's 1 — the [B-53](#4-bugs-found-that-would-have-invalidated-results) timeout fix holding |
+| Failures | 0 |
+
+Both arms of every replicate ran on one host, under one `method_version`, with CPU evaluation
+throughout, so the absolute retentions are directly comparable to [F-42](#f-42) and [F-43](#f-43).
+
+### F-43 — A recovery phase that works: F-42's instrument is exonerated, and joint's advantage still does not survive {#f-43}
+
+> ⚠️ **CORRECTED 2026-08-23 — [B-54](#4-bugs-found-that-would-have-invalidated-results).** Both arms
+> in this finding were compressed against the **recovery slice** (1600 sequences) rather than the
+> 128-sequence calibration set, so the "Recovery slice — disjoint from calibration" guard row below
+> is **wrong as implemented**: the arms were recovered on exactly the data they were calibrated on.
+> Both arms still saw byte-identical data, so **the gap, the trajectory and the inversion all stand
+> as internal comparisons**. What does not stand is comparability of the *absolute* before-recovery
+> retentions to [F-37](#f-37), which calibrates on 128 sequences. B-54 also argues the bug's bias
+> ran *against* the reported inversion, so this result is more likely understated than inflated.
+
+**2026-08-23 · sequential at `b680e09`, joint at `e9bf9af` · POST-HOC EXPLORATORY · validation split
+· ONE PAIRED DRAW · NOT CONFIRMATORY.** Cannot alter, replace or reinterpret
+[F-37](#f-37). Config `configs/experiments/recovery_ablation_160m_w4_gentle.yaml`; records in
+`outputs/recovery_ablation/` under the `_gentle` id.
+
+[F-42](#f-42) degraded both arms, so it could not test durability and could not separate
+"overfitting to the slice" from "learning rate too large". This changes **one** variable —
+lr 5e-5 → **1e-5** — holding steps, tokens, optimiser, schedule, clipping, precision, seed, budget
+and data at F-42's values, and adds mid-recovery evaluation every 50 steps.
+
+#### The trajectory
+
+Pythia-160M, 30% + W4, dense perplexity 36.9741, masks frozen, W4 fake quantisation live.
+
+| step | sequential | joint | gap |
+| --- | --- | --- | --- |
+| 0 | 56.1181 | 57.5629 | **+1.4448** |
+| 50 | **68.5175** | **67.4093** | −1.1082 |
+| 100 | 64.9433 | 63.8432 | −1.1000 |
+| 150 | 63.5475 | 62.5161 | −1.0314 |
+| 200 | 63.3258 | 62.2882 | −1.0376 |
+| **after (CPU)** | **63.3266** | **62.2890** | **−1.0376** |
+
+Three things follow, in decreasing order of how much weight they can carry.
+
+**1. A non-destructive recovery phase exists — F-42's failure was the learning rate, not the
+concept.** At lr 1e-5 recovery *adds* quality: **+7.2086 pp** (sequential) and **+4.7262 pp**
+(joint), against F-42's −2.9100 and −4.6048 pp at 5e-5. The prerequisite question the gentle probe
+was built to ask is answered **yes**, and F-42's suspicion of its own instrument was correct.
+
+**2. Two hundred steps badly overshoots, for both arms.** Both peak at step 50 — +12.3994 pp
+(sequential) and +9.8464 pp (joint) — then decline in parallel, giving back 5.19 and 5.12 pp by step
+200. **The optimum is at or before step 50, and this run cannot locate it more precisely**: with
+probes only every 50 steps, the true peak could be at 50, 25 or 10. Any follow-up needs finer early
+probes.
+
+**3. The gap inverts by step 50 and then barely moves.** Joint starts +1.4448 pp ahead and ends
+**1.0376 pp behind**, and the offset sits between −1.03 and −1.11 pp at all four checkpoints. So in
+this draw, joint's advantage does not survive a recovery phase that *helps* — which is the fair
+version of the test F-42 could not run.
+
+#### What this does to F-42's reading
+
+F-42 recorded two candidate readings and could not separate them. This narrows them.
+
+F-42 found joint degrading **more** under a destructive phase (−4.6048 against −2.9100 pp). This
+finds joint improving **less** under a beneficial one (+4.7262 against +7.2086 pp). **Two opposite
+perturbation regimes, the same direction**: the joint solution responds worse to end-to-end gradient
+recovery. That is no longer attributable to an over-strong probe, because one of the two regimes is
+not over-strong.
+
+So F-42's "the joint solution is more fragile to global gradient perturbation" survives and
+generalises to "the joint solution responds worse to global gradient recovery, beneficial or
+destructive". Its stronger sibling — *joint's advantage is not durable under fair recovery* — now has
+**one** draw of direct support where before it had none.
+
+#### What may NOT be claimed
+
+- **This is one paired draw. It is not an effect size**, and −1.0376 pp must not be quoted as one.
+- **The four checkpoints are not four replicates.** They are autocorrelated points on a single
+  trajectory from a single draw. Their agreement shows the offset is stable *within* this run; it is
+  not evidence it would recur in another.
+- **Do not pool this with F-42 into one sign test.** F-42's three draws ran at 5e-5 and this one at
+  1e-5; they are not exchangeable, so 4/4 in the same direction is not a p = 0.125 result. The
+  honest statement is *two regimes, consistent direction, one draw in the regime that matters.*
+- **[F-37](#f-37) is untouched.** Post-hoc, exploratory, validation-only.
+
+#### A practical implication, flagged as a hypothesis
+
+If end-to-end recovery is available after compression, **sequential appears to be the better
+starting point** — it both starts lower and ends higher. That would weaken the case for joint beyond
+what F-37 already reports, since F-37's negative verdict is about magnitude while this would be about
+sign. **From one draw this is a hypothesis, not a finding**, and it is exactly the claim that needs
+R=8 before it goes in a paper.
+
+#### Guards and provenance
+
+| Guard | Result |
+| --- | --- |
+| `mask_sparsity` before vs after | **0.2996961805555556, identical in both arms** ([B-46](#4-bugs-found-that-would-have-invalidated-results) per-row quantisation) |
+| `fake_quant_forward_calls` | **62,208 in both arms** — W4 live throughout; the count exceeds F-42's 38,400 because the probes add forward passes, equally in both arms |
+| `assert_budgets_match` | passed — 200 × 2 × 4 × 512 = 819,200 tokens in both arms, **restored from the record across the resume** so the gate still fired |
+| Recovery slice | disjoint from calibration by construction, 1600 candidates, overlap 0 |
+| Mean / final loss | sequential 3.4980 / 3.4393; joint 3.5199 / 3.4673 |
+| GPU probe vs CPU evaluation | step-200 probe against the baked CPU number: **0.0008 pp** (sequential), **0.0008 pp** (joint) — also confirms `bake_recovery_modules` preserves the effective weight |
+
+⚠️ **The two arms were produced at different commits** — sequential at `b680e09`, joint at
+`e9bf9af`, because the run was paused and resumed. The diff between them touches only
+`scripts/run_recovery_ablation.py` resume bookkeeping and its tests; **no compression, recovery or
+evaluation code changed**, so the pair is numerically comparable. Recorded rather than glossed
+because a comparison spanning two commits is the kind of thing that has to be checkable.
+
+⚠️ **The joint record carries `git_commit: null`.** Diagnosed rather than shrugged at, and the cause
+matters beyond this run — see [B-53](#4-bugs-found-that-would-have-invalidated-results). The joint
+arm ran at `e9bf9af`.
+
+### F-42 — The recovery ablation closes the gap, but it degraded both arms, so it does not answer the question it was built to ask {#f-42}
+
+> ⚠️ **CORRECTED 2026-08-23 — [B-54](#4-bugs-found-that-would-have-invalidated-results).** As in
+> [F-43](#f-43), both arms were compressed against the **recovery slice** rather than the
+> 128-sequence calibration set, so the "disjoint from calibration by construction" guard row below
+> is **wrong as implemented**. Both arms saw byte-identical data, so every within-run comparison
+> here stands. **One claim below is withdrawn:** that the +1.2772 pp before-recovery gain being
+> "consistent with F-37's +1.0120 pp on test" shows the compression half reproduces. The two used
+> different calibration sets (1600 sequences against 128), so that agreement was never apples to
+> apples and cannot be cited as a reproduction check.
+
+**2026-08-22 · `0ddb139` · POST-HOC EXPLORATORY · validation split · NOT CONFIRMATORY.** Cannot
+alter, replace or reinterpret [F-37](#f-37). Config
+`configs/experiments/recovery_ablation_160m_w4.yaml`; records in `outputs/recovery_ablation/`
+(a separate tree, invisible to `audit_confirmatory_run.py` and to the confirmatory resume logic).
+
+Pythia-160M at revision `50f5173d`, the frozen headline budget (30% unstructured + W4 symmetric
+per-output-channel), dense perplexity **36.9741**, 3 paired calibration replicates, 6 cells,
+**4.26 h** of recovery compute. Both arms then received an **identical** short global recovery
+phase: 200 AdamW steps, **819,200 tokens**, lr 5e-5, linear warmup + cosine decay, seed 1234,
+pruning mask frozen, W4 fake quantisation live through a straight-through estimator.
+
+#### What happened
+
+| rep | seq before | seq after | joint before | joint after | gain before | gain after |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 | 56.1181 | 53.7044 | 57.5629 | 53.6680 | **+1.4448** | −0.0364 |
+| 1 | 57.0458 | 53.4488 | 58.2798 | 53.1176 | **+1.2340** | −0.3312 |
+| 2 | 56.3043 | 53.5849 | 57.4573 | 52.7000 | **+1.1530** | −0.8849 |
+| **mean** | 56.4894 | **53.5794** | 57.7667 | **53.1619** | **+1.2772** | **−0.4175** |
+| sd | | 0.1279 | | 0.4855 | 0.1507 | 0.4308 |
+
+**The joint gain went from +1.2772 pp (3/3 positive) to −0.4175 pp (0/3 positive)**, a shift of
+−1.6947 pp, and it shrank in **3/3** replicates. Literally, that is the third pre-registered
+outcome: *the gap closes*.
+
+**But recovery degraded both arms, which is the finding that governs how the rest may be read:**
+
+| | mean change | sd | direction |
+| --- | --- | --- | --- |
+| sequential | **−2.9100 pp** | 0.6143 | worse in 3/3 |
+| joint | **−4.6048 pp** | 0.6473 | worse in 3/3 |
+
+A phase called *recovery* that costs both arms 2.9 and 4.6 pp of retention did not recover
+anything. The pre-registered reading of "the gap closes" — *joint's initialisation is not a durable
+advantage under equal global recovery* — presumes a recovery phase that at least holds quality
+steady. This one did not, so the premise it rests on is not satisfied.
+
+#### The instrument, diagnosed
+
+Three things say the probe is mis-specified rather than revealing:
+
+1. **Training loss fell while validation quality fell.** Mean loss over the run was 3.14–3.28 and
+   final loss 2.89–2.95 in every cell, so the objective was being minimised throughout, while
+   evaluated retention dropped. The phase moved weights toward the 819k-token recovery slice at the
+   expense of general language-model quality. At this budget that is consistent with either
+   overfitting to the slice or a learning rate too large for the compressed initialisation, and
+   **these six cells cannot distinguish those two.**
+2. **Four distinct starting points converge on a narrow band.** Pre-recovery retention spans
+   56.12–58.28; post-recovery it sits at 53.5794 ± 0.1279 (sequential) and 53.1619 ± 0.4855
+   (joint). The perturbation is large enough to overwrite where each arm started.
+3. **The direction of the degradation is systematic, not noise.** Joint degraded *more* than
+   sequential in **3/3** replicates and ends with ~4× the spread.
+
+Point 3 is the one that stops this being purely an instrument failure. If the perturbation merely
+erased the initialisation, the arms would land together with no consistent ordering; instead joint
+lands **consistently below** sequential (0/3 positive) and less stably. **That is a real, consistent
+directional signal that the joint solution is more fragile to global gradient perturbation** — but
+"more fragile under an over-strong probe" is a weaker and different claim than "its advantage is not
+durable under fair recovery", and only the first is supported here.
+
+#### What this does and does not license
+
+- **Supported:** before recovery, joint leads sequential by **+1.2772 pp** at 160M/W4 on
+  validation, 3/3 positive. ~~Consistent with [F-37](#f-37)'s **+1.0120 pp** on test, so the
+  compression half of the pipeline reproduces.~~ **Withdrawn per
+  [B-54](#4-bugs-found-that-would-have-invalidated-results):** the two figures come from different
+  calibration sets, so their agreement is not a reproduction check.
+- **Supported:** under this specific 200-step lr-5e-5 phase, joint's advantage does not survive,
+  and joint degrades more than sequential in 3/3 replicates.
+- **NOT supported:** that joint's advantage is not durable under recovery in general. That requires
+  a recovery phase which does not itself destroy 3–5 pp of retention.
+- **NOT supported:** any statistical claim. Three paired draws reach at best **p = 0.25** on a
+  two-sided sign test. This is an effect size and a direction.
+- **The [F-38](#f-38) hypothesis that motivated the ablation did NOT occur.** F-38 found the local
+  objective improving where the global one does not, raising the possibility that the joint solution
+  holds structure the layerwise objective cannot translate into quality — which would have shown up
+  as the *gap growing*. It did not grow in any replicate. This is evidence **against** that reading,
+  at this scale and budget, with the instrument caveat above attached.
+- **[F-37](#f-37) is untouched.** This is post-hoc, exploratory, validation-only, and F-37 already
+  reports that no cell meets the §6.3 bar. The ablation neither rescues joint nor further damages
+  it.
+
+#### Provenance and guards
+
+Every fairness guard fired clean, which is why the numbers above are comparable at all:
+
+| Guard | Result |
+| --- | --- |
+| `mask_sparsity` before vs after | **0.2996961805555556, identical in all 6 cells** — no regrowth, no drift |
+| `fake_quant_forward_calls` | **38,400 in all 6 cells** — W4 stayed live; recovery never silently became FP32 |
+| `assert_budgets_match` | passed — 200 steps × 2 × 4 × 512 in both arms |
+| Recovery data | **disjoint from calibration by construction** — all 128 calibration indices excluded, 1600 candidate sequences, overlap 0 |
+| Identical between arms | data, order, budget, optimiser, schedule, precision, clipping, device, seed |
+
+The realised sparsity **0.299696** is the per-output-row integer quantisation from
+[B-46](#4-bugs-found-that-would-have-invalidated-results), not a budget miss.
+
+**Recovery data was made disjoint from calibration deliberately**, and the choice is worth
+recording: both arms are *fitted* on the calibration sequences, so recovering on the same
+sequences would partly be re-fitting on seen data and would flatter whichever arm had underfitted
+them.
+
+⚠️ **Provenance gap in these records.** The ablation writer does not stamp `git_commit`,
+`method_version` or `hardware`, unlike `ExperimentTracker`. The run was made at **`0ddb139`** on the
+Omen with GPU compression and GPU evaluation, recorded here because the records do not carry it.
+Fixed in the writer for any future run; these six are not re-run to backfill a field.
+
+#### If this question is worth pursuing
+
+A gentler probe first — lr 1e-5, or 50 steps, or an early stop monitored on held-out data — chosen
+to produce a phase that **improves or holds** both arms. Only then does "does joint's advantage
+survive recovery?" have a fair test. Until such a phase exists, the durability question is **open**,
+not answered negatively. Sizing note: at 3 draws nothing statistical is reachable, so a serious
+attempt needs R=8 and roughly 11 h of recovery compute at this budget.
+
 ### F-41 — External validation on Qwen2.5-0.5B: the W4/W8 structure transfers, the verdict does not change {#f-41}
 
 **Date:** 2026-08-14 · **65 cells, 16/16 pairs, 0 failures, R = 8 at both budgets, test split.**
@@ -746,7 +1057,6 @@ cells at the measured 7.5 min/cell (8.1 h), 65 executable 410M cells at 19.5 min
 one 25.12-minute dense 1B cell and 40 compressed 1B cells conservatively costed at the corrected
 joint/W4 total (36.1 h). This is an operational estimate, not a coverage change: the logical grid is
 still 210 slots and the executable manifest still contains 171 records.
->>>>>>> origin/main
 
 ### F-01 — Smart App Control silently broke the environment 30 minutes after install {#f-01}
 
@@ -3174,6 +3484,8 @@ recording.
 
 | # | Bug | What it would have done |
 | --- | --- | --- |
+| B-54 | **The recovery ablation compressed its arms against the RECOVERY slice instead of the calibration set, inverting the disjointness its own design claimed** ([F-42](#f-42), [F-43](#f-43)) | `scripts/run_recovery_ablation.py` called `arm.set_calibration(list(recovery_batches), fingerprint=calibration_fingerprint)` — passing the recovery data where the calibration batches belong, while stamping the record with the *calibration* set's fingerprint. `ExperimentRunner._attach_calibration` had always done it correctly, building batches from `calibration.loader`; this script diverged from the reference and nothing compared them. **Three consequences, in increasing order of how much they matter.** (i) The record's `calibration_fingerprint` described 128 sequences that were never used to calibrate anything. (ii) `recovery.max_steps` silently coupled to *compression*, because the slice is sized `max_steps × batch × accumulation` — so F-42 and F-43 compressed against 1600 sequences and the R=8 leg at 50 steps against 400, making their before-recovery numbers non-comparable across configs. (iii) **The design's headline property was exactly inverted.** The code comment states the arms are fitted on the calibration sequences, so recovering on those tokens "would partly be re-fitting on seen data" — and then the implementation fitted them on the recovery sequences, making the recovery phase re-fit on seen data *entirely*. The log line "DISJOINT from the 128 calibration sequences (overlap 0 by construction)" was true about the wrong pair of sets. **How it was caught, and how it could have run to completion unnoticed:** the R=8 leg's replicate 0 reported a before-recovery joint gain of **+1.4536 pp** where F-43's replicate 0 — same draw, same budget, same frozen order, compression finishing before any recovery begins — had reported **+1.4448 pp**. A quantity that must be bit-identical differed by 0.0088 pp. Nothing failed; both runs completed, every fairness guard passed, and both numbers looked entirely reasonable in isolation. **What survives:** both arms always saw byte-identical data in identical order, so every *within-run* comparison stays fair and the joint gains of [F-42](#f-42) and [F-43](#f-43) stand as internal comparisons. **What does not:** F-42's claim that its +1.2772 pp before-recovery gain is "consistent with [F-37](#f-37)'s +1.0120 pp on test, so the compression half of the pipeline reproduces" is weaker than stated — the two used different calibration sets (1600 sequences against 128), so the agreement was never apples to apples; and F-43's guard row asserting the recovery slice was disjoint from calibration is **wrong as implemented**. **Direction of the bias, argued not measured:** [F-21](#f-21) found solver efficiency 0.6409 under the sequential mask against 0.5631 under the joint mask, so joint leaves more of its calibration objective unclaimed and recovering on that same data should help **joint more**. The runs observed joint improving **less**. So the bug's expected bias runs *against* the reported inversion, which is if anything understated by it — the sixth time a fault here ran in the flattering direction and the second time one ran against it. **[F-37](#f-37) and [F-41](#f-41) are untouched:** they run through `ExperimentRunner`, which was never wrong. **FIXED 2026-08-23**: calibration batches are now built from `calibration.loader` exactly as the runner does, and the script **fails closed** with a non-zero exit if the recovery indices intersect the calibration indices, so the disjointness is checked rather than asserted in a comment. The R=8 records produced under the bug are moved to `outputs/recovery_ablation/quarantine_b54/` rather than deleted. **Worth carrying:** 35 tests guarded this ablation — mask freezing, fake quantisation, budget matching, split, tags, output tree, resume — and not one asserted what the arms were calibrated *on*. The suite was guarding the recovery phase and ignoring the compression that precedes it |
+| B-53 | **A record's `git_commit` can be silently null, and this is the mechanism behind the two null commits in the confirmatory run** ([F-43](#f-43)) | Found on the gentle recovery probe: the joint arm's record carries `git_commit: null` while the sequential arm's carries `b680e09`, on the same host, same script, ~3 hours apart. `get_git_commit` shells out to `git rev-parse HEAD` with a **5-second timeout** and returns `None` on `OSError` or any `subprocess.SubprocessError` — which includes `TimeoutExpired` — logging the reason at **DEBUG**. Every run in this project logs at INFO, so **the failure left no trace whatsoever**: a null looked like a field nobody had populated rather than an event that happened and was swallowed. Five seconds is not generous on a host running a 200-step GPU training loop with a CPU-bound evaluation alongside, which is exactly the condition under which the confirmatory grid produced **its** two null commits — [F-37](#f-37) records them as an unexplained limitation, and this is very likely the explanation. **No number is affected**: the commit is provenance, not input, and the run's code is identifiable from the surrounding records and the log timestamps. But it defeats the one rule the reproducibility policy rests on — *run from a clean tree at a committed SHA* — because a record that cannot name its SHA cannot be checked against that rule, and the project's single unusable result came from precisely a provenance failure (`aec5099-dirty`). **FIXED 2026-08-23**: both git subprocess timeouts raised 5 s → 30 s, and both failure paths now log at **WARNING** rather than DEBUG, so a null commit is loud at the level runs actually use. Deliberately *not* made fatal — aborting a 78-minute compression cell because `git` was slow would trade a provenance gap for a lost measurement, which is the worse failure. The affected records are **not** re-run to backfill the field; the SHA is recorded in [F-43](#f-43) instead, and the two confirmatory nulls stay as they are because step 10 runs once. Worth carrying: this is the third fault in this family (**[B-50](#4-bugs-found-that-would-have-invalidated-results)**, **[B-51](#4-bugs-found-that-would-have-invalidated-results)**) where a silent-loss path left the *count* of records healthy and something inside them missing or wrong |
 | B-52 | **The exported joint-gain table paired arms ACROSS evaluation splits**, putting a wrong number in a committed artefact ([F-41](#f-41)) | `_joint_gain_rows` keyed on `(model, budget, replicate)` and not on the split, and the two splits produce the same experiment ids by construction -- so nothing looked wrong. At `qwen2.5-0.5b/moderate/rep0` the **validation** Q→P record was selected as best-of against the **test** joint record, exporting **−0.2143 pp** where the frozen-order test gain is **−0.0357 pp**. Same root cause as [B-51](#4-bugs-found-that-would-have-invalidated-results), seen from the analysis side rather than the write side. The aggressive rep0 row was correct only by luck: P→Q happened to beat the stray validation Q→P value, so best-of picked the right record while still exporting a contaminated `sequential_qp_retention` column. **The reports were never wrong** -- `report_confirmatory.py` pairs independently and always filtered on split -- so F-37 and F-41 stand, but `joint_gains.csv` is the file a reviewer recomputes from, and it disagreed with them. Fixed by adding **`eval_split` and `dataset_fingerprint`** to the pairing key and exporting both, and by taking the baseline on the test split from the **frozen order** rather than best-of: A1 §3 freezes the order before test, so only one order exists there, and maximising over whatever else happens to be present is precisely how a validation record leaked in. Best-of is retained on validation, where both orders genuinely ran. A cell with no frozen order, or missing its frozen arm, now emits **nothing** rather than substituting another order. Three regression tests, one pinned to the exact numbers. After the fix every CSV cell mean matches its report to four decimals |
 | B-51 | **A record id does not encode the evaluation split, so a test-split run silently OVERWRITES the validation record of the same cell** ([F-40](#f-40)) | Caught on the Qwen leg, and **the blast radius is larger than first recorded**: the test grid overwrote **five** validation records, not one -- the dense baseline, **both `sequential` (P→Q) records**, and **both `joint` records**. Only the two `sequential_qp` records survived on disk, because no test-split cell shares their id (the frozen order is P→Q at both budgets, so `sequential_qp` was never re-run). `qwen2.5-0.5b_dense_moderate_s00_b32_rep0.json` held the **validation** dense baseline (ppl 17.7758) used as the retention reference for order selection. The test grid planned the same cell, `exists_valid` correctly refused to reuse a validation record for a test run -- and then wrote the test result **to the same filename**, destroying the validation one (now ppl 17.0962, split `test`). **[F-40](#f-40) survives only by luck:** the dense smoke happened to run under a distinct `experiment.id`, so a copy exists as `qwen_smoke_dense__...`, and every arm record stores the retention it computed at run time, so the reported figures remain checkable. Had neither been true, F-40 would cite retention numbers whose denominator no longer existed. **The class is the dangerous part**: `exists_valid` gates *reuse* on the split but nothing gates *overwrite*, so the guard that prevents reading the wrong record does not prevent destroying the right one. Same family as [B-45](#4-bugs-found-that-would-have-invalidated-results) (split confusion) and [B-50](#4-bugs-found-that-would-have-invalidated-results) (silent loss that leaves the count looking healthy). **FIXED 2026-08-14**, once the Qwen grid was no longer mid-flight. `ExperimentTracker.save` now ARCHIVES an existing record to `<id>__split-<old>.json` when the incoming record carries a different `eval_split`, rather than overwriting it. Renaming rather than refusing, deliberately: refusing would block the legitimate case -- running the same grid on the other split, which is the entire two-split design -- and an error there would strand a completed cell. The archive keeps its `.json` suffix in the same directory, so `load_all` still finds it and every split-aware consumer still filters correctly; `_load_dense_reference` in particular recovers the reference this bug used to delete. Two tests: one reproduces the exact Qwen failure and asserts BOTH splits survive, the other asserts a same-split re-run still overwrites, so the archive path cannot fire on the ordinary case and litter the directory. **The destroyed records are RECOVERED from git history, not re-run.** The evidence set committed at **`2832914`** -- the [F-40](#f-40) commit, made *before* the test grid ran -- contains all eight Qwen validation rows with a sha256 per source record. `scripts/recover_qwen_order_selection.py` extracts them to `results/evidence/qwen_order_selection.csv` with a provenance file naming the source commit, the per-record hashes, which records were destroyed and which survive; `--check` verifies the artefact still matches history. The recovered values reproduce F-40 exactly (P→Q 95.2854 against Q→P 95.1916 at W8; 77.3993 against 76.0485 at W4). **Order selection was deliberately NOT re-run**: the test results are known now, and repeating a selection step after seeing the outcome it feeds is post-hoc by definition and would invalidate the freeze it exists to document. The dense record is additionally still on disk under its smoke experiment id (`qwen_smoke_dense__...`, ppl 17.7758); no file is manufactured under the canonical name, which would create a record whose filename and internal id disagree. The Pythia primary was never affected: its 171 test and 54 validation records coexist under distinct experiment ids |
 | B-50 | **`scale_trend` dropped every Q→P cell**, so 5 of 42 pairs vanished from figures and record-level analysis -- and they were the pairs *against* joint ([F-37](#f-37)) | The record-level pairing filtered on `SEQUENTIAL` and `JOINT` and never learned about `SEQUENTIAL_QP`. `find_comparison_pairs` **was** fixed for this ([B-42](#4-bugs-found-that-would-have-invalidated-results)) and carries a comment explaining why; this function was missed, so the same fault survived in a second place. The consequence: the one cell whose frozen order is Q→P -- **pythia-1b/moderate** -- was silently excluded from every trend and every figure built from records. `generate_plots.py` reported "**37 comparable pairs of 37**", which reads as complete: the denominator was computed from the same filtered set, so nothing looked missing. **The direction is what makes it serious.** The dropped cell is the *only* one where joint is consistently worse than sequential (−0.179 pp, 0/5, every bootstrap interval excluding zero), so omitting it removed the strongest evidence against joint -- the **seventh** fault in this project to run in joint's favour, and none has ever run the other way. **Caught while generating the paper figures**, before any figure was published; [F-37](#f-37) and [F-38](#f-38) are unaffected because `report_confirmatory.py` and `report_diagnostics.py` pair on their own and always accepted both orders. Fixed by treating whichever order was frozen as the comparator, with two regression tests. After the fix: **42 comparable pairs of 42** |

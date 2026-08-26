@@ -35,7 +35,7 @@
 >
 > **No further tuning is permitted.** Step 10 runs once. What remains is analysis and writing.
 
-**Last updated:** 2026-08-16 · **Experiments and evidence generation complete; paper writing may begin.**
+**Last updated:** 2026-08-23 · **Experiments and evidence generation complete; paper writing may begin.**
 Phases 0, 5, 6, 7 and A1 steps 1–10 are complete. The pipeline
 passes three independent correctness anchors, the budgets and both sequential orders were frozen per
 cell on validation, and the confirmatory grid has now been executed once on the test split under the
@@ -940,6 +940,171 @@ two.
 
 ⚠️ **[B-51](findings_log.md#4-bugs-found-that-would-have-invalidated-results) is now safe to fix** —
 the grid is no longer mid-flight.
+
+### 🟡 Recovery ablation — COMPLETE 2026-08-22, and the instrument is the finding
+
+**6 cells, 3 paired replicates, 0 failures, 4.26 h of recovery compute.** Full record:
+**[F-42](findings_log.md#f-42)**. Post-hoc, exploratory, **validation split only** — it cannot alter
+[F-37](findings_log.md#f-37) and does not.
+
+Pythia-160M, 30% + W4, both arms given an identical 200-step / 819,200-token global recovery phase
+(AdamW, lr 5e-5, mask frozen, W4 fake quantisation live through a straight-through estimator).
+
+| | before | after | change |
+| --- | --- | --- | --- |
+| sequential retention | 56.4894 | **53.5794** | **−2.9100 pp** |
+| joint retention | 57.7667 | **53.1619** | **−4.6048 pp** |
+| **joint gain** | **+1.2772 pp** (3/3) | **−0.4175 pp** (0/3) | **−1.6947 pp** |
+
+**Literally this is the third pre-registered outcome — the gap closes.** But **recovery degraded
+both arms**, so the premise that reading rests on ("equal global recovery") is not satisfied. A phase
+that costs 2.9 and 4.6 pp of retention did not recover anything.
+
+**Why the instrument is suspect:** training loss fell throughout (mean 3.14–3.28, final 2.89–2.95)
+while validation retention fell — the phase moved weights toward the 819k-token recovery slice at the
+expense of general quality; and four distinct starting points (56.12–58.28) converged into a narrow
+band. Whether that is overfitting to the slice or too large a learning rate **cannot be separated
+from these six cells.**
+
+**What survives anyway:** joint degraded *more* than sequential in **3/3** replicates and ends with
+~4× the spread. If the perturbation merely erased the initialisation the arms would land together
+with no consistent ordering, so this is a real directional signal that **the joint solution is more
+fragile to global gradient perturbation** — a weaker and different claim than "its advantage is not
+durable under fair recovery".
+
+**The [F-38](findings_log.md#f-38) hypothesis that motivated the ablation did not occur.** Had joint
+held structure the layerwise objective could not translate into quality, the gap would have *grown*.
+It grew in no replicate. Evidence against that reading, at this scale and budget.
+
+**Do not quote a p-value.** Three paired draws reach at best p = 0.25 on a two-sided sign test.
+
+**Every fairness guard fired clean** — mask sparsity identical before and after in all 6 cells
+(0.299696, the [B-46](findings_log.md#4-bugs-found-that-would-have-invalidated-results) per-row
+integer quantisation), `fake_quant_forward_calls` 38,400 in all 6, budgets matched, and the recovery
+slice **disjoint from calibration by construction**.
+
+**If pursued:** a gentler probe first (lr 1e-5, or 50 steps, or held-out early stopping) chosen to
+produce a phase that improves or holds both arms. Until one exists the durability question is
+**open, not answered negatively**. A serious attempt needs R=8 and ~11 h of recovery compute.
+
+> ✅ **Done — see [F-43](findings_log.md#f-43) and the section below.** lr 1e-5 produces a phase that
+> improves both arms (+7.21 and +4.73 pp), so this instrument caveat is resolved. The gap still
+> inverts, in one paired draw.
+### 🔵 The recovery question, answered at R=8: joint's advantage REVERSES
+
+**16 cells, 8 paired replicates, 0 failures.** Full record: **[F-44](findings_log.md#f-44)**.
+Post-hoc, exploratory, **validation split** — it cannot alter [F-37](findings_log.md#f-37) and does
+not. Run entirely after the [B-54](findings_log.md#4-bugs-found-that-would-have-invalidated-results)
+fix.
+
+Pythia-160M, 30% + W4, both arms given an identical 50-step / 204,800-token recovery at lr 1e-5 —
+the setting [F-43](findings_log.md#f-43) established as non-destructive and near-peak.
+
+| | before | after |
+| --- | --- | --- |
+| sequential retention | 56.6280 | **70.7759** (+14.1478 pp) |
+| joint retention | 58.1036 | **69.4317** (+11.3281 pp) |
+| **joint gain** | **+1.4755 pp, 8/8 positive** | **−1.3442 pp, 8/8 negative** |
+
+**Both columns unanimous, and the reversal is significant at p = 0.0078** — the floor reachable at
+R=8 on a two-sided sign test. Sequential improved *more* in 8/8 replicates, which is the mechanism:
+joint does not degrade, it gains less from the same recovery.
+
+**This closes the last standing defence of joint compression in this study.** F-37 found the direct
+advantage too small to matter and not growing with scale; the remaining argument was that joint might
+be a better *initialisation* for whatever comes next. On this evidence it is a worse one.
+
+⚠️ **The reversal's magnitude (1.3442 pp) and unanimity (8/8) would satisfy §6.3's two criteria,
+where joint's own advantage at this scale on test reached +1.0120 pp at 7/8 and failed.** That
+contrast conveys the size of the effect, but it is **not a §6.3 verdict** — §6.3 is pre-registered for
+the test split and the primary comparison, and post-hoc validation work does not inherit its
+authority.
+
+**A reframing worth carrying into the discussion:** 50 steps and 204,800 tokens — about 0.0007 of
+Pythia-160M's pretraining — buy **+14 pp** of retention, against a ~1.5 pp difference between the
+arms. At this scale *whether you recover at all* matters roughly an order of magnitude more than
+*which compression order you used*.
+
+✅ **The before-recovery column independently reproduces [F-27](findings_log.md#f-27)** on the three
+draws they share — +1.0794/+1.6518/+2.3371 against +1.08/+1.65/+2.34, a month apart through a
+different driver. This is the check B-54 had destroyed (pre-fix rep0 read +1.4536), and it is
+stronger than any comparison to F-37 because F-27 shares this run's split *and* draws.
+
+**Limits:** one scale, one budget, one recovery configuration, validation split, post-hoc. Must not
+be pooled with [F-42](findings_log.md#f-42) or [F-43](findings_log.md#f-43) — different learning
+rates and step counts are not exchangeable draws.
+
+**All guards clean:** sparsity identical in all 16 cells, `fake_quant_forward_calls` 9,600 in all 16,
+budgets matched, disjointness **verified at runtime** rather than asserted, and **0 null
+`git_commit`** values against F-43's 1 — the [B-53](findings_log.md#4-bugs-found-that-would-have-invalidated-results)
+fix holding.
+
+
+> ⚠️ **Both recovery findings were corrected 2026-08-23 —
+> [B-54](findings_log.md#4-bugs-found-that-would-have-invalidated-results).** The ablation script
+> compressed its arms against the **recovery slice** instead of the 128-sequence calibration set, so
+> the disjointness both findings claim is **inverted**: the arms were recovered on exactly the data
+> they were calibrated on. Both arms always saw byte-identical data, so **every within-run
+> comparison stands** — the gap, the trajectory and the inversion are unaffected. Withdrawn: F-42's
+> use of its before-recovery gain as evidence that the compression half reproduces F-37. Caught
+> because the R=8 leg's replicate 0 reported a before-recovery gain of +1.4536 pp where F-43's same
+> draw reported +1.4448 — a quantity that must be bit-identical. Fixed, and the script now fails
+> closed if the two slices intersect. **[F-37](findings_log.md#f-37) and
+> [F-41](findings_log.md#f-41) run through `ExperimentRunner` and were never affected.**
+
+### 🟢 The gentle recovery probe: F-42's instrument is exonerated, and the answer does not change
+
+**2 cells, 1 paired replicate, 0 failures.** Full record: **[F-43](findings_log.md#f-43)**. Post-hoc,
+exploratory, **validation split, ONE paired draw** — it cannot alter [F-37](findings_log.md#f-37) and
+does not.
+
+[F-42](findings_log.md#f-42) degraded both arms, so it could not test durability. This changed **one**
+variable — lr 5e-5 → **1e-5** — and added mid-recovery evaluation every 50 steps.
+
+| step | sequential | joint | gap |
+| --- | --- | --- | --- |
+| 0 | 56.1181 | 57.5629 | **+1.4448** |
+| 50 | **68.5175** | **67.4093** | −1.1082 |
+| 100 | 64.9433 | 63.8432 | −1.1000 |
+| 150 | 63.5475 | 62.5161 | −1.0314 |
+| **200 (CPU)** | **63.3266** | **62.2890** | **−1.0376** |
+
+**1. A working recovery phase exists.** Recovery now *adds* quality — **+7.2086 pp** (sequential) and
+**+4.7262 pp** (joint), against F-42's −2.9100 and −4.6048 at 5e-5. F-42's suspicion of its own
+instrument was correct, and the learning rate was the fault.
+
+**2. Two hundred steps overshoots for both arms.** Both peak at step 50 (+12.40 and +9.85 pp) then
+decline in parallel, giving back ~5.1 pp each. **The optimum is at or before step 50 and this run
+cannot locate it** — probes every 50 steps cannot distinguish a peak at 50 from one at 10.
+
+**3. The gap inverts by step 50 and then barely moves** — between −1.03 and −1.11 pp at all four
+checkpoints. In this draw joint's advantage does not survive a recovery phase that helps.
+
+**What this does to F-42:** F-42 found joint degrading *more* under a destructive phase; this finds
+joint improving *less* under a beneficial one. **Two opposite regimes, same direction** — so the
+direction is not an artefact of an over-strong probe. F-42's weaker claim ("more fragile to
+perturbation") generalises; its stronger sibling ("the advantage is not durable") now has **one** draw
+of direct support where it had none.
+
+⚠️ **What may not be claimed.** One paired draw is **not an effect size**; −1.0376 pp must not be
+quoted as one. The four checkpoints are **not four replicates** — they are autocorrelated points on
+one trajectory. And this must **not** be pooled with F-42 into a single sign test: different learning
+rates are not exchangeable, so 4/4 in one direction is not p = 0.125.
+
+**A hypothesis worth recording, not a finding:** if end-to-end recovery is available, sequential looks
+like the better starting point — it starts lower and ends higher. That would weaken the case for joint
+on *sign* where F-37 weakens it on *magnitude*. It needs **R=8** before it can go in a paper.
+
+**All guards clean** — sparsity identical in both arms, `fake_quant_forward_calls` 62,208 in both,
+budgets matched and **restored across the resume** so the gate still fired, recovery slice disjoint
+from calibration, and the step-200 GPU probe agreeing with the baked CPU evaluation to 0.0008 pp in
+both arms.
+
+⚠️ Two provenance notes, both recorded rather than glossed: the arms ran at **different commits**
+(`b680e09` and `e9bf9af`, from the pause/resume) though the diff touches only resume bookkeeping and
+tests, and the joint record carries a **null `git_commit`** — diagnosed as
+[B-53](findings_log.md#4-bugs-found-that-would-have-invalidated-results), which is very likely also
+the cause of the two null commits in the confirmatory run.
 
 ### The optional experiments — decided 2026-08-11
 

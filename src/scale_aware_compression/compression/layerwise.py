@@ -90,6 +90,9 @@ class LayerPlan:
         activation_order: Whether the sweep visits high-energy columns first.
     """
 
+    retain_masks: bool = False
+    """Keep true keep-masks on the report. Set only by the post-hoc recovery ablation."""
+
     sparsity: float = 0.0
     bits: int | None = None
     granularity: QuantisationGranularity = QuantisationGranularity.PER_CHANNEL
@@ -304,6 +307,16 @@ class LayerwiseReport:
     module_names: list[str] = field(default_factory=list)
     calibration_fingerprint: str = ""
     total_local_steps: int = 0
+    masks_by_module: dict[str, torch.Tensor] = field(default_factory=dict)
+    """True keep-masks per module, populated **only** when ``retain_masks`` is set.
+
+    Off by default, and that is a memory decision as much as a behavioural one: one bool per weight
+    is ~85 MB at 160M and ~800 MB at 1B, which the confirmatory grid has no use for. The post-hoc
+    recovery ablation needs them because ``weight != 0`` cannot substitute -- quantisation rounds
+    surviving weights to exactly zero (1.3% of them at W4), so freezing on the nonzero pattern
+    would freeze more than the pruning budget, by a different amount in each arm.
+    """
+
     grids_by_module: dict[str, tuple[torch.Tensor, torch.Tensor]] = field(
         default_factory=dict, repr=False
     )
@@ -864,6 +877,7 @@ def compress_model_layerwise(
     calibration_fingerprint: str = "",
     device: torch.device | str | None = None,
     offload_blocks: bool = False,
+    retain_masks: bool = False,
     progress: Callable[[str, int, int], None] | None = None,
 ) -> LayerwiseReport:
     """Compress every targeted linear layer, block by block, in depth order.
@@ -887,6 +901,9 @@ def compress_model_layerwise(
             it is what makes a model larger than the card runnable. **The model is left on the
             host when this returns**, because that is where all but one block already was.
         progress: Optional ``(module_name, index, total)`` callback.
+
+        retain_masks: Keep each module's true keep-mask on the report. Off by default; the
+            post-hoc recovery ablation needs it and nothing else does.
 
     Returns:
         The report, including a per-layer reconstruction loss.
@@ -1041,6 +1058,7 @@ def compress_model_layerwise(
                         block_index=block_index,
                         total=total,
                         state=state,
+                        retain_masks=retain_masks,
                         progress=progress,
                     )
                     remaining = [name for name in remaining if name not in set(in_group)]
@@ -1107,6 +1125,7 @@ def _compress_group(  # noqa: PLR0913 - one call site; grouping the arguments wo
     block_index: int,
     total: int,
     state: dict[str, int],
+    retain_masks: bool,
     progress: Callable[[str, int, int], None] | None,
 ) -> None:
     """Capture activations for one dependency group, then compress every module in it.
@@ -1131,6 +1150,7 @@ def _compress_group(  # noqa: PLR0913 - one call site; grouping the arguments wo
         total: Total modules in the run, for progress.
         state: Mutable completion counter shared across groups.
         progress: Optional progress callback.
+        retain_masks: Store each module's keep-mask on the report.
 
     Raises:
         LayerwiseError: If a weight is not 2-D.
@@ -1181,6 +1201,9 @@ def _compress_group(  # noqa: PLR0913 - one call site; grouping the arguments wo
             weight.copy_(outcome.weight.to(weight.dtype))
 
         report.layers.append(result)
+        if retain_masks:
+            # The TRUE keep-mask, not the nonzero pattern. See LayerwiseReport.masks_by_module.
+            report.masks_by_module[name] = outcome.mask.detach().clone()
         report.total_local_steps += outcome.local_steps
         if outcome.scales is not None and outcome.codes is not None:
             report.grids_by_module[name] = (

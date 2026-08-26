@@ -295,6 +295,35 @@ class RecoveryConfig:
     """Post-pruning recovery fine-tuning. May run on GPU."""
 
     enabled: bool = True
+    """Legacy flag from the superseded full-model fine-tuning design.
+
+    **On its own this does nothing under the layerwise arms**, whose ``recover`` is a deliberate
+    no-op, and `main_scale_sweep.yaml` -- the FROZEN confirmatory config -- sets it true with
+    ``max_steps: 500``. Gating a real training loop on this flag would have silently turned the
+    confirmatory grid into a fine-tuning study on its next re-run. Use :attr:`end_to_end` instead.
+    """
+
+    end_to_end: bool = False
+    """Opt in to the post-hoc end-to-end recovery ablation. **Default off, and must stay off.**
+
+    Separate from :attr:`enabled` precisely so no existing config can acquire a training stage by
+    accident. Only `recovery_ablation_160m_w4.yaml` sets it.
+    """
+
+    seed: int = 1234
+    """Seed for recovery data order and initialisation. Both arms of a replicate share it."""
+
+    sequence_length: int | None = None
+    """Recovery sequence length. Falls back to ``data.sequence_length`` when unset."""
+
+    mixed_precision: bool = False
+    """Autocast the forward pass. Off by default: the shadow weights and the fake-quantisation
+    grid are the thing under test, and bf16/fp16 rounding on top of a 4-bit grid is a second
+    source of error that would be confounded with it."""
+
+    gradient_checkpointing: bool = False
+    """Trade compute for activation memory. Only needed if a batch will not fit."""
+
     epochs: int = 1
     max_steps: int | None = None
     """Overrides ``epochs`` when set; useful for matching optimisation budgets exactly."""
@@ -307,6 +336,17 @@ class RecoveryConfig:
     device: Device = Device.AUTO
     log_every_steps: int = 20
     eval_every_steps: int | None = None
+    # None or 0 disables. When positive, quality is evaluated every N optimiser steps during
+    # end-to-end recovery, turning a before/after pair into a trajectory -- which is what separates
+    # "the learning rate is too high throughout" (monotone decline) from "it overfits after N
+    # steps" (rises then falls). One evaluation pass per checkpoint, identical in both arms.
+    #
+    # Deliberately NOT `eval_every_steps`: that field predates the layerwise rewrite, belongs to
+    # the superseded fine-tuning vocabulary, and is already set to 100 in configs/compression/
+    # pruning.yaml -- so every config that includes it, including recovery_ablation_160m_w4.yaml,
+    # would silently have acquired a probe schedule and stopped being comparable to the run that
+    # produced F-42.
+    probe_every_steps: int | None = None
 
     def __post_init__(self) -> None:
         """Validate the optimisation budget."""
@@ -323,6 +363,17 @@ class RecoveryConfig:
             self.gradient_accumulation_steps,
         )
         _require_positive("compression.recovery.log_every_steps", self.log_every_steps)
+        if self.probe_every_steps is not None and self.probe_every_steps < 0:
+            raise ConfigError("compression.recovery.probe_every_steps must not be negative")
+        if self.sequence_length is not None:
+            _require_positive("compression.recovery.sequence_length", self.sequence_length)
+        if self.end_to_end and self.max_steps is None:
+            raise ConfigError(
+                "compression.recovery.end_to_end requires an explicit max_steps. Deriving the "
+                "budget from epochs would let the two arms receive different step counts if their "
+                "loaders ever differed in length, and a joint gain confounded with training "
+                "budget is not a joint gain."
+            )
 
 
 @dataclass(slots=True)

@@ -1,0 +1,142 @@
+# POST-HOC EXPLORATORY ABLATION -- gentle recovery probe. NOT CONFIRMATORY.
+#
+# Cannot alter, replace or reinterpret F-37, F-41, F-42, the confirmatory manifest, or any frozen
+# protocol decision. Validation split only; the test split is never touched here.
+#
+# WHY THIS EXISTS
+#
+# F-42 ran 200 steps at lr 5e-5 and DEGRADED both arms -- sequential by 2.9100 pp and joint by
+# 4.6048 pp of retention. Training loss fell throughout (mean 3.14-3.28, final 2.89-2.95) while
+# validation retention fell, and four starting points spanning 56.12-58.28 converged into a narrow
+# band. So the phase moved weights toward the 819k-token recovery slice at the expense of general
+# quality, and F-42 could not separate two causes: overfitting to the slice, or a learning rate too
+# large for the compressed initialisation.
+#
+# A recovery phase that destroys 3-5 pp cannot test whether an advantage is DURABLE. This config
+# asks the prerequisite question instead:
+#
+#   Does a recovery phase exist, at this scale and budget, that does not damage these models?
+#
+# THE ONE VARIABLE THAT CHANGED
+#
+# Learning rate 5e-5 -> 1e-5. Everything else is held at F-42's values -- 200 steps, 819,200 tokens,
+# the same optimiser, schedule, clipping, precision, seed, budget and data. Holding the token count
+# fixed while shrinking the step size is what separates step MAGNITUDE from data QUANTITY; cutting
+# the step count would have moved both at once.
+#
+# AND ONE ADDITION THAT COSTS ALMOST NOTHING
+#
+# `probe_every_steps: 50` turns a before/after pair into a trajectory, which is what actually
+# resolves F-42's ambiguity:
+#
+#   monotone decline from step 50   -> the learning rate is too high throughout
+#   rises then falls                -> a usable phase exists and 200 steps overshoots it
+#   flat, then declines late        -> the slice is being memorised
+#
+# The probe runs on the TRAINING device (~15 s) rather than CPU (~6 min); F-29 measured GPU-vs-CPU
+# quality agreement at 8.3e-06 relative. The authoritative before/after numbers stay on CPU and the
+# trajectory records its own device, so the two cannot be confused.
+#
+# SCOPE: ONE PAIRED REPLICATE
+#
+# This is an instrument check, not a result. One paired draw establishes whether the probe damages
+# the model; it establishes nothing about joint versus sequential, and no gain from it may be quoted
+# as an effect size. If a non-destructive phase is found, the durability question then deserves R=8
+# (~11 h) and a config of its own.
+#
+# THE MASKS STAY FROZEN. Unfreezing them would let both arms reselect under the same gradient
+# signal, converging on whatever mask the recovery dynamics prefer -- which overwrites the
+# initialisation difference rather than testing it. F-05 measured the mask as the mechanism (8.86%
+# divergence at W4 against 0.46% at W8, with scale re-estimation inert at 0.2%), so removing it
+# removes the thing under test.
+
+include:
+  - ../models/pythia_160m.yaml
+  - ../compression/sequential.yaml
+  - ../evaluation/quality.yaml
+
+experiment:
+  id: recovery_ablation_160m_w4_gentle
+  name: Pythia-160M W4 gentle recovery probe (lr 1e-5, trajectory)
+  description: >-
+    Post-hoc exploratory instrument check. Identical to recovery_ablation_160m_w4 except the
+    learning rate (1e-5 rather than 5e-5) and mid-recovery evaluation every 50 steps. One paired
+    calibration replicate. Asks whether a non-destructive recovery phase exists at all, after F-42
+    found 200 steps at 5e-5 degraded both arms. Not confirmatory, not a result, and not an effect
+    size.
+  tags:
+    - exploratory
+    - post-hoc
+    - recovery-ablation
+    - instrument-check
+    - not-confirmatory
+    - not-a-result
+
+runtime:
+  seed: 1234
+  deterministic: true
+  # Separate tree, and a separate id from F-42's run, so neither can overwrite the other. This is
+  # the B-51 class of fault: a record id that does not distinguish two runs loses one of them.
+  output_dir: outputs/recovery_ablation
+  log_level: INFO
+
+data:
+  eval_split: validation
+  calibration_samples: 128
+  calibration_split: train
+  sequence_length: 512
+  max_eval_samples: 512
+  batch_size: 4
+
+compression:
+  budget_label: aggressive
+  pruning:
+    sparsity: 0.3
+  quantisation:
+    bits: 4
+
+  reconstruction:
+    solver: sweep
+    local_steps: 1
+    joint_iterations: 2
+    comparison_group: output
+    scale_search: false
+    keep_benefit_saliency: false
+
+  recovery:
+    end_to_end: true
+    enabled: true
+
+    # Held identical to F-42 so the two runs differ in exactly one variable.
+    max_steps: 200
+    batch_size: 2
+    gradient_accumulation_steps: 4
+
+    # THE ONE CHANGE: 5e-5 -> 1e-5.
+    learning_rate: 1.0e-5
+
+    weight_decay: 0.0
+    warmup_ratio: 0.05
+    max_grad_norm: 1.0
+    mixed_precision: false
+    gradient_checkpointing: false
+
+    seed: 1234
+    log_every_steps: 25
+    # Four checkpoints at 50/100/150/200. Identical in both arms, so it cannot bias the comparison.
+    probe_every_steps: 50
+    device: auto
+
+sweep:
+  models:
+    - pythia-160m
+  methods:
+    - sequential
+    - joint
+  budgets:
+    - aggressive
+  # ONE paired draw. An instrument check, not a measurement of the arms.
+  replicates: 1
+  use_frozen_order: true
+  skip_existing: true
+  continue_on_error: false

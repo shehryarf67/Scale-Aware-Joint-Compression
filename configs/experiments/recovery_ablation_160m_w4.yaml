@@ -1,0 +1,132 @@
+# POST-HOC EXPLORATORY ABLATION -- end-to-end recovery after compression.
+#
+# NOT CONFIRMATORY. Cannot alter, replace or reinterpret F-37, F-41, the confirmatory manifest, or
+# any frozen protocol decision. Validation split only; the test split is never touched here.
+#
+# THE QUESTION
+#
+# F-38 found the local objective improving where the global one does not: at 1B the mask divergence
+# (3.41%), layer gain (1.49%) and layer-objective advantage (+2.32%) are all at or above their 160M
+# values while the end-to-end joint gain collapses from +1.01 pp to +0.13 pp. So the joint solution
+# may contain structure the LAYERWISE reconstruction objective cannot translate into
+# language-model quality.
+#
+# This gives both arms the same short GLOBAL recovery phase and asks whether the gap moves.
+#
+# THREE OUTCOMES, NONE OF THEM ENCODED ANYWHERE IN THE IMPLEMENTATION
+#
+#   gap grows      -- joint's mask/grid coordination held usable structure the local objective missed
+#   gap unchanged  -- the ~1 pp benefit is intrinsic to the method at this budget
+#   gap closes     -- joint's initialisation is not a durable advantage under equal global recovery
+#
+# THE FAIRNESS CONSTRAINT IS THE WHOLE EXPERIMENT
+#
+# Both arms get identical recovery data, order, budget, optimiser, schedule, precision, clipping,
+# device and seed. Only the compressed initialisation differs. `assert_budgets_match` and
+# `assert_identical_batches` fail the run rather than report a confounded number.
+
+include:
+  - ../models/pythia_160m.yaml
+  - ../compression/sequential.yaml
+  - ../evaluation/quality.yaml
+
+experiment:
+  id: recovery_ablation_160m_w4
+  name: Pythia-160M W4 end-to-end recovery ablation
+  description: >-
+    Post-hoc exploratory ablation. Sequential (P->Q, the frozen 160M/W4 order) and joint, each
+    followed by an identical short end-to-end recovery phase under a causal-LM loss with the
+    pruning mask frozen and W4 fake quantisation live. Validation split, 3 paired calibration
+    replicates. Not confirmatory and not a protocol change.
+  tags:
+    - exploratory
+    - post-hoc
+    - recovery-ablation
+    - not-confirmatory
+    - not-a-result
+
+runtime:
+  seed: 1234
+  deterministic: true
+  # Separate tree. Nothing here can be discovered by the confirmatory resume logic or audit, which
+  # read outputs/metrics.
+  output_dir: outputs/recovery_ablation
+  log_level: INFO
+
+# VALIDATION ONLY. The test split is reserved and this ablation is post-hoc; evaluating it on test
+# would spend the confirmatory surface on a question invented after seeing the results.
+data:
+  eval_split: validation
+  calibration_samples: 128
+  calibration_split: train
+  sequence_length: 512
+  max_eval_samples: 512
+  batch_size: 4
+
+compression:
+  # The frozen headline budget, unchanged: 30% unstructured + W4 weight-only, symmetric
+  # per-output-channel. Changing it would make this ablation incomparable to F-37.
+  budget_label: aggressive
+  pruning:
+    sparsity: 0.3
+  quantisation:
+    bits: 4
+
+  reconstruction:
+    solver: sweep
+    local_steps: 1
+    joint_iterations: 2
+    comparison_group: output
+    scale_search: false
+    keep_benefit_saliency: false
+
+  recovery:
+    # THE OPT-IN. `enabled` alone does nothing -- main_scale_sweep.yaml sets it true with
+    # max_steps 500 and must never acquire a training stage. Only this flag turns recovery on.
+    end_to_end: true
+    enabled: true
+
+    # BUDGET. Deliberately small: a diagnostic, not a QAT study.
+    #
+    #   200 steps x 2 microbatch x 4 accumulation x 512 tokens = 819,200 recovery tokens
+    #
+    # That is ~0.0003 of Pythia-160M's 300B pretraining tokens, and about 1.6x the 512x512
+    # evaluation window -- enough for a short global objective to move weights measurably, far too
+    # little to retrain the model. max_steps is explicit because deriving it from epochs would let
+    # the two arms diverge if their loaders ever differed in length.
+    max_steps: 200
+    batch_size: 2
+    gradient_accumulation_steps: 4
+
+    # 5e-5 is the RecoveryConfig default and a standard short-finetune rate for a model this size.
+    # Higher risks destroying the compressed initialisation, which is the thing under test.
+    learning_rate: 5.0e-5
+    weight_decay: 0.0
+    warmup_ratio: 0.05
+    max_grad_norm: 1.0
+
+    # Off. The shadow weight and the 4-bit grid are what is under test; bf16/fp16 rounding on top
+    # of a W4 grid is a second error source that would be confounded with the first.
+    mixed_precision: false
+    # Not needed at this size with microbatch 2; costs ~30% throughput when on.
+    gradient_checkpointing: false
+
+    seed: 1234
+    log_every_steps: 25
+    device: auto
+
+sweep:
+  models:
+    - pythia-160m
+  methods:
+    - sequential
+    - joint
+  budgets:
+    - aggressive
+  # Three paired draws, reusing CALIBRATION_REPLICATE_SEEDS. Exploratory sizing: three unanimous
+  # draws reach only p = 0.25 on a sign test, so this can show an effect SIZE and a direction and
+  # nothing statistical. Enough to decide whether the question deserves R=8.
+  replicates: 3
+  use_frozen_order: true
+  skip_existing: true
+  continue_on_error: false

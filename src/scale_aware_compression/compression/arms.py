@@ -69,6 +69,11 @@ def plan_from_config(config: ExperimentConfig) -> LayerPlan:
     # one. FP32 is spelled 32 in `effective_bits` and `None` in a plan.
     effective_bits = compression.effective_bits
     return LayerPlan(
+        # Retained only for the post-hoc recovery ablation, which needs the TRUE keep-mask:
+        # `weight != 0` is strictly coarser because quantisation zeroes surviving weights, and by a
+        # different amount in each arm. Derived from config rather than set by a caller so both
+        # arms of a comparison cannot disagree about it.
+        retain_masks=compression.recovery.end_to_end,
         sparsity=compression.effective_sparsity,
         bits=None if effective_bits >= FP32_BITS else effective_bits,
         granularity=compression.quantisation.granularity,
@@ -210,6 +215,7 @@ class LayerwiseArm(Compressor):
             calibration_fingerprint=self.calibration_fingerprint,
             device=device,
             offload_blocks=offload,
+            retain_masks=self.plan.retain_masks,
         )
         return model
 
